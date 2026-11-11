@@ -1,0 +1,175 @@
+/* Classic Companion — English (development language). Keep keys identical in zh-Hans, zh-Hant and ja; LocalizationTests checks keys and format specifiers. */
+
+/* Common */
+"common.ok" = "OK";
+"common.cancel" = "Cancel";
+"list.separator" = ", ";
+"format.withShortcut" = "%1$@ (%2$@)";
+
+/* Menus (main menu and menu bar menu share keys) */
+"menu.about" = "About Classic Companion";
+"menu.settings" = "Settings…";
+"menu.diagnostics" = "Diagnostics";
+"menu.hideApp" = "Hide Classic Companion";
+"menu.hideOthers" = "Hide Others";
+"menu.showAll" = "Show All";
+"menu.quit" = "Quit Classic Companion";
+"menu.file" = "File";
+"menu.newChat" = "New Chat";
+"menu.toggleMode" = "Toggle Quick / Full Window";
+"menu.reload" = "Reload";
+"menu.closeWindow" = "Close Window";
+"menu.edit" = "Edit";
+"menu.undo" = "Undo";
+"menu.redo" = "Redo";
+"menu.cut" = "Cut";
+"menu.copy" = "Copy";
+"menu.paste" = "Paste";
+"menu.selectAll" = "Select All";
+"menu.view" = "View";
+"menu.zoomIn" = "Zoom In";
+"menu.zoomOut" = "Zoom Out";
+"menu.actualSize" = "Actual Size";
+"menu.window" = "Window";
+"menu.minimize" = "Minimize";
+"menu.zoom" = "Zoom";
+"menu.bringAllToFront" = "Bring All to Front";
+"menu.showQuick" = "Show Quick Window";
+"menu.openFull" = "Open Full Window";
+
+/* Window titles */
+"window.settings" = "Classic Companion Settings";
+"window.trialNotes" = "Beta Notes";
+"window.diagnostics" = "Classic Companion Diagnostics";
+"window.popup" = "Classic Companion — Popup";
+
+/* Shortcut registration */
+"alert.hotkeyFailed.title" = "Couldn’t register the shortcut %@";
+"alert.hotkeyFailed.body" = "%@\nChoose another combination in Settings, or open the window from the menu bar icon.";
+"hotkey.status.registered" = "Registered";
+"hotkey.status.notRegistered" = "Not registered";
+"hotkey.status.inUse" = "Registration failed: the combination is in use by another app or the system (eventHotKeyExistsErr)";
+"hotkey.status.invalid" = "Registration failed: invalid combination (eventHotKeyInvalidErr)";
+"hotkey.status.other" = "Registration failed: OSStatus %@";
+"hotkey.apply.inUse.kept" = "%1$@ is already in use. Still using %2$@.";
+"hotkey.apply.invalid.kept" = "%1$@ can’t be used. Still using %2$@.";
+"hotkey.apply.inUse.lost" = "%1$@ is already in use, and %2$@ couldn’t be restored. Set a shortcut again.";
+"hotkey.apply.invalid.lost" = "%1$@ can’t be used, and %2$@ couldn’t be restored. Set a shortcut again.";
+
+/* Shortcut recording */
+"hotkey.reject.needsModifier" = "Include at least one of ⌘, ⌥ or ⌃, so typing doesn’t trigger it by accident.";
+"hotkey.reject.used" = "%1$@ is used to %2$@. Choose another one.";
+"hotkey.reject.common" = "%@ is a common shortcut. Choose another one.";
+"purpose.hideWindow" = "hide the window";
+"purpose.quitApp" = "quit the app";
+"purpose.minimizeWindow" = "minimize the window";
+"purpose.hideApp" = "hide the app";
+"purpose.hideOthers" = "hide other apps";
+"purpose.newChat" = "start a new chat";
+"purpose.searchChats" = "search chats";
+"purpose.reload" = "reload the page";
+"purpose.restorePage" = "restore the page";
+"purpose.openSettings" = "open Settings";
+"purpose.openDiagnostics" = "open Diagnostics";
+"purpose.redo" = "redo";
+"purpose.zoomPage" = "resize the page";
+"purpose.toggleMode" = "switch between the Quick and Full window";
+"purpose.wake" = "show and hide the window";
+"hotkey.prompt.waiting" = "Type new shortcut…";
+"hotkey.grabbedHint" = "Recording was interrupted: another app may be using this combination. Try again or choose another one.";
+"hotkey.conflict" = "Pressing it also opens %@.";
+"hotkey.note.recording" = "Press Esc to cancel. The current shortcut keeps working.";
+"hotkey.note.wakeIdle" = "Works in any app.";
+"hotkey.note.modeIdle" = "Works only when this app’s window is in front.";
+"hotkey.field.waiting" = "Waiting for a new shortcut";
+"hotkey.otherApp" = "another app";
+"hotkey.keyNumber" = "Key %@";
+
+/* Settings */
+"settings.appLanguage" = "App Language";
+"settings.language.system" = "Follow System";
+"settings.language.note" = "Changes this app only, not the ChatGPT web page.";
+"settings.shortcut.wake" = "Show / Hide";
+"settings.shortcut.wakeName" = "Show/hide shortcut";
+"settings.shortcut.mode" = "Quick / Full Window";
+"settings.shortcut.modeName" = "Quick/Full window shortcut";
+"settings.shortcut.reset" = "Restore Default";
+"settings.shortcut.footer" = "Click a box, then press the combination you want.";
+"settings.pageZoom" = "Page Zoom";
+"settings.pageZoom.note" = "Shared by the Quick and Full windows. You can also press ⌘+, ⌘- or ⌘0.";
+"settings.web.enable" = "Enable web enhancements";
+"settings.web.focus" = "Put the cursor in ChatGPT’s input box when shown";
+"settings.web.escape" = "Esc hides the window during a normal chat";
+"settings.session.restore" = "Reopen the last visited chat at launch";
+"settings.assistive.allow" = "Allow other apps to read web page content";
+"settings.section.diagnostics" = "Diagnostics";
+"settings.diagnostics.open" = "Open Diagnostics";
+"settings.diagnostics.note" = "Check the app’s status when something goes wrong. You can also press ⌥⌘D.";
+"settings.pane.general" = "General";
+"settings.pane.shortcuts" = "Shortcuts";
+"settings.pane.advanced" = "Advanced";
+"settings.web.note" = "When off, the General options for the input-box cursor and Esc to hide pause, and the Quick window no longer hides the page’s own Open Sidebar and New Chat buttons.";
+"settings.web.dependencyNote" = "Cursor placement and Esc to hide need web enhancements, which you can turn on in Advanced. Your saved choices stay as they are.";
+"settings.web.requiredHint" = "Turn on web enhancements in Advanced to use this.";
+"settings.assistive.purpose" = "Tools such as Grammarly and Computer Use may need this.";
+"settings.assistive.learnMore" = "Learn More";
+"settings.assistive.expanded" = "Expanded";
+"settings.assistive.collapsed" = "Collapsed";
+"settings.assistive.details" = "While it’s on, opening or closing ChatGPT pop-ups such as search may freeze for ten seconds or more. When VoiceOver or Switch Control is on, this switch doesn’t restrict web page content. After turning it off again, restart the app for the change to take full effect.";
+
+/* Window top bar and launch screen */
+"bar.hideWindow" = "Hide Window";
+"bar.toFull" = "Switch to Full Window";
+"bar.toQuick" = "Switch to Quick Window";
+"launch.opening" = "Opening";
+"load.problem.title" = "Can’t connect to ChatGPT";
+"load.problem.waiting" = "It will try again automatically when you’re back online.";
+"load.problem.connecting" = "Reconnecting…";
+"load.problem.stopped" = "Check your connection, then click Reload or press ⌘R.";
+
+/* About and beta notes */
+"about.version" = "Version %1$@ (Build %2$@)";
+"about.description" = "Opens the official ChatGPT website in a native macOS window: bring up a quick window with a shortcut, and switch to a full window when you need it.";
+"about.notOfficial" = "Not an official OpenAI app and not affiliated with OpenAI. ChatGPT is a trademark of OpenAI.";
+"about.placeholderIcon" = "The current icon is a temporary placeholder, not the final icon.";
+"about.trialNotes" = "Beta Notes and Known Issues";
+"about.feedback" = "Report an Issue on GitHub";
+"about.copyVersion" = "Copy Version Info";
+"about.copied" = "Copied";
+"about.feedbackNote" = "When reporting a problem, include the version info and a description. The Diagnostics window can copy a redacted report. Issues are public, so don’t paste chat content or account details.";
+"trialNotes.missing" = "This build doesn’t include beta notes.";
+
+/* Diagnostics window (the report itself keeps fixed field names) */
+"diag.title" = "Diagnostics (Redacted)";
+"diag.collect" = "Collect Evidence";
+"diag.collect.help" = "Refresh page capabilities and the official Read Aloud structure, and write the report file";
+"diag.copyReport" = "Copy Report";
+"diag.copyReport.help" = "The report keeps its original Chinese field names so it can be compared with earlier reports and read by scripts.";
+"diag.resetGateC" = "Reset Gate C Counters";
+"diag.row.build" = "Build";
+"diag.row.hotkey" = "Shortcut";
+"diag.row.dataStore" = "Data Store";
+"diag.dataStore.persistent" = "Persistent (re-check after login and restart)";
+"diag.dataStore.ephemeral" = "Not persistent";
+"diag.row.page" = "Page";
+"diag.row.input" = "Input Box";
+"diag.input.value" = "found=%1$@ focused=%2$@";
+"diag.row.messages" = "Messages";
+"diag.messages.value" = "%1$@, assistant %2$ld, generating=%3$@, overlay=%4$@";
+"diag.row.selectors" = "Selector Hits";
+"diag.row.gateC" = "Gate C";
+"diag.gateC.value" = "Shortcut %1$ld · Show %2$ld / Hide %3$ld · Activate %4$ld · Switch %5$ld · Focus restored ✓%6$ld ✗%7$ld";
+"diag.row.frontApps" = "Front Apps";
+"diag.row.inputFocus" = "Input Focus";
+"diag.readAloud" = "Official Read Aloud Evidence";
+"diag.readAloud.media" = "WebKit media state (for reference only; after suspend and resume it may show playing while silent): %@";
+"diag.readAloud.structure" = "Structure: %@";
+"diag.readAloud.rate" = "Rate measurement: %@";
+"diag.notCollected" = "Not collected";
+"diag.notMeasured" = "Not measured";
+"diag.experiments.warning" = "Experiments (evidence gathering only, not a product feature; suspending and resuming is known to desync official Read Aloud)";
+"diag.exp.measure" = "Measure Actual Rate";
+"diag.exp.suspend" = "Suspend Web Media";
+"diag.exp.resume" = "Resume Web Media";
+"diag.exp.pauseAll" = "Pause All Web Media";
+"diag.exp.setRate" = "Set and Measure";

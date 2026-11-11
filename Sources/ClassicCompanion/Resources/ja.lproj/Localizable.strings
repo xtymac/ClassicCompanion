@@ -1,0 +1,175 @@
+/* Classic Companion — 日本語。キーは英語の表と同じ。LocalizationTests がキーと書式指定子を確認します。 */
+
+/* 共通 */
+"common.ok" = "OK";
+"common.cancel" = "キャンセル";
+"list.separator" = "、";
+"format.withShortcut" = "%1$@（%2$@）";
+
+/* メニュー（メインメニューとメニューバーのメニューで共通） */
+"menu.about" = "Classic Companion について";
+"menu.settings" = "設定…";
+"menu.diagnostics" = "診断";
+"menu.hideApp" = "Classic Companion を隠す";
+"menu.hideOthers" = "ほかを隠す";
+"menu.showAll" = "すべてを表示";
+"menu.quit" = "Classic Companion を終了";
+"menu.file" = "ファイル";
+"menu.newChat" = "新規チャット";
+"menu.toggleMode" = "クイック / フルウインドウを切り替え";
+"menu.reload" = "再読み込み";
+"menu.closeWindow" = "ウインドウを閉じる";
+"menu.edit" = "編集";
+"menu.undo" = "取り消す";
+"menu.redo" = "やり直す";
+"menu.cut" = "カット";
+"menu.copy" = "コピー";
+"menu.paste" = "ペースト";
+"menu.selectAll" = "すべてを選択";
+"menu.view" = "表示";
+"menu.zoomIn" = "拡大";
+"menu.zoomOut" = "縮小";
+"menu.actualSize" = "実際のサイズ";
+"menu.window" = "ウインドウ";
+"menu.minimize" = "しまう";
+"menu.zoom" = "拡大/縮小";
+"menu.bringAllToFront" = "すべてを手前に移動";
+"menu.showQuick" = "クイックウインドウを表示";
+"menu.openFull" = "フルウインドウを開く";
+
+/* ウインドウのタイトル */
+"window.settings" = "Classic Companion 設定";
+"window.trialNotes" = "ベータ版の説明";
+"window.diagnostics" = "Classic Companion 診断";
+"window.popup" = "Classic Companion — ポップアップ";
+
+/* ショートカットの登録 */
+"alert.hotkeyFailed.title" = "ショートカット %@ を登録できませんでした";
+"alert.hotkeyFailed.body" = "%@\n設定で別の組み合わせを選ぶか、メニューバーのアイコンからウインドウを開いてください。";
+"hotkey.status.registered" = "登録済み";
+"hotkey.status.notRegistered" = "未登録";
+"hotkey.status.inUse" = "登録できませんでした：この組み合わせはほかのアプリまたはシステムが使用しています（eventHotKeyExistsErr）";
+"hotkey.status.invalid" = "登録できませんでした：無効な組み合わせです（eventHotKeyInvalidErr）";
+"hotkey.status.other" = "登録できませんでした：OSStatus %@";
+"hotkey.apply.inUse.kept" = "%1$@ はすでに使われています。引き続き %2$@ を使います。";
+"hotkey.apply.invalid.kept" = "%1$@ は使用できません。引き続き %2$@ を使います。";
+"hotkey.apply.inUse.lost" = "%1$@ はすでに使われています。%2$@ も元に戻せませんでした。もう一度設定してください。";
+"hotkey.apply.invalid.lost" = "%1$@ は使用できません。%2$@ も元に戻せませんでした。もう一度設定してください。";
+
+/* ショートカットの記録 */
+"hotkey.reject.needsModifier" = "⌘、⌥、⌃ のいずれかを含めてください。含めないと、入力中に誤って反応します。";
+"hotkey.reject.used" = "%1$@ は「%2$@」に使われています。別の組み合わせを選んでください。";
+"hotkey.reject.common" = "%@ はよく使われるショートカットです。別の組み合わせを選んでください。";
+"purpose.hideWindow" = "ウインドウを隠す";
+"purpose.quitApp" = "アプリを終了";
+"purpose.minimizeWindow" = "ウインドウをしまう";
+"purpose.hideApp" = "アプリを隠す";
+"purpose.hideOthers" = "ほかのアプリを隠す";
+"purpose.newChat" = "新規チャット";
+"purpose.searchChats" = "チャットを検索";
+"purpose.reload" = "ページを再読み込み";
+"purpose.restorePage" = "ページを復元";
+"purpose.openSettings" = "設定を開く";
+"purpose.openDiagnostics" = "診断を開く";
+"purpose.redo" = "やり直す";
+"purpose.zoomPage" = "ページの拡大/縮小";
+"purpose.toggleMode" = "クイック / フルウインドウの切り替え";
+"purpose.wake" = "ウインドウの表示 / 非表示";
+"hotkey.prompt.waiting" = "新しい組み合わせを入力…";
+"hotkey.grabbedHint" = "記録が中断されました：この組み合わせはほかのアプリで使われている可能性があります。もう一度試すか、別の組み合わせを選んでください。";
+"hotkey.conflict" = "押すと %@ も開きます。";
+"hotkey.note.recording" = "Esc キーでキャンセルします。元のショートカットはそのまま使えます。";
+"hotkey.note.wakeIdle" = "どのアプリからでも使えます。";
+"hotkey.note.modeIdle" = "このアプリのウインドウが最前面にあるときだけ使えます。";
+"hotkey.field.waiting" = "新しい組み合わせを待っています";
+"hotkey.otherApp" = "別のアプリ";
+"hotkey.keyNumber" = "キー %@";
+
+/* 設定 */
+"settings.appLanguage" = "アプリの言語";
+"settings.language.system" = "システムに合わせる";
+"settings.language.note" = "アプリの画面だけが変わり、ChatGPT の Web ページの言語は変わりません。";
+"settings.shortcut.wake" = "表示 / 非表示";
+"settings.shortcut.wakeName" = "表示 / 非表示のショートカット";
+"settings.shortcut.mode" = "クイック / フル";
+"settings.shortcut.modeName" = "クイック / フルウインドウ切り替えのショートカット";
+"settings.shortcut.reset" = "デフォルトに戻す";
+"settings.shortcut.footer" = "枠をクリックしてから、使いたい組み合わせを押してください。";
+"settings.pageZoom" = "ページの拡大/縮小";
+"settings.pageZoom.note" = "クイックとフルウインドウで共通です。⌘+、⌘-、⌘0 でも変更できます。";
+"settings.web.enable" = "Web 補助機能を使う";
+"settings.web.focus" = "表示したときに ChatGPT の入力欄にカーソルを置く";
+"settings.web.escape" = "通常のチャット中は Esc でウインドウを隠す";
+"settings.session.restore" = "起動時に最後に開いたチャットを再表示";
+"settings.assistive.allow" = "ほかのアプリに Web ページの内容の読み取りを許可";
+"settings.section.diagnostics" = "診断";
+"settings.diagnostics.open" = "診断を開く";
+"settings.diagnostics.note" = "問題が起きたときに動作状況を確認できます。⌥⌘D でも開けます。";
+"settings.pane.general" = "一般";
+"settings.pane.shortcuts" = "ショートカット";
+"settings.pane.advanced" = "詳細";
+"settings.web.note" = "オフにすると、「一般」の入力欄へのカーソルと Esc で隠す機能が働かなくなり、クイックウインドウでもページ自体の「サイドバーを開く」と「新しいチャット」のボタンが隠れなくなります。";
+"settings.web.dependencyNote" = "入力欄へのカーソルと Esc で隠す機能は、「詳細」で Web 補助機能をオンにすると使えます。保存した設定は変わりません。";
+"settings.web.requiredHint" = "「詳細」で Web 補助機能をオンにする必要があります。";
+"settings.assistive.purpose" = "Grammarly や Computer Use などのツールで必要になることがあります。";
+"settings.assistive.learnMore" = "詳しい情報";
+"settings.assistive.expanded" = "展開";
+"settings.assistive.collapsed" = "折りたたみ";
+"settings.assistive.details" = "オンにすると、公式の検索などのポップアップを開閉するときに十数秒止まることがあります。VoiceOver またはスイッチコントロールがオンのときは、このスイッチで Web ページの内容は制限されません。オフに戻したあと、完全に反映させるにはアプリを再起動してください。";
+
+/* ウインドウ上部と起動画面 */
+"bar.hideWindow" = "ウインドウを隠す";
+"bar.toFull" = "フルウインドウに切り替え";
+"bar.toQuick" = "クイックウインドウに切り替え";
+"launch.opening" = "開いています";
+"load.problem.title" = "ChatGPT に接続できません";
+"load.problem.waiting" = "ネットワークにつながると自動で再試行します。";
+"load.problem.connecting" = "再接続しています…";
+"load.problem.stopped" = "ネットワークを確認してから、「再読み込み」をクリックするか ⌘R を押してください。";
+
+/* このアプリについて・ベータ版の説明 */
+"about.version" = "バージョン %1$@（ビルド %2$@）";
+"about.description" = "ChatGPT の公式 Web サイトをネイティブの macOS ウインドウで開きます。ショートカットでクイックウインドウを呼び出し、必要に応じてフルウインドウに切り替えられます。";
+"about.notOfficial" = "OpenAI の公式アプリではなく、OpenAI とは提携していません。ChatGPT は OpenAI の商標です。";
+"about.placeholderIcon" = "現在のアイコンは仮のもので、最終版ではありません。";
+"about.trialNotes" = "ベータ版の説明と既知の問題";
+"about.feedback" = "GitHub で問題を報告";
+"about.copyVersion" = "バージョン情報をコピー";
+"about.copied" = "コピーしました";
+"about.feedbackNote" = "問題を報告するときは、バージョン情報と問題の説明を添えてください。診断ウインドウから個人情報を除いたレポートをコピーできます。Issues は公開されるため、チャットの内容やアカウント情報は貼り付けないでください。";
+"trialNotes.missing" = "このビルドにはベータ版の説明が含まれていません。";
+
+/* 診断ウインドウ（レポート自体の項目名は変えません） */
+"diag.title" = "診断（個人情報なし）";
+"diag.collect" = "証拠を収集";
+"diag.collect.help" = "ページの機能と公式読み上げの構造を更新し、レポートファイルに書き込みます";
+"diag.copyReport" = "レポートをコピー";
+"diag.copyReport.help" = "以前の記録と比べたりスクリプトで読み取ったりできるよう、レポートの項目名は元の中国語のままです。";
+"diag.resetGateC" = "Gate C のカウントをリセット";
+"diag.row.build" = "ビルド";
+"diag.row.hotkey" = "ショートカット";
+"diag.row.dataStore" = "データストア";
+"diag.dataStore.persistent" = "永続化を設定済み（ログイン後の再起動で要確認）";
+"diag.dataStore.ephemeral" = "非永続";
+"diag.row.page" = "ページ";
+"diag.row.input" = "入力欄";
+"diag.input.value" = "検出=%1$@ フォーカス=%2$@";
+"diag.row.messages" = "メッセージ";
+"diag.messages.value" = "%1$@、アシスタント %2$ld、生成中=%3$@、オーバーレイ=%4$@";
+"diag.row.selectors" = "セレクタの一致";
+"diag.row.gateC" = "Gate C";
+"diag.gateC.value" = "ショートカット %1$ld · 表示 %2$ld / 非表示 %3$ld · アクティブ化 %4$ld · 切り替え %5$ld · フォーカス復元 ✓%6$ld ✗%7$ld";
+"diag.row.frontApps" = "最前面のアプリ";
+"diag.row.inputFocus" = "入力欄のフォーカス";
+"diag.readAloud" = "公式 Read Aloud の証拠";
+"diag.readAloud.media" = "WebKit のメディア状態（参考値。サスペンドして再開すると、音が出ていなくても playing と表示されることがあります）：%@";
+"diag.readAloud.structure" = "構造：%@";
+"diag.readAloud.rate" = "速度の測定：%@";
+"diag.notCollected" = "未収集";
+"diag.notMeasured" = "未測定";
+"diag.experiments.warning" = "実験（証拠の収集専用で、製品の機能ではありません。サスペンドと再開で公式読み上げの状態がずれることを確認済み）";
+"diag.exp.measure" = "実際の速度を測定";
+"diag.exp.suspend" = "Web メディアをサスペンド";
+"diag.exp.resume" = "Web メディアを再開";
+"diag.exp.pauseAll" = "すべての Web メディアを一時停止";
+"diag.exp.setRate" = "設定して測定";

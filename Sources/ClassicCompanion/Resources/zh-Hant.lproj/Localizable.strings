@@ -1,0 +1,175 @@
+/* Classic Companion — 繁體中文（一套繁體，用 macOS 繁體中文的台灣用詞）。鍵和英文表一致；LocalizationTests 檢查鍵、格式符和字形。 */
+
+/* 通用 */
+"common.ok" = "好";
+"common.cancel" = "取消";
+"list.separator" = "、";
+"format.withShortcut" = "%1$@（%2$@）";
+
+/* 選單（主選單和選單列選單共用） */
+"menu.about" = "關於 Classic Companion";
+"menu.settings" = "設定⋯";
+"menu.diagnostics" = "診斷";
+"menu.hideApp" = "隱藏 Classic Companion";
+"menu.hideOthers" = "隱藏其他";
+"menu.showAll" = "顯示全部";
+"menu.quit" = "結束 Classic Companion";
+"menu.file" = "檔案";
+"menu.newChat" = "新增對話";
+"menu.toggleMode" = "切換小視窗／完整視窗";
+"menu.reload" = "重新載入";
+"menu.closeWindow" = "關閉視窗";
+"menu.edit" = "編輯";
+"menu.undo" = "還原";
+"menu.redo" = "重做";
+"menu.cut" = "剪下";
+"menu.copy" = "拷貝";
+"menu.paste" = "貼上";
+"menu.selectAll" = "全選";
+"menu.view" = "顯示方式";
+"menu.zoomIn" = "放大";
+"menu.zoomOut" = "縮小";
+"menu.actualSize" = "實際大小";
+"menu.window" = "視窗";
+"menu.minimize" = "縮到最小";
+"menu.zoom" = "縮放";
+"menu.bringAllToFront" = "將此程式所有視窗移至最前";
+"menu.showQuick" = "顯示小視窗";
+"menu.openFull" = "打開完整視窗";
+
+/* 視窗標題 */
+"window.settings" = "Classic Companion 設定";
+"window.trialNotes" = "試用版說明";
+"window.diagnostics" = "Classic Companion 診斷";
+"window.popup" = "Classic Companion — 彈出視窗";
+
+/* 快速鍵註冊 */
+"alert.hotkeyFailed.title" = "快速鍵 %@ 註冊失敗";
+"alert.hotkeyFailed.body" = "%@\n可以在設定中換一個組合，或從選單列圖像打開視窗。";
+"hotkey.status.registered" = "已註冊";
+"hotkey.status.notRegistered" = "未註冊";
+"hotkey.status.inUse" = "註冊失敗：組合已被其他 App 或系統佔用（eventHotKeyExistsErr）";
+"hotkey.status.invalid" = "註冊失敗：無效的組合（eventHotKeyInvalidErr）";
+"hotkey.status.other" = "註冊失敗：OSStatus %@";
+"hotkey.apply.inUse.kept" = "%1$@ 已被佔用，仍在使用 %2$@。";
+"hotkey.apply.invalid.kept" = "%1$@ 無法使用，仍在使用 %2$@。";
+"hotkey.apply.inUse.lost" = "%1$@ 已被佔用，%2$@ 也沒有恢復，請重新設定。";
+"hotkey.apply.invalid.lost" = "%1$@ 無法使用，%2$@ 也沒有恢復，請重新設定。";
+
+/* 錄製快速鍵 */
+"hotkey.reject.needsModifier" = "至少要包含 ⌘、⌥ 或 ⌃ 其中一個，否則打字時會誤觸。";
+"hotkey.reject.used" = "%1$@ 用來%2$@，請換一個。";
+"hotkey.reject.common" = "%@ 是常用的快速鍵，請換一個。";
+"purpose.hideWindow" = "隱藏視窗";
+"purpose.quitApp" = "結束 App";
+"purpose.minimizeWindow" = "將視窗縮到最小";
+"purpose.hideApp" = "隱藏 App";
+"purpose.hideOthers" = "隱藏其他 App";
+"purpose.newChat" = "新增對話";
+"purpose.searchChats" = "搜尋對話";
+"purpose.reload" = "重新載入頁面";
+"purpose.restorePage" = "恢復頁面";
+"purpose.openSettings" = "打開設定";
+"purpose.openDiagnostics" = "打開診斷";
+"purpose.redo" = "重做";
+"purpose.zoomPage" = "調整頁面大小";
+"purpose.toggleMode" = "切換小視窗和完整視窗";
+"purpose.wake" = "叫出和隱藏視窗";
+"hotkey.prompt.waiting" = "按下新的組合⋯";
+"hotkey.grabbedHint" = "錄製被打斷：這個組合可能已被其他 App 佔用，請再試一次或換一個。";
+"hotkey.conflict" = "按下時 %@ 也會打開。";
+"hotkey.note.recording" = "按 Esc 取消，原本的按鍵繼續有效。";
+"hotkey.note.wakeIdle" = "在任何 App 中都能使用。";
+"hotkey.note.modeIdle" = "只在本 App 的視窗位於最前方時有效。";
+"hotkey.field.waiting" = "正在等待新的組合";
+"hotkey.otherApp" = "另一個 App";
+"hotkey.keyNumber" = "按鍵 %@";
+
+/* 設定 */
+"settings.appLanguage" = "App 語言";
+"settings.language.system" = "跟隨系統";
+"settings.language.note" = "僅影響 App 介面，不會改變 ChatGPT 網頁語言。";
+"settings.shortcut.wake" = "叫出／隱藏";
+"settings.shortcut.wakeName" = "叫出快速鍵";
+"settings.shortcut.mode" = "小視窗／完整視窗";
+"settings.shortcut.modeName" = "切換快速鍵";
+"settings.shortcut.reset" = "回復預設值";
+"settings.shortcut.footer" = "按一下欄位，再按下想用的組合。";
+"settings.pageZoom" = "頁面縮放";
+"settings.pageZoom.note" = "小視窗和完整視窗共用，也可以按 ⌘+、⌘-、⌘0。";
+"settings.web.enable" = "啟用網頁增強功能";
+"settings.web.focus" = "叫出後將游標放在官方輸入框";
+"settings.web.escape" = "一般聊天狀態下按 Esc 隱藏視窗";
+"settings.session.restore" = "啟動時重新打開最近瀏覽的對話";
+"settings.assistive.allow" = "允許其他 App 讀取網頁內容";
+"settings.section.diagnostics" = "診斷";
+"settings.diagnostics.open" = "打開診斷";
+"settings.diagnostics.note" = "遇到問題時查看執行狀態。也可以按 ⌥⌘D。";
+"settings.pane.general" = "一般";
+"settings.pane.shortcuts" = "快速鍵";
+"settings.pane.advanced" = "進階";
+"settings.web.note" = "關閉後，「一般」中的游標放在輸入框和 Esc 隱藏視窗會暫停，小視窗也不再隱藏網頁本身的側邊欄按鈕和新增按鈕。";
+"settings.web.dependencyNote" = "游標放在輸入框和 Esc 隱藏視窗需要在「進階」中啟用網頁增強功能。已儲存的選擇不會改變。";
+"settings.web.requiredHint" = "需要在「進階」中啟用網頁增強功能。";
+"settings.assistive.purpose" = "Grammarly、Computer Use 等工具可能需要開啟。";
+"settings.assistive.learnMore" = "瞭解更多";
+"settings.assistive.expanded" = "已展開";
+"settings.assistive.collapsed" = "已收合";
+"settings.assistive.details" = "開啟後，打開或關閉官方搜尋等彈出層時可能卡頓十幾秒。VoiceOver 或切換控制開啟時，網頁內容不受這個開關限制。改回關閉後，需要重新啟動 App 才會完全生效。";
+
+/* 視窗頂部和啟動畫面 */
+"bar.hideWindow" = "隱藏視窗";
+"bar.toFull" = "切換到完整視窗";
+"bar.toQuick" = "切換到小視窗";
+"launch.opening" = "正在開啟";
+"load.problem.title" = "無法連線到 ChatGPT";
+"load.problem.waiting" = "連上網路後會自動重試。";
+"load.problem.connecting" = "正在重新連線⋯";
+"load.problem.stopped" = "請檢查網路，然後按一下「重新載入」或按 ⌘R。";
+
+/* 關於和試用版說明 */
+"about.version" = "版本 %1$@（建置 %2$@）";
+"about.description" = "以原生 macOS 視窗開啟 ChatGPT 官方網頁：用快速鍵叫出小視窗，需要時再切換到完整視窗。";
+"about.notOfficial" = "非 OpenAI 官方 App，與 OpenAI 沒有關聯。ChatGPT 是 OpenAI 的商標。";
+"about.placeholderIcon" = "目前的圖像是暫時佔位，不是最終圖像。";
+"about.trialNotes" = "試用版說明與已知問題";
+"about.feedback" = "在 GitHub 回報問題";
+"about.copyVersion" = "拷貝版本資訊";
+"about.copied" = "已拷貝";
+"about.feedbackNote" = "回報問題時請附上版本資訊和問題描述；診斷視窗可以拷貝已去除敏感資訊的報告。Issues 是公開的，請勿貼上對話內容或帳號資訊。";
+"trialNotes.missing" = "此版本未包含試用版說明。";
+
+/* 診斷視窗（報告本身保持原本的欄位名稱） */
+"diag.title" = "診斷（已去除敏感資訊）";
+"diag.collect" = "收集證據";
+"diag.collect.help" = "重新整理頁面能力與官方朗讀結構，並寫入報告檔案";
+"diag.copyReport" = "拷貝報告";
+"diag.copyReport.help" = "報告保留原本的簡體中文欄位名稱，方便和以前的紀錄對照、供腳本讀取。";
+"diag.resetGateC" = "重設 Gate C 計數";
+"diag.row.build" = "建置";
+"diag.row.hotkey" = "快速鍵";
+"diag.row.dataStore" = "資料儲存";
+"diag.dataStore.persistent" = "已設定為持久性（登入後重新啟動待實測）";
+"diag.dataStore.ephemeral" = "非持久性";
+"diag.row.page" = "頁面";
+"diag.row.input" = "輸入框";
+"diag.input.value" = "找到=%1$@ 聚焦=%2$@";
+"diag.row.messages" = "訊息";
+"diag.messages.value" = "%1$@，助理 %2$ld，產生中=%3$@，彈出層=%4$@";
+"diag.row.selectors" = "選擇器命中";
+"diag.row.gateC" = "Gate C";
+"diag.gateC.value" = "快速鍵 %1$ld · 叫出 %2$ld / 隱藏 %3$ld · 啟用 %4$ld · 切換 %5$ld · 焦點恢復 ✓%6$ld ✗%7$ld";
+"diag.row.frontApps" = "前景 App";
+"diag.row.inputFocus" = "輸入框聚焦";
+"diag.readAloud" = "官方 Read Aloud 證據";
+"diag.readAloud.media" = "WebKit 媒體狀態（僅供參考，掛起再恢復後可能顯示 playing 但實際無聲）：%@";
+"diag.readAloud.structure" = "結構：%@";
+"diag.readAloud.rate" = "速率測量：%@";
+"diag.notCollected" = "未收集";
+"diag.notMeasured" = "未測量";
+"diag.experiments.warning" = "實驗（僅供蒐證，不是產品功能；已證實掛起／恢復會使官方朗讀狀態不同步）";
+"diag.exp.measure" = "測量實際速率";
+"diag.exp.suspend" = "掛起網頁媒體";
+"diag.exp.resume" = "恢復網頁媒體";
+"diag.exp.pauseAll" = "暫停全部網頁媒體";
+"diag.exp.setRate" = "設定並測量";

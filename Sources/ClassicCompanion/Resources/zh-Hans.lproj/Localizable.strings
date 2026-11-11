@@ -1,0 +1,175 @@
+/* Classic Companion — 简体中文。键和英文表一致；LocalizationTests 检查键和格式符。 */
+
+/* 通用 */
+"common.ok" = "好";
+"common.cancel" = "取消";
+"list.separator" = "、";
+"format.withShortcut" = "%1$@（%2$@）";
+
+/* 菜单（主菜单和菜单栏菜单共用） */
+"menu.about" = "关于 Classic Companion";
+"menu.settings" = "设置…";
+"menu.diagnostics" = "诊断";
+"menu.hideApp" = "隐藏 Classic Companion";
+"menu.hideOthers" = "隐藏其他";
+"menu.showAll" = "全部显示";
+"menu.quit" = "退出 Classic Companion";
+"menu.file" = "文件";
+"menu.newChat" = "新建对话";
+"menu.toggleMode" = "切换小窗 / 完整窗口";
+"menu.reload" = "重新加载";
+"menu.closeWindow" = "关闭窗口";
+"menu.edit" = "编辑";
+"menu.undo" = "撤销";
+"menu.redo" = "重做";
+"menu.cut" = "剪切";
+"menu.copy" = "拷贝";
+"menu.paste" = "粘贴";
+"menu.selectAll" = "全选";
+"menu.view" = "显示";
+"menu.zoomIn" = "放大";
+"menu.zoomOut" = "缩小";
+"menu.actualSize" = "实际大小";
+"menu.window" = "窗口";
+"menu.minimize" = "最小化";
+"menu.zoom" = "缩放";
+"menu.bringAllToFront" = "前置全部窗口";
+"menu.showQuick" = "显示小窗";
+"menu.openFull" = "打开完整窗口";
+
+/* 窗口标题 */
+"window.settings" = "Classic Companion 设置";
+"window.trialNotes" = "试用版说明";
+"window.diagnostics" = "Classic Companion 诊断";
+"window.popup" = "Classic Companion — 弹窗";
+
+/* 快捷键注册 */
+"alert.hotkeyFailed.title" = "快捷键 %@ 注册失败";
+"alert.hotkeyFailed.body" = "%@\n可在设置中换一个组合，或通过菜单栏图标打开窗口。";
+"hotkey.status.registered" = "已注册";
+"hotkey.status.notRegistered" = "未注册";
+"hotkey.status.inUse" = "注册失败：组合已被其他应用或系统占用（eventHotKeyExistsErr）";
+"hotkey.status.invalid" = "注册失败：无效组合（eventHotKeyInvalidErr）";
+"hotkey.status.other" = "注册失败：OSStatus %@";
+"hotkey.apply.inUse.kept" = "%1$@ 已被占用，仍在使用 %2$@。";
+"hotkey.apply.invalid.kept" = "%1$@ 不能使用，仍在使用 %2$@。";
+"hotkey.apply.inUse.lost" = "%1$@ 已被占用，%2$@ 也没有恢复，请重新设置。";
+"hotkey.apply.invalid.lost" = "%1$@ 不能使用，%2$@ 也没有恢复，请重新设置。";
+
+/* 录制快捷键 */
+"hotkey.reject.needsModifier" = "至少要带 ⌘、⌥ 或 ⌃ 中的一个，否则打字时会误触。";
+"hotkey.reject.used" = "%1$@ 用来%2$@，请换一个。";
+"hotkey.reject.common" = "%@ 是常用的快捷键，请换一个。";
+"purpose.hideWindow" = "隐藏窗口";
+"purpose.quitApp" = "退出应用";
+"purpose.minimizeWindow" = "最小化窗口";
+"purpose.hideApp" = "隐藏应用";
+"purpose.hideOthers" = "隐藏其他应用";
+"purpose.newChat" = "新建对话";
+"purpose.searchChats" = "查找会话";
+"purpose.reload" = "重新加载页面";
+"purpose.restorePage" = "恢复页面";
+"purpose.openSettings" = "打开设置";
+"purpose.openDiagnostics" = "打开诊断";
+"purpose.redo" = "重做";
+"purpose.zoomPage" = "调整页面大小";
+"purpose.toggleMode" = "切换小窗和完整窗口";
+"purpose.wake" = "唤醒和隐藏窗口";
+"hotkey.prompt.waiting" = "按下新的组合…";
+"hotkey.grabbedHint" = "录制被打断：这个组合可能已被其他应用占用，请再试一次或换一个。";
+"hotkey.conflict" = "按下时 %@ 也会打开。";
+"hotkey.note.recording" = "按 Esc 取消，原来的键继续有效。";
+"hotkey.note.wakeIdle" = "在任何应用里都能用。";
+"hotkey.note.modeIdle" = "只在本应用窗口在前台时有效。";
+"hotkey.field.waiting" = "正在等待新的组合";
+"hotkey.otherApp" = "另一个应用";
+"hotkey.keyNumber" = "键 %@";
+
+/* 设置 */
+"settings.appLanguage" = "应用语言";
+"settings.language.system" = "跟随系统";
+"settings.language.note" = "仅影响应用界面，不改变 ChatGPT 网页语言。";
+"settings.shortcut.wake" = "唤醒 / 隐藏";
+"settings.shortcut.wakeName" = "唤醒快捷键";
+"settings.shortcut.mode" = "小窗 / 完整窗口";
+"settings.shortcut.modeName" = "切换快捷键";
+"settings.shortcut.reset" = "恢复默认";
+"settings.shortcut.footer" = "点一下框，再按下想用的组合。";
+"settings.pageZoom" = "页面缩放";
+"settings.pageZoom.note" = "小窗和完整窗口共用，也可以按 ⌘+、⌘-、⌘0。";
+"settings.web.enable" = "启用网页增强";
+"settings.web.focus" = "唤醒后聚焦官方输入框";
+"settings.web.escape" = "普通聊天状态下 Esc 隐藏窗口";
+"settings.session.restore" = "启动时恢复最近访问的对话";
+"settings.assistive.allow" = "允许其他应用读取网页内容";
+"settings.section.diagnostics" = "诊断";
+"settings.diagnostics.open" = "打开诊断";
+"settings.diagnostics.note" = "遇到问题时查看运行状态。也可以按 ⌥⌘D。";
+"settings.pane.general" = "通用";
+"settings.pane.shortcuts" = "快捷键";
+"settings.pane.advanced" = "高级";
+"settings.web.note" = "关闭后，“通用”中的聚焦输入框和 Esc 隐藏窗口暂停生效，小窗也不再隐藏网页自带的侧栏按钮和新建按钮。";
+"settings.web.dependencyNote" = "聚焦输入框和 Esc 隐藏窗口需要在“高级”中启用网页增强。已保存的选择不会改变。";
+"settings.web.requiredHint" = "需要在“高级”中启用网页增强。";
+"settings.assistive.purpose" = "Grammarly、Computer Use 等工具可能需要开启。";
+"settings.assistive.learnMore" = "了解更多";
+"settings.assistive.expanded" = "已展开";
+"settings.assistive.collapsed" = "已收起";
+"settings.assistive.details" = "开启后，打开或关闭官方搜索等弹层时可能卡顿十几秒。VoiceOver 或切换控制开着时，网页内容不受这个开关限制。改回关闭后，需要重启应用才完全生效。";
+
+/* 窗口顶部和启动画面 */
+"bar.hideWindow" = "隐藏窗口";
+"bar.toFull" = "切到完整窗口";
+"bar.toQuick" = "切到小窗";
+"launch.opening" = "正在打开";
+"load.problem.title" = "无法连接 ChatGPT";
+"load.problem.waiting" = "联网后会自动重试。";
+"load.problem.connecting" = "正在重新连接…";
+"load.problem.stopped" = "请检查网络，然后点“重新加载”或按 ⌘R。";
+
+/* 关于和试用版说明 */
+"about.version" = "版本 %1$@（构建 %2$@）";
+"about.description" = "用原生 macOS 窗口打开 ChatGPT 官方网页：快捷键唤出小窗，需要时切换到完整窗口。";
+"about.notOfficial" = "非 OpenAI 官方应用，与 OpenAI 没有关联。ChatGPT 是 OpenAI 的商标。";
+"about.placeholderIcon" = "当前图标为临时占位，不是最终图标。";
+"about.trialNotes" = "试用版说明与已知问题";
+"about.feedback" = "在 GitHub 反馈问题";
+"about.copyVersion" = "复制版本信息";
+"about.copied" = "已复制";
+"about.feedbackNote" = "提问题时附上版本信息和问题描述；诊断窗口可复制脱敏报告。Issues 是公开的，不要贴对话内容或账号信息。";
+"trialNotes.missing" = "此版本未包含试用版说明。";
+
+/* 诊断窗口（报告本身保持原来的字段名） */
+"diag.title" = "诊断（脱敏）";
+"diag.collect" = "采集证据";
+"diag.collect.help" = "刷新页面能力与官方朗读结构，并写入报告文件";
+"diag.copyReport" = "复制报告";
+"diag.copyReport.help" = "报告保持原来的中文字段名，便于和以前的记录对照、给脚本读取。";
+"diag.resetGateC" = "重置 Gate C 计数";
+"diag.row.build" = "构建";
+"diag.row.hotkey" = "快捷键";
+"diag.row.dataStore" = "数据存储";
+"diag.dataStore.persistent" = "已配置持久化（登录后重启待实测）";
+"diag.dataStore.ephemeral" = "非持久化";
+"diag.row.page" = "页面";
+"diag.row.input" = "输入框";
+"diag.input.value" = "找到=%1$@ 聚焦=%2$@";
+"diag.row.messages" = "消息";
+"diag.messages.value" = "%1$@，助手 %2$ld，生成中=%3$@，弹层=%4$@";
+"diag.row.selectors" = "选择器命中";
+"diag.row.gateC" = "Gate C";
+"diag.gateC.value" = "快捷键 %1$ld · 唤醒 %2$ld / 隐藏 %3$ld · 激活 %4$ld · 切换 %5$ld · 焦点恢复 ✓%6$ld ✗%7$ld";
+"diag.row.frontApps" = "前台应用";
+"diag.row.inputFocus" = "输入框聚焦";
+"diag.readAloud" = "官方 Read Aloud 证据";
+"diag.readAloud.media" = "WebKit 媒体状态（仅供参考，挂起再恢复后可能显示 playing 但实际无声）：%@";
+"diag.readAloud.structure" = "结构：%@";
+"diag.readAloud.rate" = "速率测量：%@";
+"diag.notCollected" = "未采集";
+"diag.notMeasured" = "未测量";
+"diag.experiments.warning" = "实验（仅用于取证，不是产品功能；已证实挂起/恢复会使官方朗读状态不同步）";
+"diag.exp.measure" = "测量实际速率";
+"diag.exp.suspend" = "挂起网页媒体";
+"diag.exp.resume" = "恢复网页媒体";
+"diag.exp.pauseAll" = "暂停全部网页媒体";
+"diag.exp.setRate" = "设置并测量";
