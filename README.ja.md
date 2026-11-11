@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/mactokyo/ClassicCompanion/main/assets/poster-ja.png" alt="Classic Companion" width="960">
+
 # Classic Companion
 
 [English](README.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md)
@@ -8,7 +10,9 @@
 
 SwiftUI、AppKit、WKWebView で ChatGPT の公式サイトを表示するアプリです。`⌥ Space` で小さなウインドウを呼び出し、`⌃⌘F` で大きなウインドウに切り替えます。ショートカット設定、ログイン状態の保持、ページズーム、日本語・英語・簡体字中国語・繁体字中国語に対応しています。会話と読み上げは公式サイトの機能を使用します。OpenAI とは関係のない独立したアプリです。
 
-これは [Apache-2.0](LICENSE) で公開する**ソースリポジトリ**です。配布と利用者向けフィードバックは [ClassicCompanion](https://github.com/mactokyo/ClassicCompanion) で扱います。
+これは [Apache-2.0](LICENSE) で公開する**ソースリポジトリ**です。ソースコード、ダウンロード、フィードバックをこのリポジトリにまとめています。
+
+**[DMG をダウンロード →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.1/ClassicCompanion-0.1.0-beta.1-20261110.0137-arm64.dmg)** · [リリース情報](https://github.com/xtymac/ClassicCompanion/releases) · [フィードバック](https://github.com/xtymac/ClassicCompanion/issues)
 
 ## レビューと検証
 
@@ -19,8 +23,8 @@ SwiftUI、AppKit、WKWebView で ChatGPT の公式サイトを表示するアプ
 Apple silicon Mac、macOS 15 以降、Swift 6 対応のフル Xcode が必要です。今回の検証環境は Xcode 27.2 / Swift 6.4.2 / macOS 27.2 です。他のツールチェーンと最低 OS バージョンは未検証です。
 
 ```sh
-git clone https://github.com/mactokyo/ClassicCompanion-App.git
-cd ClassicCompanion-App
+git clone https://github.com/xtymac/ClassicCompanion.git
+cd ClassicCompanion
 xcodebuild -version
 swift --version
 swift test

@@ -1,6 +1,6 @@
 # Contributing
 
-Use this source repository for code issues and pull requests. Use [the distribution repository](https://github.com/mactokyo/ClassicCompanion/issues) for installation and end-user feedback. Do not post account credentials or conversation content.
+Use this repository for code issues, pull requests, installation questions and user feedback. Do not post account credentials or conversation content.
 
 For a code change, describe the problem, keep the diff focused, add meaningful regression coverage and run `swift test` plus `CC_SIGNING_MODE=adhoc scripts/build-app.sh debug` on macOS. Report OS/toolchain versions and any untested behavior. Tests briefly open windows; run them in a logged-in desktop session and avoid typing while they run.
 

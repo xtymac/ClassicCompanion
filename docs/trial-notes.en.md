@@ -56,7 +56,7 @@ This build is signed with Developer ID and notarized by Apple. The first time yo
 
 ## Feedback
 
-Please report issues on GitHub Issues: https://github.com/mactokyo/ClassicCompanion/issues
+Please report issues on GitHub Issues: https://github.com/xtymac/ClassicCompanion/issues
 
 In About Classic Companion you can copy the version info, and the Diagnostics window (Settings → Advanced → Open Diagnostics) can copy a redacted report. Include them with a description of the problem. Issues are public, so don’t paste chat content, account details or private content from screenshots.
 

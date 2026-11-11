@@ -56,7 +56,7 @@ Classic Companion 以原生 macOS 視窗開啟 ChatGPT 官方網頁。按 `⌥Sp
 
 ## 回饋
 
-請到 GitHub Issues 回饋：https://github.com/mactokyo/ClassicCompanion/issues
+請到 GitHub Issues 回饋：https://github.com/xtymac/ClassicCompanion/issues
 
 在「關於 Classic Companion」中可以拷貝版本資訊，診斷視窗（設定 → 進階 → 打開診斷）可以拷貝已去除敏感資訊的報告，回報問題時連同問題描述一起附上。Issues 是公開的，請勿貼上對話內容、帳號資訊或截圖中的私人內容。
 

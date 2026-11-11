@@ -146,10 +146,10 @@ final class SystemIntegrationTests: XCTestCase {
 
     func testFeedbackGoesToGitHubIssuesAndTrialNotesSayTheSame() throws {
         // 用户 2026-11-08 建好公开仓库并开了 Issues。改地址时两处一起改。
-        XCTAssertEqual(AppInfo.feedbackURL?.absoluteString, "https://github.com/mactokyo/ClassicCompanion/issues")
+        XCTAssertEqual(AppInfo.feedbackURL?.absoluteString, "https://github.com/xtymac/ClassicCompanion/issues")
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let notes = try String(contentsOf: root.appendingPathComponent("docs/trial-notes.md"), encoding: .utf8)
-        XCTAssertTrue(notes.contains("https://github.com/mactokyo/ClassicCompanion/issues"))
+        XCTAssertTrue(notes.contains("https://github.com/xtymac/ClassicCompanion/issues"))
         XCTAssertFalse(notes.contains("尚未确定"), "verify-release.sh --final 会拦下")
     }
 
@@ -182,7 +182,7 @@ final class SystemIntegrationTests: XCTestCase {
         let script = try String(contentsOf: root.appendingPathComponent("scripts/build-app.sh"), encoding: .utf8)
         for language in AppLanguage.allCases {
             let notes = try String(contentsOf: root.appendingPathComponent("docs/\(sources[language]!)"), encoding: .utf8)
-            XCTAssertTrue(notes.contains("https://github.com/mactokyo/ClassicCompanion/issues"), "\(language)")
+            XCTAssertTrue(notes.contains("https://github.com/xtymac/ClassicCompanion/issues"), "\(language)")
             XCTAssertTrue(notes.contains("{{VERSION}}") && notes.contains("{{BUILD}}"), "\(language) 版本和构建号由构建脚本填")
             XCTAssertTrue(notes.contains(signed[language]!), "\(language)")
             XCTAssertTrue(script.contains(signed[language]!), "\(language) build-app.sh 要能把签名句改掉")

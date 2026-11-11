@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/mactokyo/ClassicCompanion/main/assets/poster-en.png" alt="Classic Companion" width="960">
+
 # Classic Companion
 
 [English](README.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md)
@@ -8,7 +10,9 @@
 
 Classic Companion wraps the official ChatGPT website with SwiftUI, AppKit and WKWebView. Press `⌥ Space` to open a compact chat window, or switch to the full window with `⌃⌘F`. It includes configurable shortcuts, persistent sign-in, page zoom and four interface languages. ChatGPT provides the conversations and Read Aloud; this is an independent app, not affiliated with OpenAI.
 
-This is the **public source repository**, licensed under [Apache-2.0](LICENSE). Downloads and user feedback remain in [ClassicCompanion](https://github.com/mactokyo/ClassicCompanion).
+This is the **public source repository**, licensed under [Apache-2.0](LICENSE). This repository brings together source code, downloads and feedback.
+
+**[Download DMG →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.1/ClassicCompanion-0.1.0-beta.1-20261110.0137-arm64.dmg)** · [Release notes](https://github.com/xtymac/ClassicCompanion/releases) · [Feedback](https://github.com/xtymac/ClassicCompanion/issues)
 
 ## Review and verification
 
@@ -19,8 +23,8 @@ See the [review guide](docs/review.md) for validation results, architecture and 
 Use an Apple silicon Mac with macOS 15+ and full Xcode with Swift 6 support. The verified toolchain for this review is Xcode 27.2 / Swift 6.4.2 / macOS 27.2; other toolchains and the minimum OS have not been verified.
 
 ```sh
-git clone https://github.com/mactokyo/ClassicCompanion-App.git
-cd ClassicCompanion-App
+git clone https://github.com/xtymac/ClassicCompanion.git
+cd ClassicCompanion
 xcodebuild -version
 swift --version
 swift test

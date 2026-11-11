@@ -56,7 +56,7 @@ ZIP からインストールする場合：
 
 ## フィードバック
 
-GitHub Issues でお知らせください：https://github.com/mactokyo/ClassicCompanion/issues
+GitHub Issues でお知らせください：https://github.com/xtymac/ClassicCompanion/issues
 
 「Classic Companion について」でバージョン情報をコピーでき、診断ウインドウ（設定 → 詳細 → 診断を開く）では個人情報を除いたレポートをコピーできます。問題の説明と一緒に添えてください。Issues は公開されるため、チャットの内容、アカウント情報、スクリーンショットに写った個人的な内容は貼り付けないでください。
 

@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/mactokyo/ClassicCompanion/main/assets/poster-zh-hans.png" alt="Classic Companion" width="960">
+
 # Classic Companion
 
 [English](README.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md)
@@ -8,7 +10,9 @@
 
 项目使用 SwiftUI、AppKit 和 WKWebView 承载 ChatGPT 官方网页。默认 `⌥ Space` 唤出小窗，`⌃⌘F` 切换完整窗口，提供可配置快捷键、持久登录、页面缩放及中简、中繁、英、日四种界面语言。对话和朗读由官方网页提供；本项目是独立应用，与 OpenAI 无隶属关系。
 
-这是采用 [Apache-2.0](LICENSE) 的**公开源码仓库**。下载和用户反馈继续放在 [ClassicCompanion](https://github.com/mactokyo/ClassicCompanion)。
+这是采用 [Apache-2.0](LICENSE) 的**公开源码仓库**。源码、下载和用户反馈统一在本仓库。
+
+**[下载 DMG →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.1/ClassicCompanion-0.1.0-beta.1-20261110.0137-arm64.dmg)** · [版本说明](https://github.com/xtymac/ClassicCompanion/releases) · [反馈](https://github.com/xtymac/ClassicCompanion/issues)
 
 ## 审查与验证
 
@@ -19,8 +23,8 @@
 需要 Apple silicon Mac、macOS 15+，以及支持 Swift 6 的完整 Xcode。本次验证环境为 Xcode 27.2 / Swift 6.4.2 / macOS 27.2，其他工具链和最低系统版本尚未验证。
 
 ```sh
-git clone https://github.com/mactokyo/ClassicCompanion-App.git
-cd ClassicCompanion-App
+git clone https://github.com/xtymac/ClassicCompanion.git
+cd ClassicCompanion
 xcodebuild -version
 swift --version
 swift test
