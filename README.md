@@ -53,4 +53,4 @@ The official site's DOM can change and break optional web enhancements. Offline 
 
 ## Contributing and licensing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md), [BRANDING.md](BRANDING.md), and the [release setup](docs/release-signing.md). Code and included assets use Apache-2.0; no trademark rights are granted.
+Read [CONTRIBUTING.md](CONTRIBUTING.md), [BRANDING.md](BRANDING.md), and the [release setup](docs/release-signing.md). Code, documentation and app/menu icons use Apache-2.0; promotional images in `assets/marketing/` are excluded (see BRANDING.md). No trademark rights are granted.

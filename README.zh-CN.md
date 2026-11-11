@@ -53,4 +53,4 @@ debug 使用 ad-hoc 签名，不需要维护者的发布证书或公证凭据，
 
 ## 贡献与授权
 
-请阅读[贡献说明](CONTRIBUTING.md)、[品牌说明](BRANDING.md)及[发布配置](docs/release-signing.md)。代码和仓库内素材采用 Apache-2.0；不授予商标权。
+请阅读[贡献说明](CONTRIBUTING.md)、[品牌说明](BRANDING.md)及[发布配置](docs/release-signing.md)。代码、文档及应用／菜单栏图标采用 Apache-2.0；`assets/marketing/` 中的宣传图片不在此授权范围内，详见 BRANDING.md。不授予商标权。

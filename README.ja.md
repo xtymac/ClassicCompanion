@@ -53,4 +53,4 @@ debug は ad-hoc 署名を使うため、開発者の配布用証明書や公証
 
 ## 貢献とライセンス
 
-[貢献方法](CONTRIBUTING.md)、[ブランド](BRANDING.md)、[配布設定](docs/release-signing.md)をご覧ください。コードと同梱素材は Apache-2.0、商標権は付与しません。
+[貢献方法](CONTRIBUTING.md)、[ブランド](BRANDING.md)、[配布設定](docs/release-signing.md)をご覧ください。コード、文書、アプリ／メニューアイコンは Apache-2.0 です。`assets/marketing/` の宣伝画像は対象外です（BRANDING.md 参照）。商標権は付与しません。

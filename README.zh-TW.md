@@ -53,4 +53,4 @@ debug 使用 ad-hoc 簽署，不需要維護者的發布憑證或公證認證資
 
 ## 貢獻與授權
 
-請閱讀[貢獻說明](CONTRIBUTING.md)、[品牌說明](BRANDING.md)及[發布設定](docs/release-signing.md)。程式碼和隨附素材採用 Apache-2.0；不授予商標權。
+請閱讀[貢獻說明](CONTRIBUTING.md)、[品牌說明](BRANDING.md)及[發布設定](docs/release-signing.md)。程式碼、文件及應用程式／選單列圖示採用 Apache-2.0；`assets/marketing/` 中的宣傳圖片不在此授權範圍內，詳見 BRANDING.md。不授予商標權。
