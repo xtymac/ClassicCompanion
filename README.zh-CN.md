@@ -1,4 +1,4 @@
-<img src="https://raw.githubusercontent.com/mactokyo/ClassicCompanion/main/assets/poster-zh-hans.png" alt="Classic Companion" width="960">
+<img src="assets/marketing/poster-zh-hans.png" alt="Classic Companion" width="960">
 
 # Classic Companion
 
