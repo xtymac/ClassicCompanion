@@ -463,7 +463,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         // 名称以 Template 结尾的资源由系统按菜单栏明暗着色。未打包运行时没有该资源，退回系统符号。
         let icon = NSImage(named: "MenuBarIconTemplate")
-            ?? NSImage(systemSymbolName: "bubble.left.and.text.bubble.right", accessibilityDescription: "Classic Companion")
+            ?? NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Classic Companion")
         icon?.isTemplate = true
         icon?.accessibilityDescription = "Classic Companion"
         statusItem.button?.image = icon
