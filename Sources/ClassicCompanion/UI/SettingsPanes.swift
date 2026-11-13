@@ -26,7 +26,8 @@ enum SettingsPane: Int, CaseIterable {
     /// 每页分几组，组内按顺序显示。
     var sections: [[SettingsItem]] {
         switch self {
-        case .general: [[.appLanguage, .pageZoom], [.restoreLastConversation, .focusInputOnShow, .escapeHidesWindow]]
+        case .general: [[.appLanguage, .pageZoom], [.restoreLastConversation, .focusInputOnShow, .escapeHidesWindow],
+                        [.automaticUpdateChecks]]
         case .shortcuts: [[.wakeShortcut, .modeShortcut]]
         case .advanced: [[.webEnhancements], [.allowPageAccessibility], [.diagnostics]]
         }
@@ -37,7 +38,7 @@ enum SettingsPane: Int, CaseIterable {
 
 /// 设置里每一个能改或能点的项目。存储键沿用原来的，不改名、不改默认值。
 enum SettingsItem: CaseIterable {
-    case appLanguage, pageZoom, restoreLastConversation, focusInputOnShow, escapeHidesWindow
+    case appLanguage, pageZoom, restoreLastConversation, focusInputOnShow, escapeHidesWindow, automaticUpdateChecks
     case wakeShortcut, modeShortcut
     case webEnhancements, allowPageAccessibility, diagnostics
 
@@ -48,6 +49,8 @@ enum SettingsItem: CaseIterable {
         case .restoreLastConversation: ["restoreLastConversation"]
         case .focusInputOnShow: ["focusInputOnShow"]
         case .escapeHidesWindow: ["escapeHidesWindow"]
+        // Sparkle 自己保存（首次询问的回答和这个开关是同一个值），不在 AppSettings 里。
+        case .automaticUpdateChecks: ["SUEnableAutomaticChecks"]
         case .wakeShortcut: ["hotKeyCode", "hotKeyModifiers"]
         case .modeShortcut: ["modeKeyCode", "modeKeyModifiers"]
         case .webEnhancements: ["webEnhancements"]
@@ -70,7 +73,8 @@ enum SettingsWindowLayout {
     /// 各语言里最长的一行（日文的快捷键名称加“恢复默认”）也不截断；宽度不随语言和页面变，切换时窗口不跳。
     static let width: CGFloat = 500
     /// 四种语言里最高的一页（“了解更多”收起时）也不用滚动。SettingsLayoutTests 逐页核对。
-    static let contentHeight: CGFloat = 400
+    /// 通用页加了“更新”一组（英文、日文 425 pt；发现新版本时再多一行“查看更新…”，480 pt），从 400 调到 480。
+    static let contentHeight: CGFloat = 480
     /// 再矮的屏幕也留出能用的高度。
     static let minimumContentHeight: CGFloat = 220
     /// 窗口上下各留一点空。
@@ -160,6 +164,7 @@ struct SettingsPaneView: View {
     let pane: SettingsPane
     @ObservedObject var settings: AppSettings
     @ObservedObject var diagnostics: Diagnostics
+    @ObservedObject var updates: UpdateStatus
     @ObservedObject var hotKeyRecorder: HotKeyRecorderModel
     @ObservedObject var modeKeyRecorder: HotKeyRecorderModel
     let onShowDiagnostics: () -> Void
@@ -170,7 +175,13 @@ struct SettingsPaneView: View {
     var body: some View {
         Form {
             ForEach(Array(pane.sections.enumerated()), id: \.offset) { _, items in
-                if let footer = footer(for: items) {
+                if let header = header(for: items) {
+                    Section {
+                        rows(items)
+                    } header: {
+                        Text(header)
+                    }
+                } else if let footer = footer(for: items) {
                     Section {
                         rows(items)
                     } footer: {
@@ -198,6 +209,11 @@ struct SettingsPaneView: View {
 
     private func rows(_ items: [SettingsItem]) -> some View {
         ForEach(items, id: \.self) { row($0) }
+    }
+
+    /// 只有“更新”一组带标题（用户要求的分组名）；其他组保持原样。
+    private func header(for items: [SettingsItem]) -> String? {
+        items.contains(.automaticUpdateChecks) ? L10n.string("settings.section.updates") : nil
     }
 
     private func footer(for items: [SettingsItem]) -> String? {
@@ -229,6 +245,20 @@ struct SettingsPaneView: View {
             dependentToggle(L10n.string("settings.web.focus"), isOn: $settings.focusInputOnShow, item: item)
         case .escapeHidesWindow:
             dependentToggle(L10n.string("settings.web.escape"), isOn: $settings.escapeHidesWindow, item: item)
+        case .automaticUpdateChecks:
+            // 直接读写 Sparkle 的 automaticallyChecksForUpdates：首次询问的回答、这里的开关和菜单是同一个值。
+            Toggle(isOn: Binding(get: { updates.automaticallyChecks }, set: { updates.setAutomaticChecks($0) })) {
+                Text(L10n.string("settings.updates.automatic"))
+                Text(L10n.string(updates.isAvailable ? "settings.updates.note" : "settings.updates.unavailable"))
+            }
+            .disabled(!updates.isAvailable)
+            if let version = updates.pendingVersion {
+                LabeledContent {
+                    Button(L10n.string("settings.updates.show")) { updates.checkForUpdates() }
+                } label: {
+                    Text(L10n.format("settings.updates.available", version))
+                }
+            }
         case .wakeShortcut:
             hotKeyRow(L10n.string("settings.shortcut.wake"), model: hotKeyRecorder, combo: settings.hotKey,
                       name: L10n.string("settings.shortcut.wakeName"), isDefault: settings.hotKey == .standard, note: wakeNote)

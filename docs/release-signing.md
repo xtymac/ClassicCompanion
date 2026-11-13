@@ -11,3 +11,5 @@ scripts/verify-release.sh --final ../ChatGPT-Classic-Companion-releases/trial-<v
 ```
 
 These commands require your own valid Apple credentials. Notarization submits the app and DMG to Apple; it does not publish to GitHub. Only the `upload/` outputs are distribution candidates; `local-only/` contains source snapshots, debug symbols and notarization logs. Signing and notarization do not replace functional acceptance testing. No signed distribution has been generated for this source publication.
+
+In-app updates (Sparkle 2) add a separate EdDSA signature. Developer ID signing, notarization and the Sparkle signature are verified separately and cannot stand in for each other. Framework embedding and signing order, the update checks in `verify-release.sh`, update-key custody and the appcast release order are described in [updates.md](updates.md).

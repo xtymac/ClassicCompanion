@@ -173,3 +173,28 @@
 "diag.exp.resume" = "Web メディアを再開";
 "diag.exp.pauseAll" = "すべての Web メディアを一時停止";
 "diag.exp.setRate" = "設定して測定";
+
+/* アップデート（Sparkle）。Sparkle 自身のウインドウは Sparkle の翻訳で macOS の言語に従い、ここの文字列は App の言語に従う。 */
+"menu.checkForUpdates" = "アップデートを確認…";
+"menu.updateAvailable" = "アップデートあり：%@…";
+"menu.updateBadge" = "新バージョン";
+"settings.section.updates" = "アップデート";
+"settings.updates.automatic" = "アップデートを自動的に確認";
+"settings.updates.note" = "1日に1回確認します。ダウンロード、インストール、再起動の前には必ず確認します。";
+"settings.updates.unavailable" = "このビルドはアップデートを確認できません。";
+"settings.updates.available" = "バージョン %@ が利用できます。";
+"settings.updates.show" = "アップデートを表示…";
+"update.ready.windowTitle" = "ソフトウェア・アップデート";
+"update.ready.title" = "アップデートをインストールする準備ができました";
+"update.ready.message" = "Classic Companion %@ のダウンロードが完了しました。インストールすると Classic Companion が終了し、再び開きます。";
+"update.ready.messageNoVersion" = "Classic Companion の新しいバージョンのダウンロードが完了しました。インストールすると Classic Companion が終了し、再び開きます。";
+"update.ready.reminder" = "続ける前に、生成中の回答が終わるのを待ち、読み上げを止め、入力中の内容を仕上げるかコピーしてください。再起動すると、送信していない文字が失われることがあります。";
+"update.ready.laterNote" = "「あとで」を選ぶと、今回のダウンロードは破棄されます。Classic Companion はそのまま使え、終了時にもインストールされません。あとでインストールするには「アップデートを確認…」を選んでください。";
+"update.ready.install" = "インストールして再起動";
+"update.ready.later" = "あとで";
+"update.authorize.title" = "このアップデートをダウンロードしてインストールしますか？";
+"update.authorize.message" = "確認すると Classic Companion %@ をダウンロードします。ダウンロードと検証が終わると、Classic Companion は自動的に終了し、アップデートをインストールして再び開きます。改めて確認することはありません。ダウンロード中は進行状況ウインドウでキャンセルできます。";
+"update.authorize.messageNoVersion" = "確認すると Classic Companion の新しいバージョンをダウンロードします。ダウンロードと検証が終わると、Classic Companion は自動的に終了し、アップデートをインストールして再び開きます。改めて確認することはありません。ダウンロード中は進行状況ウインドウでキャンセルできます。";
+"update.authorize.reminder" = "確認する前に、生成中の回答が終わるのを待ち、読み上げを止め、入力中の内容を仕上げるかコピーしてください。ダウンロードが終わるとすぐに再起動するため、送信していない文字が失われることがあります。";
+"update.authorize.laterNote" = "「あとで」を選ぶかこのウインドウを閉じると、何もダウンロードもインストールもされません。Classic Companion はそのまま使えます。あとでインストールするには「アップデートを確認…」を選んでください。";
+"update.authorize.install" = "ダウンロードしてインストール";

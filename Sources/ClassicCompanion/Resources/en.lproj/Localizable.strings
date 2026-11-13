@@ -173,3 +173,28 @@
 "diag.exp.resume" = "Resume Web Media";
 "diag.exp.pauseAll" = "Pause All Web Media";
 "diag.exp.setRate" = "Set and Measure";
+
+/* App updates (Sparkle). Sparkle's own windows use Sparkle's translations and follow the macOS language; these follow the app language. */
+"menu.checkForUpdates" = "Check for Updates…";
+"menu.updateAvailable" = "Update Available: %@…";
+"menu.updateBadge" = "New";
+"settings.section.updates" = "Updates";
+"settings.updates.automatic" = "Check for updates automatically";
+"settings.updates.note" = "Checks once a day. Nothing is downloaded, installed or restarted without asking you.";
+"settings.updates.unavailable" = "This build can’t check for updates.";
+"settings.updates.available" = "Version %@ is available.";
+"settings.updates.show" = "Show Update…";
+"update.ready.windowTitle" = "Software Update";
+"update.ready.title" = "The update is ready to install";
+"update.ready.message" = "Classic Companion %@ has been downloaded. Installing it quits and reopens Classic Companion.";
+"update.ready.messageNoVersion" = "The new version of Classic Companion has been downloaded. Installing it quits and reopens Classic Companion.";
+"update.ready.reminder" = "Before you continue, wait for any reply that’s still being generated, stop Read Aloud, and finish or copy anything you’re typing. Unsent text may be lost when the app restarts.";
+"update.ready.laterNote" = "Not Now discards this download. Classic Companion keeps working and won’t install anything when you quit. Choose Check for Updates… to install it later.";
+"update.ready.install" = "Install and Relaunch";
+"update.ready.later" = "Not Now";
+"update.authorize.title" = "Download and install this update?";
+"update.authorize.message" = "Classic Companion %@ will be downloaded. As soon as it’s downloaded and verified, Classic Companion quits, installs the update and reopens on its own, without asking again. You can cancel in the progress window while it downloads.";
+"update.authorize.messageNoVersion" = "The new version of Classic Companion will be downloaded. As soon as it’s downloaded and verified, Classic Companion quits, installs the update and reopens on its own, without asking again. You can cancel in the progress window while it downloads.";
+"update.authorize.reminder" = "Before you confirm, wait for any reply that’s still being generated, stop Read Aloud, and finish or copy anything you’re typing. The app restarts as soon as the download is ready, and unsent text may be lost.";
+"update.authorize.laterNote" = "Not Now or closing this window downloads and installs nothing. Classic Companion keeps working. Choose Check for Updates… to install it later.";
+"update.authorize.install" = "Download and Install";

@@ -7,6 +7,9 @@
 #   --final：正式发布才用，另外要求 Developer ID、预期 Team ID、加固运行时、时间戳、公证票据、
 #            Gatekeeper 接受、正式图标、随包说明没有未定事项。任何一项不过都不能发布（发布回归 2026-11-08）。
 set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/update-config.sh"
+source "$ROOT/scripts/sparkle-embed.sh"
 
 FINAL=0
 NOTARIZED=0
@@ -100,16 +103,32 @@ BUILD="$(plist CFBundleVersion)"
 for n in $NOTES; do
   grep -q "$BUILD" "$APP/Contents/Resources/$n"; check "$n 的构建号与应用一致" test "$?" -eq 0
 done
-if otool -L "$BIN" | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/)' >/dev/null; then
-  echo "失败  存在系统之外的动态库依赖"; failures=$((failures + 1))
+# 系统之外只允许应用自带的 Sparkle.framework（应用内更新）。
+if otool -L "$BIN" | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/|@rpath/Sparkle\.framework/Versions/B/Sparkle$)' >/dev/null; then
+  echo "失败  存在系统和自带 Sparkle 之外的动态库依赖"; failures=$((failures + 1))
 else
-  echo "通过  动态库只依赖系统"
+  echo "通过  动态库只依赖系统和自带的 Sparkle"
 fi
-if otool -l "$BIN" | grep 'path /Applications/Xcode' >/dev/null; then
-  echo "失败  rpath 仍指向 Xcode"; failures=$((failures + 1))
-else
-  echo "通过  rpath 不指向开发环境"
-fi
+RPATHS="$(otool -l "$BIN" | awk '$1 == "cmd" && $2 == "LC_RPATH" {getline; getline; print $2}' | sort | tr '\n' ' ')"
+[[ "$RPATHS" == "/usr/lib/swift @executable_path/../Frameworks " || "$RPATHS" == "@executable_path/../Frameworks /usr/lib/swift " ]]
+check "rpath 只有系统 Swift 库和 Contents/Frameworks（$RPATHS）" test "$?" -eq 0
+
+# 应用内更新（docs/updates.md）：框架结构和签名、正式 feed、公钥、渠道、不自动安装。
+SPARKLE_PROBLEMS="$(check_sparkle_embedding "$APP" $( (( NOTARIZED )) && echo "$EXPECTED_TEAM") 2>&1 >/dev/null || true)"
+[[ -z "$SPARKLE_PROBLEMS" ]]; check "更新：Sparkle.framework 结构、arm64、逐层签名${SPARKLE_PROBLEMS:+（$SPARKLE_PROBLEMS）}" test "$?" -eq 0
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Frameworks/Sparkle.framework/Resources/Info.plist" 2>/dev/null)" == "$CC_SPARKLE_VERSION" ]]
+check "更新：Sparkle 版本 $CC_SPARKLE_VERSION" test "$?" -eq 0
+FEED="$(plist SUFeedURL || true)"
+[[ "$FEED" == "$CC_UPDATE_FEED_URL" && "$FEED" == https://* ]]; check "更新：feed 是正式的 HTTPS 地址（$FEED）" test "$?" -eq 0
+check "更新：没有测试 feed、本机地址" lacks '127\.0\.0\.1|localhost|update-test|CC Update Test' "$PLIST"
+! plist NSAppTransportSecurity >/dev/null; check "更新：没有 ATS 例外" test "$?" -eq 0
+[[ "$(plist SUPublicEDKey)" == "$CC_UPDATE_PUBLIC_ED_KEY" ]]; check "更新：公钥是正式公钥" test "$?" -eq 0
+[[ "$(plist CCUpdateChannel)" == "$(cc_update_channel "$(plist CFBundleShortVersionString)")" ]]
+check "更新：渠道 $(plist CCUpdateChannel) 与版本号 $(plist CFBundleShortVersionString) 一致" test "$?" -eq 0
+[[ "$(plist SUAllowsAutomaticUpdates)" == false && "$(plist SURequireSignedFeed)" == true && "$(plist SUVerifyUpdateBeforeExtraction)" == true ]]
+check "更新：不自动安装、appcast 必须签名、先验签再解压" test "$?" -eq 0
+! plist SUAutomaticallyUpdate >/dev/null && ! plist SUEnableAutomaticChecks >/dev/null
+check "更新：不预设自动下载和自动检查（第二次启动时询问）" test "$?" -eq 0
 # 按字节查整个应用，不用 strings：本机的 strings 看不到符号字符串表，1852 里 47 处本机路径它报 0（发布回归 2026-11-08）。
 if LC_ALL=C grep -rlaq "$HOME" "$APP"; then
   echo "失败  应用含本机用户目录路径"; failures=$((failures + 1))
@@ -154,6 +173,9 @@ if (( NOTARIZED )); then
 fi
 if (( FINAL )); then
   check "正式：图标状态是 final" test "$(plist CCIconStatus)" = final
+  check "正式：更新 feed 地址已确认（scripts/update-config.sh CC_UPDATE_FEED_CONFIRMED=1）" test "$CC_UPDATE_FEED_CONFIRMED" = 1
+  [[ "$("$ROOT/scripts/sparkle-key.sh" public "$CC_UPDATE_KEY_ACCOUNT" 2>/dev/null)" == "$(plist SUPublicEDKey)" ]]
+  check "正式：钥匙串里有和应用公钥配对的更新私钥（以后能给这个版本发更新）" test "$?" -eq 0
   for n in $NOTES; do
     check "正式：$n 没有未定事项（未签名、占位图标、反馈地址未定）" lacks '没有 Developer ID|临时占位|尚未确定|沒有 Developer ID|暫時佔位|尚未確定|has no Developer ID|placeholder icon|Developer ID の署名と Apple の公証がなく|仮のアイコン' "$APP/Contents/Resources/$n"
   done

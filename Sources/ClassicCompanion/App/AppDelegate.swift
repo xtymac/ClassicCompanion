@@ -15,7 +15,7 @@ enum ClassicCompanionMain {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, NSMenuItemValidation {
     private let settings = AppSettings()
     private let languages = LanguageController.shared
     private let diagnostics = Diagnostics()
@@ -56,6 +56,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         return model
     }()
     private var modeMenuItem: NSMenuItem?
+    private var checkForUpdatesMenuItem: NSMenuItem?
+    /// 应用内更新（Sparkle）。见 Updates/UpdateController.swift 和 docs/updates.md。
+    private var updates: UpdateController!
     private var statusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
     private var diagnosticsWindow: NSWindow?
@@ -121,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         web.onLoadFailed = { [weak self] in self?.windowController.endLaunchScreen("加载失败") }
         web.onLoadProblemChange = { [weak self] status in self?.windowController.showLoadProblem(status) }
         windowController.onReloadRequest = { [weak self] in self?.web.reload() }
+        updates = UpdateController(diagnostics: diagnostics)
 
         buildMainMenu()
         buildStatusItem()
@@ -152,6 +156,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             guard let self else { return }
             self.windowController.show(mode: self.windowController.defaultShowMode)
             self.firstShowDone = true
+            // 聊天窗口先出来：第二次启动时 Sparkle 的标准询问出现在它上面。
+            self.updates.start()
         }
     }
 
@@ -192,6 +198,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     /// 能接收键盘的可见窗口。这样会排除菜单栏图标自身的窗口，并包含登录弹窗。
     private var hasOpenWindow: Bool {
         NSApp.windows.contains { $0.isVisible && !$0.isMiniaturized && $0.canBecomeKey }
+    }
+
+    /// 有准备好、还没确认的更新时，先取消安装再退出：退出时绝不自动安装。其余情况照常退出。
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        updates?.terminationReply { NSApp.reply(toApplicationShouldTerminate: true) } ?? .terminateNow
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -268,6 +279,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         settings.$allowPageAccessibility.dropFirst().removeDuplicates().sink { [weak self] allowed in
             DispatchQueue.main.async { self?.web.setPageAccessibilityAllowed(allowed) }
         }.store(in: &cancellables)
+        // 定时检查发现新版本：“检查更新…”旁边加角标（温和提醒，不弹窗）。
+        updates.status.$pendingVersion.removeDuplicates().sink { [weak self] version in
+            self?.checkForUpdatesMenuItem?.badge = version.map { _ in NSMenuItemBadge(string: L10n.string("menu.updateBadge")) }
+        }.store(in: &cancellables)
     }
 
     /// 切换界面语言：菜单整份重建，开着的窗口换标题。SwiftUI 界面自己观察 LanguageController 重新显示。
@@ -279,6 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             self.buildMainMenu()
             self.retitleWindows()
             self.web.retitlePopups()
+            self.updates.retitle()
         }.store(in: &cancellables)
     }
 
@@ -386,19 +402,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func buildMainMenu() {
         let built = Self.makeMainMenu(modeKey: settings.modeKey)
         modeMenuItem = built.modeItem
+        checkForUpdatesMenuItem = built.updatesItem
+        built.updatesItem.badge = updates.status.pendingVersion.map { _ in NSMenuItemBadge(string: L10n.string("menu.updateBadge")) }
         NSApp.mainMenu = built.menu
         NSApp.windowsMenu = built.windowMenu
     }
 
     /// 主菜单。切换语言时整份重建；动作和快捷键不随语言变（LocalizationTests 核对各语言一致）。
     static func makeMainMenu(modeKey: HotKeyCombo, language: AppLanguage = L10n.language)
-        -> (menu: NSMenu, modeItem: NSMenuItem, windowMenu: NSMenu) {
+        -> (menu: NSMenu, modeItem: NSMenuItem, windowMenu: NSMenu, updatesItem: NSMenuItem) {
         let t = { (key: String) in L10n.string(key, in: language) }
         let main = NSMenu()
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: t("menu.about"), action: #selector(AppDelegate.showAbout), keyEquivalent: "")
+        let updatesItem = appMenu.addItem(withTitle: t("menu.checkForUpdates"), action: #selector(AppDelegate.checkForUpdates), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: t("menu.settings"), action: #selector(AppDelegate.showSettings), keyEquivalent: ",")
         appMenu.addItem(withTitle: t("menu.diagnostics"), action: #selector(AppDelegate.showDiagnostics), keyEquivalent: "d").keyEquivalentModifierMask = [.command, .option]
@@ -456,7 +475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         windowItem.submenu = windowMenu
         main.addItem(windowItem)
 
-        return (main, modeItem, windowMenu)
+        return (main, modeItem, windowMenu, updatesItem)
     }
 
     private func buildStatusItem() {
@@ -474,16 +493,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     /// 每次打开菜单栏菜单时按当前语言重建。
     func menuNeedsUpdate(_ menu: NSMenu) {
-        Self.fillStatusMenu(menu)
+        Self.fillStatusMenu(menu, pendingUpdate: updates.status.pendingVersion)
         for item in menu.items where item.target == nil && item.action != #selector(NSApplication.terminate(_:)) {
             item.target = self
         }
     }
 
     /// 菜单栏菜单。和主菜单相同的功能用相同的键，字一样。
-    static func fillStatusMenu(_ menu: NSMenu, language: AppLanguage = L10n.language) {
+    /// pendingUpdate：定时检查发现、还没看过的新版本。有的话最上面多一项，点了打开 Sparkle 的更新窗口。
+    static func fillStatusMenu(_ menu: NSMenu, language: AppLanguage = L10n.language, pendingUpdate: String? = nil) {
         let t = { (key: String) in L10n.string(key, in: language) }
         menu.removeAllItems()
+        if let pendingUpdate {
+            menu.addItem(withTitle: L10n.format("menu.updateAvailable", in: language, pendingUpdate),
+                         action: #selector(AppDelegate.checkForUpdates), keyEquivalent: "")
+            menu.addItem(.separator())
+        }
         menu.addItem(withTitle: t("menu.showQuick"), action: #selector(AppDelegate.showQuick), keyEquivalent: "")
         menu.addItem(withTitle: t("menu.openFull"), action: #selector(AppDelegate.showFull), keyEquivalent: "")
         menu.addItem(withTitle: t("menu.newChat"), action: #selector(AppDelegate.newChat), keyEquivalent: "")
@@ -519,12 +544,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
     }
     @objc private func reloadPage() { web.reload() }
+    @objc private func checkForUpdates() { updates.checkForUpdates() }
+
+    /// “检查更新…”跟随 Sparkle 的 canCheckForUpdates（等确认安装时也可用，用来叫回确认窗口）；
+    /// 没有更新配置的构建里灰掉。其余菜单项照旧可用。
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard menuItem.action == #selector(checkForUpdates) else { return true }
+        guard let status = updates?.status else { return false }
+        return status.canCheck || status.awaitingInstallDecision
+    }
 
     @objc private func showSettings() {
         if settingsWindow == nil {
             let tabs = SettingsTabsController { [unowned self] pane in
                 let host = NSHostingController(rootView: SettingsPaneView(
-                    pane: pane, settings: settings, diagnostics: diagnostics,
+                    pane: pane, settings: settings, diagnostics: diagnostics, updates: updates.status,
                     hotKeyRecorder: hotKeyRecorder, modeKeyRecorder: modeKeyRecorder,
                     onShowDiagnostics: { [weak self] in self?.showDiagnostics() }))
                 // 大小由窗口定（fitSettingsToScreen），页面内容不去撑窗口。

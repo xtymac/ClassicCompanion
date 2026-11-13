@@ -12,7 +12,7 @@ Not an official OpenAI app and not affiliated with OpenAI.
 
 - Minimum requirements: macOS 15.0 or later, Apple silicon (arm64) only. Intel-based Macs aren’t supported.
 - Verified on: one MacBook Pro with Apple M4 Max running macOS 27.2 (installing from the DMG, first launch, all four app languages and the main features).
-- Not yet verified: macOS 15 and macOS 26; other Macs and fresh user accounts; installing from the ZIP; some physical-key and input-method actions, which have been tested only with tool-driven input.
+- Not yet verified: macOS 15 and macOS 26; other Macs and fresh user accounts; installing from the ZIP; some physical-key and input-method actions, which have been tested only with tool-driven input; receiving an in-app update from the real update address.
 
 ## Install
 
@@ -30,10 +30,16 @@ You don’t need Terminal for either.
 
 This build is signed with Developer ID and notarized by Apple. The first time you open it, macOS may ask you to confirm; check that it’s Classic Companion and choose to open it. If macOS says the app can’t be opened, don’t change your Mac’s security settings; please report it on Issues instead.
 
+## Updates (upgrading from 0.1.0-beta.1)
+
+- From this version on, Classic Companion can update itself: choose Check for Updates… in the Classic Companion menu, or turn on “Check for updates automatically” under Settings → General → Updates (the app also asks once, the second time you open it). When you choose to install an update, the app first asks you to confirm Download and Install. Nothing is downloaded or installed before you confirm, and nothing is installed when you quit. Once you confirm, Classic Companion quits, installs the update and reopens on its own as soon as the download is verified, without asking again.
+- **0.1.0-beta.1 (build 20261110.0137) can’t update itself and won’t tell you about new versions.** If you’re using it, install this version once by hand using the steps above, replacing the old app in Applications; your sign-in and settings are kept. Later versions can then be installed from within the app.
+- The update windows for checking, downloading and errors use your macOS language, not the language chosen in the app; the Download and Install confirmation follows the app’s language.
+
 ## Using it
 
 - App language: the app’s interface is available in Simplified Chinese, Traditional Chinese, English and Japanese. By default it follows your macOS preferred languages (English if none of them match); you can change it under Settings → General → App Language, and the change takes effect immediately. It only affects this app’s own interface and doesn’t change the language of the ChatGPT web page, which you set in ChatGPT’s own settings. Menu items and dialogs supplied by macOS follow the macOS language.
-- Settings has three panes: General (app language, page zoom, reopening the last chat, putting the cursor in the input box, Esc to hide), Shortcuts, and Advanced (web enhancements, letting other apps read the web page, diagnostics).
+- Settings has three panes: General (app language, page zoom, reopening the last chat, putting the cursor in the input box, Esc to hide, checking for updates automatically), Shortcuts, and Advanced (web enhancements, letting other apps read the web page, diagnostics).
 - The app appears in the Dock and in `⌘Tab`, and has a menu bar icon. Clicking the Dock icon, switching to it with `⌘Tab` or opening the app again brings back the existing window without reloading the page.
 - The close button and `⌘W` only hide the window; the app keeps running. `⌘Q` quits.
 - The wake shortcut is `⌥Space` by default. Open Settings with `⌘,` or from the menu bar icon, go to Shortcuts, click the box, then press the combination you want. You can record a combination that another app also uses, but pressing it later may trigger that app or stop the shortcut from working here. If another app opens a window while you record, Settings shows its name in orange; it’s best to choose a different combination or change the shortcut in that app. The Quick/Full window shortcut is `⌃⌘F` by default, can also be changed under Shortcuts, and works only while this app’s window is in front.

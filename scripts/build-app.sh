@@ -8,17 +8,28 @@ cd "$(dirname "$0")/.."
 CONFIG="${1:-release}"
 [[ "$CONFIG" == release || "$CONFIG" == debug ]] || { echo "配置必须为 debug 或 release" >&2; exit 1; }
 source scripts/release-signing.sh
+source scripts/update-config.sh
+source scripts/sparkle-embed.sh
 SIGNING_MODE="${CC_SIGNING_MODE:-$( [[ "$CONFIG" == release ]] && echo developer-id || echo adhoc )}"
 [[ "$SIGNING_MODE" == developer-id || "$SIGNING_MODE" == adhoc ]] || exit 1
 if [[ "$SIGNING_MODE" == developer-id ]]; then signing_preflight; fi
 EXECUTABLE="ClassicCompanion"
 BUNDLE_ID="local.classiccompanion.ClassicCompanion"   # 不要改：登录数据按它存放
-VERSION="0.1.0-beta.1"   # 用户定（发布回归 2026-11-08）；GitHub 标签 v0.1.0-beta.1，标为 Pre-release
+VERSION="0.1.0-beta.2"   # 用户定（2026-11-12）：第一个带应用内更新的版本；0137（0.1.0-beta.1）用户要手动安装它一次
 MIN_MACOS="15.0"
 BUILD_STAMP="$(date +%Y%m%d.%H%M)"
 OUT_DIR="build/$BUILD_STAMP"
 APP="$OUT_DIR/Classic Companion.app"
 ICON_STATUS="$(<assets/icon/STATUS)"
+
+# 应用内更新：正式 feed 必须是 HTTPS、有公钥；Sparkle 版本和 Package.swift 一致。测试 feed 和测试密钥不进这里（docs/updates.md）。
+# 版本号只允许 主.次.修订 或 主.次.修订-alpha|beta|rc.N：渠道按有没有预发布后缀判断（cc_update_channel），格式要可靠。
+[[ "$VERSION" =~ '^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$' ]] || { echo "错误：版本号格式不对：$VERSION" >&2; exit 1; }
+UPDATE_CHANNEL="$(cc_update_channel "$VERSION")"
+[[ "$CC_UPDATE_FEED_URL" == https://* && "$CC_UPDATE_FEED_URL" != *localhost* && "$CC_UPDATE_FEED_URL" != *127.0.0.1* ]] ||
+  { echo "错误：更新 feed 必须是正式的 HTTPS 地址：$CC_UPDATE_FEED_URL" >&2; exit 1; }
+[[ "$CC_UPDATE_PUBLIC_ED_KEY" =~ '^[A-Za-z0-9+/]{43}=$' ]] || { echo "错误：scripts/update-config.sh 里没有有效的 EdDSA 公钥" >&2; exit 1; }
+grep -q "exact: \"$CC_SPARKLE_VERSION\"" Package.swift || { echo "错误：Package.swift 的 Sparkle 版本不是 $CC_SPARKLE_VERSION" >&2; exit 1; }
 
 if [[ -e "$OUT_DIR" ]]; then
   echo "错误：$OUT_DIR 已存在，不覆盖。等到下一分钟再构建。" >&2
@@ -34,10 +45,8 @@ LANGUAGES=(en ja zh-Hans zh-Hant)
 
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$EXECUTABLE"
-# 去掉指向 Xcode 的 rpath：安装后的应用不依赖开发环境。
-for rpath in ${(f)"$(otool -l "$APP/Contents/MacOS/$EXECUTABLE" | awk '$1 == "path" && $2 ~ /^\/Applications\/Xcode/ {print $2}')"}; do
-  install_name_tool -delete_rpath "$rpath" "$APP/Contents/MacOS/$EXECUTABLE" 2>/dev/null
-done
+# rpath 只留系统 Swift 库和 Contents/Frameworks（Sparkle）：去掉 Xcode、本机构建目录和 @loader_path，安装后的应用不依赖开发环境。
+fix_rpaths "$APP/Contents/MacOS/$EXECUTABLE"
 # 发布的二进制不留调试映射：里面是本机源码和 .o 的路径（1852 有 47 处，发布回归 2026-11-08）。
 # 先把调试符号另存到 build/<构建号>/（只留本机，用来看崩溃报告），再去掉。
 dsymutil "$APP/Contents/MacOS/$EXECUTABLE" -o "$OUT_DIR/$EXECUTABLE.dSYM"
@@ -57,6 +66,8 @@ for lang in $LANGUAGES; do
     [[ -s "$f" ]] && plutil -lint -s "$f" || { echo "错误：缺少或无法读取 $lang.lproj/$table" >&2; exit 1; }
   done
 done
+# 应用内更新：官方 Sparkle.framework（去掉非沙盒应用用不到的 XPC Services，只留 arm64），签名在最后由内到外做。
+embed_sparkle "$APP" "$CC_SPARKLE_VERSION"
 # 试用版说明：docs/ 里的原稿 → 应用里的文件（TrialNotes.text 按界面语言读）。
 NOTES=(
   zh-Hans docs/trial-notes.md         TrialNotes.zh-Hans.md
@@ -91,6 +102,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+  <!-- 应用内更新（Sparkle 2，docs/updates.md）。不自动下载安装；更新包和 appcast 都要 EdDSA 签名；先验证签名再解压。 -->
+  <key>SUFeedURL</key><string>$CC_UPDATE_FEED_URL</string>
+  <key>SUPublicEDKey</key><string>$CC_UPDATE_PUBLIC_ED_KEY</string>
+  <key>CCUpdateChannel</key><string>$UPDATE_CHANNEL</string>
+  <key>SUScheduledCheckInterval</key><integer>$CC_UPDATE_CHECK_INTERVAL</integer>
+  <key>SUAllowsAutomaticUpdates</key><false/>
+  <key>SUVerifyUpdateBeforeExtraction</key><true/>
+  <key>SURequireSignedFeed</key><true/>
 </dict>
 </plist>
 PLIST
@@ -116,10 +135,12 @@ if [[ "$SIGNING_MODE" == adhoc ]]; then
   done
 fi
 if [[ "$SIGNING_MODE" == developer-id ]]; then
-  codesign --force --sign "$CC_SIGNING_IDENTITY" --options runtime --timestamp "$APP"
+  sign_sparkle_app "$APP" "$CC_SIGNING_IDENTITY"
   verify_developer_signature "$APP" runtime
+  check_sparkle_embedding "$APP" "$CC_TEAM_ID"
 else
-  codesign --force --sign - --timestamp=none "$APP"
+  sign_sparkle_app "$APP" -
+  check_sparkle_embedding "$APP"
 fi
 codesign --verify --deep --strict "$APP"
 echo "$BUILD_STAMP" > build/LATEST
@@ -127,4 +148,4 @@ echo "$BUILD_STAMP" > build/LATEST
 if [[ "$ICON_STATUS" != final ]]; then
   echo "注意：图标状态为 $ICON_STATUS，当前是临时占位图标，不是最终图标。"
 fi
-echo "Built $APP  version=$VERSION build=$BUILD_STAMP"
+echo "Built $APP  version=$VERSION build=$BUILD_STAMP channel=$UPDATE_CHANNEL sparkle=$CC_SPARKLE_VERSION"

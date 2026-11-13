@@ -173,3 +173,28 @@
 "diag.exp.resume" = "恢復網頁媒體";
 "diag.exp.pauseAll" = "暫停全部網頁媒體";
 "diag.exp.setRate" = "設定並測量";
+
+/* 應用程式更新（Sparkle）。Sparkle 自己的視窗用 Sparkle 的翻譯、跟隨 macOS 語言；這些跟隨 App 語言。 */
+"menu.checkForUpdates" = "檢查更新項目⋯";
+"menu.updateAvailable" = "有新版本：%@⋯";
+"menu.updateBadge" = "新版本";
+"settings.section.updates" = "更新";
+"settings.updates.automatic" = "自動檢查更新項目";
+"settings.updates.note" = "每天檢查一次。下載、安裝和重新啟動前都會先徵求你的同意。";
+"settings.updates.unavailable" = "此版本無法檢查更新項目。";
+"settings.updates.available" = "有新版本 %@ 可用。";
+"settings.updates.show" = "顯示更新項目⋯";
+"update.ready.windowTitle" = "軟體更新";
+"update.ready.title" = "更新項目已可安裝";
+"update.ready.message" = "Classic Companion %@ 已下載完成。安裝時會結束並重新打開 Classic Companion。";
+"update.ready.messageNoVersion" = "Classic Companion 的新版本已下載完成。安裝時會結束並重新打開 Classic Companion。";
+"update.ready.reminder" = "繼續之前，請等正在產生的回答完成、停止朗讀，並完成或拷貝正在輸入的內容。重新啟動後，尚未送出的文字可能會遺失。";
+"update.ready.laterNote" = "選擇「稍後」會捨棄這次下載，Classic Companion 照常可用，結束時也不會安裝。之後要安裝，請選擇「檢查更新項目⋯」。";
+"update.ready.install" = "安裝並重新啟動";
+"update.ready.later" = "稍後";
+"update.authorize.title" = "要下載並安裝這個更新項目嗎？";
+"update.authorize.message" = "確認後會下載 Classic Companion %@。下載並驗證完成後，Classic Companion 會自動結束、安裝更新並重新打開，不會再次詢問。下載期間可以在進度視窗中取消。";
+"update.authorize.messageNoVersion" = "確認後會下載 Classic Companion 的新版本。下載並驗證完成後，Classic Companion 會自動結束、安裝更新並重新打開，不會再次詢問。下載期間可以在進度視窗中取消。";
+"update.authorize.reminder" = "確認之前，請等正在產生的回答完成、停止朗讀，並完成或拷貝正在輸入的內容。下載完成後會直接重新啟動，尚未送出的文字可能會遺失。";
+"update.authorize.laterNote" = "選擇「稍後」或關閉這個視窗，不會下載或安裝任何東西，Classic Companion 照常可用。之後要安裝，請選擇「檢查更新項目⋯」。";
+"update.authorize.install" = "下載並安裝";

@@ -15,10 +15,11 @@ final class SettingsLayoutTests: XCTestCase {
         super.tearDown()
     }
 
-    private func host(_ pane: SettingsPane, webEnhancements: Bool = true) -> NSHostingView<SettingsPaneView> {
+    private func host(_ pane: SettingsPane, webEnhancements: Bool = true,
+                      updates: UpdateStatus = UpdateStatus()) -> NSHostingView<SettingsPaneView> {
         let settings = AppSettings(defaults: UserDefaults(suiteName: suite)!)
         settings.webEnhancements = webEnhancements
-        let view = SettingsPaneView(pane: pane, settings: settings, diagnostics: Diagnostics(),
+        let view = SettingsPaneView(pane: pane, settings: settings, diagnostics: Diagnostics(), updates: updates,
                                     hotKeyRecorder: HotKeyRecorderModel(apply: { _ in nil }, onPause: {}, onResume: {}),
                                     modeKeyRecorder: HotKeyRecorderModel(defaultCombo: .modeStandard, apply: { _ in nil },
                                                                          onPause: {}, onResume: {}),
@@ -38,6 +39,20 @@ final class SettingsLayoutTests: XCTestCase {
                     XCTAssertLessThanOrEqual(height, SettingsWindowLayout.contentHeight,
                                              "\(language.rawValue) \(pane) web=\(web) 需要 \(height)")
                 }
+            }
+        }
+    }
+
+    /// 定时检查发现新版本时，通用页“更新”一组多一行“查看更新…”，也不用滚动。
+    func testGeneralPaneFitsWithAPendingUpdateInEveryLanguage() {
+        for language in AppLanguage.allCases {
+            LanguageController.shared.preference = LanguagePreference(rawValue: language.rawValue)!
+            for web in [true, false] {
+                let plain = host(.general, webEnhancements: web, updates: UpdateStatus(isAvailable: true)).fittingSize.height
+                let pending = host(.general, webEnhancements: web,
+                                   updates: UpdateStatus(isAvailable: true, pendingVersion: "0.1.0-beta.2")).fittingSize.height
+                XCTAssertGreaterThan(pending, plain, "\(language)：新版本那一行没有显示")
+                XCTAssertLessThanOrEqual(pending, SettingsWindowLayout.contentHeight, "\(language) web=\(web) 需要 \(pending)")
             }
         }
     }

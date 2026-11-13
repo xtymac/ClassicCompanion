@@ -27,7 +27,8 @@ final class SettingsPanesTests: XCTestCase {
 
     func testEachPaneHoldsTheRequestedSettings() {
         XCTAssertEqual(SettingsPane.general.items,
-                       [.appLanguage, .pageZoom, .restoreLastConversation, .focusInputOnShow, .escapeHidesWindow])
+                       [.appLanguage, .pageZoom, .restoreLastConversation, .focusInputOnShow, .escapeHidesWindow,
+                        .automaticUpdateChecks])
         XCTAssertEqual(SettingsPane.shortcuts.items, [.wakeShortcut, .modeShortcut])
         XCTAssertEqual(SettingsPane.advanced.items, [.webEnhancements, .allowPageAccessibility, .diagnostics])
     }
@@ -58,7 +59,9 @@ final class SettingsPanesTests: XCTestCase {
         // rateLevel：旧版自带朗读的语速，界面早已不显示，存储保留不动；lastConversationURL：应用自己记的最近对话。
         let notShown: Set<String> = ["rateLevel", "lastConversationURL"]
         XCTAssertEqual(stored.subtracting(notShown).subtracting(placed), [], "有存储的设置没有放到任何一页")
-        XCTAssertEqual(placed.subtracting(stored), [LanguagePreference.defaultsKey], "页面上的键必须是现有的存储键")
+        // 语言和自动检查更新不归 AppSettings 管：前者在 LanguagePreference，后者是 Sparkle 自己的用户默认值。
+        XCTAssertEqual(placed.subtracting(stored), [LanguagePreference.defaultsKey, "SUEnableAutomaticChecks"],
+                       "页面上的键必须是现有的存储键")
     }
 
     // MARK: - 网页增强依赖
