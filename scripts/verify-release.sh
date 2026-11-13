@@ -118,6 +118,7 @@ SPARKLE_PROBLEMS="$(check_sparkle_embedding "$APP" $( (( NOTARIZED )) && echo "$
 [[ -z "$SPARKLE_PROBLEMS" ]]; check "更新：Sparkle.framework 结构、arm64、逐层签名${SPARKLE_PROBLEMS:+（$SPARKLE_PROBLEMS）}" test "$?" -eq 0
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Frameworks/Sparkle.framework/Resources/Info.plist" 2>/dev/null)" == "$CC_SPARKLE_VERSION" ]]
 check "更新：Sparkle 版本 $CC_SPARKLE_VERSION" test "$?" -eq 0
+check "更新：附有 Sparkle 的 MIT 许可声明（Contents/Resources/Licenses/Sparkle-LICENSE.txt）" grep -q "Permission is hereby granted" "$APP/Contents/Resources/Licenses/Sparkle-LICENSE.txt"
 FEED="$(plist SUFeedURL || true)"
 [[ "$FEED" == "$CC_UPDATE_FEED_URL" && "$FEED" == https://* ]]; check "更新：feed 是正式的 HTTPS 地址（$FEED）" test "$?" -eq 0
 check "更新：没有测试 feed、本机地址" lacks '127\.0\.0\.1|localhost|update-test|CC Update Test' "$PLIST"

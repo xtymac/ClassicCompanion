@@ -68,6 +68,11 @@ for lang in $LANGUAGES; do
 done
 # 应用内更新：官方 Sparkle.framework（去掉非沙盒应用用不到的 XPC Services，只留 arm64），签名在最后由内到外做。
 embed_sparkle "$APP" "$CC_SPARKLE_VERSION"
+# Sparkle 是 MIT 许可：随应用分发它的二进制，就要附上它的版权和许可声明（原样复制官方包里的 LICENSE）。
+SPARKLE_LICENSE="${CC_SPARKLE_BIN:h}/LICENSE"
+grep -q "Permission is hereby granted" "$SPARKLE_LICENSE" 2>/dev/null || { echo "错误：找不到 Sparkle 的 LICENSE（$SPARKLE_LICENSE）" >&2; exit 1; }
+mkdir -p "$APP/Contents/Resources/Licenses"
+cp "$SPARKLE_LICENSE" "$APP/Contents/Resources/Licenses/Sparkle-LICENSE.txt"
 # 试用版说明：docs/ 里的原稿 → 应用里的文件（TrialNotes.text 按界面语言读）。
 NOTES=(
   zh-Hans docs/trial-notes.md         TrialNotes.zh-Hans.md

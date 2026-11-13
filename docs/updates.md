@@ -79,6 +79,7 @@ The isolated upgrade-test tooling (a separate test copy with its own bundle iden
 2. Copies `Sparkle.framework` from the official XCFramework into `Contents/Frameworks/` with `ditto`, removes `XPCServices` (the app is not sandboxed, so Sparkle does not need them) and thins `Sparkle`, `Autoupdate` and `Updater.app` to arm64.
 3. Signs inside-out as Sparkle documents, without `--deep`: `Autoupdate` → `Updater.app` → `Sparkle.framework` → app. Developer ID builds use the hardened runtime and secure timestamps. No existing security setting is disabled.
 4. Checks structure, architecture, linkage, rpaths and every signature layer, then runs `codesign --verify --deep --strict`.
+5. Copies Sparkle's MIT license notice unchanged to `Contents/Resources/Licenses/Sparkle-LICENSE.txt`; `verify-release.sh` checks it is present.
 
 `package-release.sh` is unchanged; its ZIP is the Sparkle update archive. `verify-release.sh --final` additionally requires `CC_UPDATE_FEED_CONFIRMED=1` and a private key in Keychain that matches the app's public key.
 

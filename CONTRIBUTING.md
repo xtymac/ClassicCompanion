@@ -6,4 +6,4 @@ For a code change, describe the problem, keep the diff focused, add meaningful r
 
 Keep the four language tables and relevant README files consistent. Never include credentials, signing keys, build outputs, personal screenshots or private development records. Changes to the website adapter must retain navigation and message-origin checks.
 
-Contributions are submitted under Apache-2.0 (see LICENSE, section 5). Include third-party attribution and license information when adding third-party code. Package.swift currently declares no external package dependencies.
+Contributions are submitted under Apache-2.0 (see LICENSE, section 5). Include third-party attribution and license information when adding third-party code. Package.swift declares one external dependency, Sparkle (MIT License), pinned to an exact version; release builds include its license notice in the app bundle.
