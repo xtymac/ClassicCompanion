@@ -95,3 +95,30 @@ Not verified: receiving an update through this feed (possible only when a later 
 Before archiving, the state of `mactokyo/ClassicCompanion` was backed up, its README was replaced with a four-language move notice (0.1.0-beta.2 is out with in-app updates; 0.1.0-beta.1 users install it once by hand; downloads, feedback and source are here; the legacy repository keeps only the 0.1.0-beta.1 download and the notice), and pinned issue #1 was updated with the same information. All links in both were checked signed out before the repository was archived.
 
 Signed out after archiving, the repository page and its Issues page show GitHub's archived, read-only banner; the repository page shows the move notice, and the Issues page lists pinned issue #1 with no New issue button. `/issues/new` returns 404 and the issue chooser leads to the sign-in page; the signed-in view was not checked. The 0.1.0-beta.1 Release, tag and assets are unchanged, its DMG still downloads, and issue #1 is still pinned and locked. The former private repository has not been archived or deleted.
+
+## Wake window mode (0.1.0-beta.3 candidate, build 20261114.0227) — 2026-11-14
+
+Settings → General has a new option, Window Mode When Shown, used only by the show/hide shortcut: Keep Last Mode (the default, also for existing users, with no time limit) or Always Quick Window (the previous behavior). Clicking the Dock icon, ⌘Tab, reopening the app and restoring a minimized window keep the current mode as before, and the app still starts in the Quick window. The settings window's preferred content height went from 480 to 550 pt. The version in `scripts/build-app.sh` is now 0.1.0-beta.3. Nothing was released: no Release, tag, upload or appcast change. The candidate is ad-hoc signed and not notarized.
+
+| Check | Result |
+| --- | --- |
+| `swift test --skip 'ChromeTests\|PageTests\|WindowExperienceTests'` | Passed: 214 XCTest and 40 Swift Testing tests, zero failures |
+| ChromeTests, PageTests, WindowExperienceTests | Passed on the committed source: 13, 42 and 52 tests (five new wake-mode window tests among them), zero failures |
+| `CC_SIGNING_MODE=adhoc scripts/build-app.sh release` | Passed: build 20261114.0227 |
+| Shell script syntax | All `.sh` scripts passed `zsh -n` |
+| Publication hygiene | Added lines scanned for home paths, signing identifiers, personal contacts, key and token patterns; none found |
+
+The choice of mode takes no time input; that is what “no time limit” rests on (unit tests). The 120-second wait below records one observed case only.
+
+Isolated-copy check (2026-11-14): a copy with its own bundle ID and test data only (not signed in to ChatGPT). Every key press and click was synthesized by tools; none was a physical key press. Two problems were found and fixed before this commit. In build 20261114.0034, changing the app language while Settings was open left the selected option in English. The first fix, build 20261114.0218, rebuilt the pop-up menu, after which Tab no longer reached it. Build 20261114.0227 passes both checks. Between 0034 and 0227 only that pop-up menu changed, so the window checks run on 0034 still apply.
+
+- Keep Last Mode (0034): the Quick and Full windows each came back in the same mode, position and size, without reloading the page, after hiding with the shortcut, ⌘W, the top close button, the red close button and Esc in the page. It did the same after 120 seconds hidden with another app in front, and when the shortcut was pressed during a Quick/Full switch, it woke in the mode just chosen.
+- Same screen and another screen (0034): hidden and shown again on the same screen, the Full window kept its position and size. Hidden on the built-in display while the pointer was on another display, it woke as a Full window on the display with the pointer, at its earlier position there and the same size (1280×900). The page did not reload; whether it was laid out again was not checked. A target screen too small for the window, where it would have to shrink, was not tested.
+- Dock icon, ⌘Tab, reopening the app, and ⌘M followed by the shortcut or by reopening (0034): the Full window came back as Full.
+- Always Quick Window (0227): woke in the Quick window at its remembered position; changing the option did not move the open window; switching back to Keep Last Mode brought the Full window back as Full.
+- Restart (0227): the choice survived two restarts, other settings were unchanged, and launch was still in the Quick window.
+- Four languages (0227): label, note and both options correct in Simplified Chinese, Traditional Chinese, Japanese and English, including after switching the language with Settings open.
+- Keyboard (0227): Tab reaches the option; Space, ↓ and Return change it; Tab and Shift-Tab move through the page.
+- Settings window (0227): 500×630 on the screen used; the other connected screens are tall enough for it too. Shorter screens, where the content area shrinks and scrolls, are covered by unit tests only.
+
+Not verified: physical key presses, VoiceOver speech, reading position and drafts in a signed-in chat, a real network disconnect, and shrinking on a smaller target screen.
