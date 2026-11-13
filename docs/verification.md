@@ -45,3 +45,16 @@ Ported from the private backup as focused commits: the lightning-bolt menu bar i
 | Publication hygiene | Added lines scanned for home paths, signing identifiers, personal contacts, key and token patterns; only the release EdDSA public key and an all-zero test key appear |
 
 No signed or notarized build of this tree exists yet, and no update has been delivered through the real feed.
+
+## Release candidate 0.1.0-beta.2 (build 20261113.1719) — 2026-11-13
+
+Built from `c8a65e3` in a clean checkout of this repository. Main development and future releases are now made here; the legacy download repository and the former private repository are still being retired and have not been archived or deleted.
+
+| Check | Result |
+| --- | --- |
+| Developer ID signing, hardened runtime, secure timestamp | Passed |
+| Apple notarization (app and DMG) | Both Accepted with no issues; tickets stapled |
+| `scripts/verify-release.sh --final` | 76 of 76 checks passed, including Gatekeeper, the HTTPS feed address, the release public key, the beta channel and the bundled Sparkle license notice |
+| `scripts/prepare-appcast.sh` | Dry run and local appcast both passed 11 checks; the appcast has not been published |
+
+Not yet done: the isolated upgrade test from a previous build to 1719, checks of the menu bar icon on light and dark backgrounds, and delivery through the real HTTPS feed (possible only after publication). No Release, tag, attachment or appcast has been published for this build.
