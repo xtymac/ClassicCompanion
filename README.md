@@ -16,7 +16,7 @@ This is the **public source repository**, licensed under [Apache-2.0](LICENSE). 
 
 ## Review and verification
 
-See the [review guide](docs/review.md) for validation results, architecture and remaining limitations. The source includes offline first-load recovery; the published beta v0.1.0-beta.1 (build 20261110.0137) does not.
+See the [review guide](docs/review.md) for validation results, architecture and remaining limitations. The source includes offline first-load recovery, in-app updates (Sparkle 2, nothing is downloaded before you confirm; see [updates.md](docs/updates.md)), the lightning-bolt menu bar icon and a fix for New Chat clearing a just-typed draft; the published beta v0.1.0-beta.1 (build 20261110.0137) has none of these.
 
 ## Build and test
 
@@ -43,7 +43,7 @@ The debug build uses ad-hoc signing and needs no maintainer signing certificate 
 | `Sources/ClassicCompanion/` | App lifecycle, windows, shortcuts, WKWebView, DOM adapter, localization and diagnostics |
 | `Sources/CompanionCore/` | Navigation policy, URL redaction, zoom and recovery logic |
 | `Tests/` | Core logic, localization, native UI and synthetic web-page tests |
-| `scripts/` | Local builds, release packaging, notarization and verification |
+| `scripts/` | Local builds, release packaging, notarization, verification and in-app update tooling |
 | `assets/` | App icons resources |
 
 ## Known limitations
