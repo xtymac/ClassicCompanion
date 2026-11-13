@@ -39,7 +39,7 @@ Ported from the private backup as focused commits: the lightning-bolt menu bar i
 | Check | Result |
 | --- | --- |
 | `swift test --skip 'ChromeTests\|PageTests\|WindowExperienceTests'` | Passed: 206 XCTest and 40 Swift Testing tests, zero failures |
-| PageTests, ChromeTests, WindowExperienceTests | Not rerun in this tree (they open windows). The ported adapter and PageTests files are byte-identical to the private versions that passed |
+| PageTests, ChromeTests, WindowExperienceTests | Passed in this tree on 2026-11-13 at `c8a65e3`: ChromeTests 13, PageTests 42, WindowExperienceTests 47, zero failures (WindowExperienceTests rerun alone after an interrupted first attempt) |
 | `CC_SIGNING_MODE=adhoc scripts/build-app.sh debug` | Passed (build 20261113.1716): Sparkle 2.10.1 embedded, `codesign --verify --deep --strict` passed, SUFeedURL and feedback links point to this repository, Sparkle license notice present |
 | Shell script syntax | All `.sh` scripts passed `zsh -n` |
 | Publication hygiene | Added lines scanned for home paths, signing identifiers, personal contacts, key and token patterns; only the release EdDSA public key and an all-zero test key appear |
