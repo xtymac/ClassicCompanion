@@ -39,7 +39,7 @@ Ported from the private backup as focused commits: the lightning-bolt menu bar i
 | Check | Result |
 | --- | --- |
 | `swift test --skip 'ChromeTests\|PageTests\|WindowExperienceTests'` | Passed: 206 XCTest and 40 Swift Testing tests, zero failures |
-| PageTests, ChromeTests, WindowExperienceTests | Passed in this tree on 2026-11-13 at `c8a65e3`: ChromeTests 13, PageTests 42, WindowExperienceTests 47, zero failures (WindowExperienceTests rerun alone after an interrupted first attempt) |
+| PageTests, ChromeTests, WindowExperienceTests | Passed in this tree on 2026-11-13 at `c8a65e3`: ChromeTests 13, PageTests 42, WindowExperienceTests 47, zero failures (WindowExperienceTests rerun alone after an interrupted first attempt; the cause of that interruption was not confirmed) |
 | `CC_SIGNING_MODE=adhoc scripts/build-app.sh debug` | Passed (build 20261113.1716): Sparkle 2.10.1 embedded, `codesign --verify --deep --strict` passed, SUFeedURL and feedback links point to this repository, Sparkle license notice present |
 | Shell script syntax | All `.sh` scripts passed `zsh -n` |
 | Publication hygiene | Added lines scanned for home paths, signing identifiers, personal contacts, key and token patterns; only the release EdDSA public key and an all-zero test key appear |
@@ -60,3 +60,9 @@ Built from `c8a65e3` in a clean checkout of this repository. Main development an
 Isolated upgrade test (2026-11-13): a test copy with the same code and resources, served by a local test feed, showed that cancelling, quitting, force quitting or crashing before consent downloaded and installed nothing, and that the consented upgrade from an earlier test build reached 1719 with sign-in, the restored chat, settings and the shortcut kept. A local test feed is not the real HTTPS feed. The menu bar icon was checked in Dark and Light appearance, but the menu bar background stayed dark in both on the test Mac, so the icon on a light menu bar is unverified.
 
 Not yet done: installing from the DMG or ZIP on a clean setup, the icon on a light menu bar background, and delivery through the real HTTPS feed (possible only after publication). No Release, tag, attachment or appcast has been published for this build.
+
+## Legacy feedback notice and beta.1 source note — 2026-11-13
+
+Builds released before the move, including 0.1.0-beta.1, open the legacy repository's Issues page for feedback. That page showed no pointer to this repository, so a four-language notice was opened there, pinned and locked: <https://github.com/mactokyo/ClassicCompanion/issues/1>. Signed out, the legacy Issues page now shows it pinned at the top, and it links to this repository's Issues. The legacy repository has not been archived, and its New issue button still works.
+
+The [0.1.0-beta.1 Release notes](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.1) gained a four-language source note: the tag points to `086a39e`, a release-metadata commit (README only), not the complete source of build 20261110.0137. GitHub's generated source archives for that tag are not the exact source the installer was built from, and `main` holds later source. Only that paragraph changed. The tag, the seven assets and their checksums are unchanged; names, sizes and digests were compared before and after.
