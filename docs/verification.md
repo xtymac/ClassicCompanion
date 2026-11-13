@@ -56,6 +56,7 @@ Built from `c8a65e3` in a clean checkout of this repository. Main development an
 | Apple notarization (app and DMG) | Both Accepted with no issues; tickets stapled |
 | `scripts/verify-release.sh --final` | 76 of 76 checks passed, including Gatekeeper, the HTTPS feed address, the release public key, the beta channel and the bundled Sparkle license notice |
 | `scripts/prepare-appcast.sh` | Dry run and local appcast both passed 11 checks; the appcast has not been published |
+| Production update-signing key backup | Verified on 2026-11-13 |
 
 Isolated upgrade test (2026-11-13): a test copy with the same code and resources, served by a local test feed, showed that cancelling, quitting, force quitting or crashing before consent downloaded and installed nothing, and that the consented upgrade from an earlier test build reached 1719 with sign-in, the restored chat, settings and the shortcut kept. A local test feed is not the real HTTPS feed. The menu bar icon was checked in Dark and Light appearance, but the menu bar background stayed dark in both on the test Mac, so the icon on a light menu bar is unverified.
 
