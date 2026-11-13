@@ -13,12 +13,12 @@ final class PageTests: XCTestCase {
         }
     }
 
-    private func page(_ html: String, recorder: Recorder? = nil) async throws -> WKWebView {
+    private func page(_ html: String, recorder: Recorder? = nil, path: String = "/") async throws -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         if let recorder { config.userContentController.add(recorder, contentWorld: .defaultClient, name: "cc") }
         let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 720, height: 520), configuration: config)
-        web.loadHTMLString(html, baseURL: URL(string: "https://chatgpt.com/"))
+        web.loadHTMLString(html, baseURL: URL(string: "https://chatgpt.com" + path))
         for _ in 0..<100 {
             if !web.isLoading, (try? await js(web, "document.readyState")) as? String == "complete" { return web }
             try await Task.sleep(for: .milliseconds(30))
@@ -541,6 +541,120 @@ final class PageTests: XCTestCase {
         let nothing = try await asyncJS(missing, AdapterScripts.newChat)
         let none = try XCTUnwrap(nothing as? String)
         XCTAssertTrue(none.contains(#""clicked":false"#), none)
+    }
+
+    private func newChatAdapter(_ web: WKWebView) -> ChatGPTAdapter {
+        let name = "NewChatTests.\(UUID().uuidString)"
+        addTeardownBlock { UserDefaults(suiteName: name)?.removePersistentDomain(forName: name) }
+        return ChatGPTAdapter(webView: web, diagnostics: Diagnostics(),
+                              settings: AppSettings(defaults: UserDefaults(suiteName: name)!))
+    }
+
+    // The official UI can expose a composer before its URL reaches / (or use a different route).
+    // A fast paste must not be followed by the caller's full-page fallback after one second.
+    func testNewChatSlowRouteKeepsPastedDraftAndDoesNotRequestReload() async throws {
+        let web = try await page("""
+        <button data-testid="create-new-chat-button" onclick="document.querySelector('textarea').value = 'FAST-PASTE'">New</button>
+        <textarea name="prompt"></textarea>
+        """, path: "/c/old")
+        let adapter = newChatAdapter(web)
+        let handled = await adapter.openNewChatInPage()
+        XCTAssertTrue(handled, "A dispatched click must never trigger the caller's full-page fallback")
+        XCTAssertEqual(web.url?.path, "/c/old", "Simulate a route that has not reached the home URL")
+        let draft = try await js(web, "document.querySelector('textarea').value") as? String
+        XCTAssertEqual(draft, "FAST-PASTE")
+    }
+
+    func testConcurrentNewChatRequestsClickOnlyOnce() async throws {
+        let web = try await page("""
+        <button data-testid="create-new-chat-button" onclick="this.dataset.clicks = Number(this.dataset.clicks || 0) + 1">New</button>
+        """, path: "/c/old")
+        let adapter = newChatAdapter(web)
+        async let first = adapter.openNewChatInPage()
+        async let second = adapter.openNewChatInPage()
+        let results = await [first, second]
+        XCTAssertEqual(results, [true, true])
+        let clicks = try await js(web, "document.querySelector('button').dataset.clicks") as? String
+        XCTAssertEqual(clicks, "1")
+    }
+
+    func testNewChatUnknownScriptResultDoesNotRequestReload() async throws {
+        let web = try await page("""
+        <button data-testid="create-new-chat-button" onclick="document.body.dataset.clicked = 'yes'">New</button>
+        """, path: "/c/old")
+        // Simulate losing the result after a successful click in the isolated content world.
+        _ = try await js(web, "JSON.stringify = () => undefined; true")
+        let handled = await newChatAdapter(web).openNewChatInPage()
+        XCTAssertTrue(handled, "An unknown result is not evidence that it is safe to reload")
+        let clicked = try await js(web, "document.body.dataset.clicked") as? String
+        XCTAssertEqual(clicked, "yes")
+    }
+
+    func testNewChatMissingControlStillAllowsFallback() async throws {
+        let web = try await page("<main>No new-chat control</main>", path: "/c/old")
+        let handled = await newChatAdapter(web).openNewChatInPage()
+        XCTAssertFalse(handled)
+    }
+
+    // Normal case: the official control switches to / in the page. A second request on / does not click again,
+    // and a draft typed on the new page stays.
+    func testNewChatInPageSwitchSucceedsAndRepeatOnHomeIsANoOp() async throws {
+        let web = try await page("""
+        <button data-testid="create-new-chat-button" onclick="this.dataset.clicks = Number(this.dataset.clicks || 0) + 1; history.pushState({}, '', '/')">New</button>
+        <textarea name="prompt"></textarea>
+        """, path: "/c/old")
+        let adapter = newChatAdapter(web)
+        let first = await adapter.openNewChatInPage()
+        XCTAssertTrue(first)
+        XCTAssertEqual(web.url?.path, "/")
+        _ = try await js(web, "document.querySelector('textarea').value = 'NEW-DRAFT'; true")
+        let second = await adapter.openNewChatInPage()
+        XCTAssertTrue(second)
+        let clicks = try await js(web, "document.querySelector('button').dataset.clicks") as? String
+        XCTAssertEqual(clicks, "1", "Already on the new-chat page: no second click")
+        let draft = try await js(web, "document.querySelector('textarea').value") as? String
+        XCTAssertEqual(draft, "NEW-DRAFT")
+    }
+
+    // Script timeout: the page's main thread is busy longer than the adapter's 2.5 s limit. The result is unknown,
+    // so the caller must not reload; a draft typed after the page recovers stays.
+    func testNewChatScriptTimeoutDoesNotRequestReload() async throws {
+        let web = try await page("""
+        <button data-testid="create-new-chat-button" onclick="const t = Date.now(); while (Date.now() - t < 3200) {}">New</button>
+        <textarea name="prompt"></textarea>
+        """, path: "/c/old")
+        let started = Date()
+        let handled = await newChatAdapter(web).openNewChatInPage()
+        XCTAssertTrue(handled, "A timed-out click is not evidence that it is safe to reload")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3.0, "The adapter gives up at its own timeout")
+        try await Task.sleep(for: .milliseconds(1200))
+        _ = try await js(web, "document.querySelector('textarea').value = 'AFTER-TIMEOUT'; true")
+        try await Task.sleep(for: .milliseconds(1200))
+        XCTAssertEqual(web.url?.path, "/c/old", "Result unknown: the page is left as it is, not counted as a new chat")
+        let draft = try await js(web, "document.querySelector('textarea').value") as? String
+        XCTAssertEqual(draft, "AFTER-TIMEOUT")
+    }
+
+    // Page change while waiting for the route (AppDelegate invalidates the adapter on every main-frame path change):
+    // stop waiting at once and do not ask for a reload.
+    func testNewChatPageChangeWhileWaitingDoesNotRequestReload() async throws {
+        let web = try await page("""
+        <button data-testid="create-new-chat-button" onclick="document.body.dataset.clicked = 'yes'">New</button>
+        <textarea name="prompt"></textarea>
+        """, path: "/c/old")
+        let adapter = newChatAdapter(web)
+        let started = Date()
+        async let handled = adapter.openNewChatInPage()
+        try await Task.sleep(for: .milliseconds(300))
+        _ = try await js(web, "history.pushState({}, '', '/c/other'); document.querySelector('textarea').value = 'SWITCHED-DRAFT'; true")
+        adapter.invalidate()
+        let result = await handled
+        XCTAssertTrue(result)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.9, "Stops waiting as soon as the page changes")
+        try await Task.sleep(for: .milliseconds(1200))
+        XCTAssertEqual(web.url?.path, "/c/other")
+        let draft = try await js(web, "document.querySelector('textarea').value") as? String
+        XCTAssertEqual(draft, "SWITCHED-DRAFT")
     }
 
     func testCaretRestoredAfterWakeWhenItJumpedToStart() async throws {

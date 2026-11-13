@@ -31,6 +31,7 @@ final class ChatGPTAdapter {
     /// 每次主框架 URL 变化递增，使旧引用与进行中的调用失效
     private(set) var generation = 0
     private let timeout: TimeInterval = 2.5
+    private var openingNewChat = false
 
     init(webView: WKWebView, diagnostics: Diagnostics, settings: AppSettings) {
         self.webView = webView
@@ -97,25 +98,37 @@ final class ChatGPTAdapter {
         return obj["reason"] as? String ?? "unknown"
     }
 
-    /// 在页面内打开新对话。返回 false 时由调用方整页加载。
+    /// 只有确定没有点击官方入口时才返回 false，允许调用方整页加载。
+    /// 点击后的慢切换、脚本超时或页面变化都不能补一次加载，否则会清掉新会话的草稿。
     func openNewChatInPage() async -> Bool {
+        guard !openingNewChat else { return true }
         guard isEnabled, onChatPage else { return false }
         guard webView?.url?.path != "/" else {
             diagnostics.log("nav", "新建对话：已在新对话页")
             return true
         }
-        guard let json = await run(AdapterScripts.newChat), let obj = decode(json) else { return false }
+        openingNewChat = true
+        defer { openingNewChat = false }
+        let gen = generation
+        guard let json = await run(AdapterScripts.newChat), let obj = decode(json) else {
+            diagnostics.log("nav", "新建对话：点击结果未知，保留当前页面")
+            return true
+        }
+        guard gen == generation else { return true }
         diagnostics.log("nav", "新建对话 官方入口命中=\(obj["hits"] as? [Int] ?? [])")
-        guard obj["clicked"] as? Bool == true else { return false }
+        guard let clicked = obj["clicked"] as? Bool else { return true }
+        guard clicked else { return false }
         for _ in 0..<10 {
-            try? await Task.sleep(for: .milliseconds(100))
+            do { try await Task.sleep(for: .milliseconds(100)) }
+            catch { return true }
+            guard gen == generation else { return true }
             if webView?.url?.path == "/" {
                 diagnostics.log("nav", "新建对话：页内切换")
                 return true
             }
         }
-        diagnostics.log("nav", "新建对话：点击后 1 秒内未到首页，改为整页加载")
-        return false
+        diagnostics.log("nav", "新建对话：已点击官方入口，保留页内切换，不追加整页加载")
+        return true
     }
 
     func extractLatestAnswer() async -> ExtractionResult {
