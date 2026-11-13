@@ -1,0 +1,49 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Classic Companion</title>
+        <item>
+            <title>0.1.0-beta.2</title>
+            <pubDate>Fri, 13 Nov 2026 17:21:31 +0900</pubDate>
+            <sparkle:channel>beta</sparkle:channel>
+            <sparkle:version>20261113.1719</sparkle:version>
+            <sparkle:shortVersionString>0.1.0-beta.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description><![CDATA[<section lang="en">
+<h3>What’s new</h3>
+<ul>
+<li>In-app updates: choose <b>Check for Updates…</b> in the Classic Companion menu, or turn on automatic checks in Settings → General → Updates.</li>
+<li>Nothing is downloaded or installed until you confirm <b>Download and Install</b>. After that, the app quits, installs the update and reopens on its own as soon as the download is verified. Before you confirm, finish any reply that’s still being generated, stop Read Aloud, and finish or copy what you’re typing.</li>
+</ul>
+</section>
+<section lang="zh-Hans">
+<h3>新功能</h3>
+<ul>
+<li>应用内更新：在 Classic Companion 菜单里选择<b>检查更新…</b>，或在“设置 → 通用 → 更新”里打开自动检查。</li>
+<li>你确认<b>下载并安装</b>之前，不会下载或安装任何东西；确认后，下载和验证一完成，应用就会自动退出、安装更新并重新打开。确认之前，请等正在生成的回答完成、停止朗读，并完成或拷贝正在输入的内容。</li>
+</ul>
+</section>
+<section lang="zh-Hant">
+<h3>新功能</h3>
+<ul>
+<li>App 內更新：在 Classic Companion 選單中選擇<b>檢查更新項目⋯</b>，或在「設定 → 一般 → 更新」中打開自動檢查。</li>
+<li>你確認<b>下載並安裝</b>之前，不會下載或安裝任何東西；確認後，下載並驗證一完成，App 就會自動結束、安裝更新並重新打開。確認之前，請等正在產生的回答完成、停止朗讀，並完成或拷貝正在輸入的內容。</li>
+</ul>
+</section>
+<section lang="ja">
+<h3>新機能</h3>
+<ul>
+<li>アプリ内アップデート：Classic Companion メニューの<b>アップデートを確認…</b>を選ぶか、設定 →「一般」→「アップデート」で自動確認をオンにしてください。</li>
+<li><b>ダウンロードしてインストール</b>を確認するまで、何もダウンロードもインストールもされません。確認すると、ダウンロードと検証が終わったところでアプリが自動的に終了し、アップデートをインストールして再び開きます。確認する前に、生成中の回答が終わるのを待ち、読み上げを止め、入力中の内容を仕上げるかコピーしてください。</li>
+</ul>
+</section>
+]]></description>
+            <enclosure url="https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.2/ClassicCompanion-0.1.0-beta.2-20261113.1719-arm64.zip" length="2747704" type="application/octet-stream" sparkle:edSignature="W32bauz5mBQvHl8k6OVY9L7t11bZmaPC1KdCmzfnqR+wnD2RTEzsNjiqaEJDz+r29wqmaE/nNk095j+a/WXDAg=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: oER7cVjjBytM19XCI5keOfQ9+DiM3Erm53JGWrAVKApF3EXqpqEy/nBVH1Fls2KjszdL5urytxyzN71OZn0HAQ==
+length: 3639
+-->
