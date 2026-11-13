@@ -227,8 +227,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         hotKey.onTemporaryPressed = { [weak self] combo in self?.hotKeyRecorder.grabbed(combo) }
         hotKey.onPressed = { [weak self] in
-            self?.diagnostics.recordHotKey()
-            self?.windowController.toggle()
+            guard let self else { return }
+            self.diagnostics.recordHotKey()
+            self.windowController.toggle(wake: self.settings.wakeWindowMode)
         }
     }
 

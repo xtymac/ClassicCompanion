@@ -97,6 +97,10 @@
 "settings.shortcut.footer" = "Click a box, then press the combination you want.";
 "settings.pageZoom" = "Page Zoom";
 "settings.pageZoom.note" = "Shared by the Quick and Full windows. You can also press ⌘+, ⌘- or ⌘0.";
+"settings.wakeMode" = "Window Mode When Shown";
+"settings.wakeMode.note" = "Used by the show/hide shortcut. Clicking the Dock icon or pressing ⌘Tab keeps the current mode.";
+"settings.wakeMode.keepLast" = "Keep Last Mode";
+"settings.wakeMode.alwaysQuick" = "Always Quick Window";
 "settings.web.enable" = "Enable web enhancements";
 "settings.web.focus" = "Put the cursor in ChatGPT’s input box when shown";
 "settings.web.escape" = "Esc hides the window during a normal chat";

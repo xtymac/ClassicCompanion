@@ -2,6 +2,19 @@ import Foundation
 import Combine
 import CompanionCore
 
+/// 唤醒快捷键叫出窗口时用哪个模式（用户 2026-11-14 改为默认“保持上次模式”，没有时限）。
+/// 只管唤醒快捷键：启动、Dock、⌘Tab、Finder 再次打开、从最小化恢复都照旧。
+enum WakeWindowMode: String, CaseIterable {
+    case keepLast, alwaysQuick
+
+    func title(in language: AppLanguage? = nil) -> String {
+        switch self {
+        case .keepLast: L10n.string("settings.wakeMode.keepLast", in: language)
+        case .alwaysQuick: L10n.string("settings.wakeMode.alwaysQuick", in: language)
+        }
+    }
+}
+
 @MainActor
 final class AppSettings: ObservableObject {
     private let defaults: UserDefaults
@@ -49,6 +62,11 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(pageZoom, forKey: "pageZoom") }
     }
 
+    /// 改了不动当前窗口，下次按唤醒快捷键时才用。
+    @Published var wakeWindowMode: WakeWindowMode {
+        didSet { defaults.set(wakeWindowMode.rawValue, forKey: "wakeWindowMode") }
+    }
+
     /// 仅保存对话路径（不含 query），用于重启后恢复。
     var lastConversationURL: URL? {
         get { defaults.string(forKey: "lastConversationURL").flatMap(URL.init(string:)) }
@@ -65,6 +83,8 @@ final class AppSettings: ObservableObject {
             "restoreLastConversation": true,
             "allowPageAccessibility": false,
             "pageZoom": PageZoom.actualSize,
+            // 老用户没有这个键，也得到“保持上次模式”；不写入，其他设置不受影响。
+            "wakeWindowMode": WakeWindowMode.keepLast.rawValue,
         ])
         hotKey = HotKeyCombo.saved(keyCode: defaults.object(forKey: "hotKeyCode") as? Int,
                                    modifiers: defaults.object(forKey: "hotKeyModifiers") as? Int,
@@ -81,5 +101,6 @@ final class AppSettings: ObservableObject {
         restoreLastConversation = defaults.bool(forKey: "restoreLastConversation")
         allowPageAccessibility = defaults.bool(forKey: "allowPageAccessibility")
         pageZoom = PageZoom.nearestLevel(to: defaults.double(forKey: "pageZoom"))
+        wakeWindowMode = defaults.string(forKey: "wakeWindowMode").flatMap(WakeWindowMode.init(rawValue:)) ?? .keepLast
     }
 }

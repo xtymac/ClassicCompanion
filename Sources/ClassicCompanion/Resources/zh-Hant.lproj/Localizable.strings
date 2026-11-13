@@ -97,6 +97,10 @@
 "settings.shortcut.footer" = "按一下欄位，再按下想用的組合。";
 "settings.pageZoom" = "頁面縮放";
 "settings.pageZoom.note" = "小視窗和完整視窗共用，也可以按 ⌘+、⌘-、⌘0。";
+"settings.wakeMode" = "叫出時的視窗模式";
+"settings.wakeMode.note" = "按叫出快速鍵時使用。按一下 Dock 圖像或按 ⌘Tab 時保持目前的模式。";
+"settings.wakeMode.keepLast" = "保持上次的模式";
+"settings.wakeMode.alwaysQuick" = "一律使用小視窗";
 "settings.web.enable" = "啟用網頁增強功能";
 "settings.web.focus" = "叫出後將游標放在官方輸入框";
 "settings.web.escape" = "一般聊天狀態下按 Esc 隱藏視窗";

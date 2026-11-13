@@ -26,7 +26,7 @@ enum SettingsPane: Int, CaseIterable {
     /// 每页分几组，组内按顺序显示。
     var sections: [[SettingsItem]] {
         switch self {
-        case .general: [[.appLanguage, .pageZoom], [.restoreLastConversation, .focusInputOnShow, .escapeHidesWindow],
+        case .general: [[.appLanguage, .pageZoom, .wakeWindowMode], [.restoreLastConversation, .focusInputOnShow, .escapeHidesWindow],
                         [.automaticUpdateChecks]]
         case .shortcuts: [[.wakeShortcut, .modeShortcut]]
         case .advanced: [[.webEnhancements], [.allowPageAccessibility], [.diagnostics]]
@@ -36,9 +36,15 @@ enum SettingsPane: Int, CaseIterable {
     var items: [SettingsItem] { sections.flatMap { $0 } }
 }
 
+/// “唤醒时窗口模式”弹出菜单的选中值：模式加当前界面语言，见 SettingsPaneView.row(.wakeWindowMode)。
+private struct WakeModeChoice: Hashable {
+    let mode: WakeWindowMode
+    let language: AppLanguage
+}
+
 /// 设置里每一个能改或能点的项目。存储键沿用原来的，不改名、不改默认值。
 enum SettingsItem: CaseIterable {
-    case appLanguage, pageZoom, restoreLastConversation, focusInputOnShow, escapeHidesWindow, automaticUpdateChecks
+    case appLanguage, pageZoom, wakeWindowMode, restoreLastConversation, focusInputOnShow, escapeHidesWindow, automaticUpdateChecks
     case wakeShortcut, modeShortcut
     case webEnhancements, allowPageAccessibility, diagnostics
 
@@ -46,6 +52,7 @@ enum SettingsItem: CaseIterable {
         switch self {
         case .appLanguage: [LanguagePreference.defaultsKey]
         case .pageZoom: ["pageZoom"]
+        case .wakeWindowMode: ["wakeWindowMode"]
         case .restoreLastConversation: ["restoreLastConversation"]
         case .focusInputOnShow: ["focusInputOnShow"]
         case .escapeHidesWindow: ["escapeHidesWindow"]
@@ -74,7 +81,8 @@ enum SettingsWindowLayout {
     static let width: CGFloat = 500
     /// 四种语言里最高的一页（“了解更多”收起时）也不用滚动。SettingsLayoutTests 逐页核对。
     /// 通用页加了“更新”一组（英文、日文 425 pt；发现新版本时再多一行“查看更新…”，480 pt），从 400 调到 480。
-    static let contentHeight: CGFloat = 480
+    /// 再加“唤醒时窗口模式”（英文、日文在网页增强关着、发现新版本时最高 547 pt），调到 550。
+    static let contentHeight: CGFloat = 550
     /// 再矮的屏幕也留出能用的高度。
     static let minimumContentHeight: CGFloat = 220
     /// 窗口上下各留一点空。
@@ -238,6 +246,19 @@ struct SettingsPaneView: View {
             } label: {
                 Text(L10n.string("settings.pageZoom"))
                 Text(L10n.string("settings.pageZoom.note"))
+            }
+        case .wakeWindowMode:
+            // 设置开着时改应用语言，弹出菜单上选中项的文字不会跟着变（隔离副本实测，离屏渲染重现不了）：
+            // 只换选项文字时它不重画选中项。所以选中值带上语言，语言一变选中值也变，弹出菜单重新选中、显示新文字。
+            // 不用 .id(语言) 重建：那样 Tab 从“页面缩放”走不到这一项（构建 20261114.0218 实测）。
+            Picker(selection: Binding(get: { WakeModeChoice(mode: settings.wakeWindowMode, language: languages.language) },
+                                      set: { settings.wakeWindowMode = $0.mode })) {
+                ForEach(WakeWindowMode.allCases, id: \.self) {
+                    Text($0.title(in: languages.language)).tag(WakeModeChoice(mode: $0, language: languages.language))
+                }
+            } label: {
+                Text(L10n.string("settings.wakeMode"))
+                Text(L10n.string("settings.wakeMode.note"))
             }
         case .restoreLastConversation:
             Toggle(L10n.string("settings.session.restore"), isOn: $settings.restoreLastConversation)

@@ -27,8 +27,8 @@ final class SettingsPanesTests: XCTestCase {
 
     func testEachPaneHoldsTheRequestedSettings() {
         XCTAssertEqual(SettingsPane.general.items,
-                       [.appLanguage, .pageZoom, .restoreLastConversation, .focusInputOnShow, .escapeHidesWindow,
-                        .automaticUpdateChecks])
+                       [.appLanguage, .pageZoom, .wakeWindowMode, .restoreLastConversation, .focusInputOnShow,
+                        .escapeHidesWindow, .automaticUpdateChecks])
         XCTAssertEqual(SettingsPane.shortcuts.items, [.wakeShortcut, .modeShortcut])
         XCTAssertEqual(SettingsPane.advanced.items, [.webEnhancements, .allowPageAccessibility, .diagnostics])
     }
@@ -52,9 +52,10 @@ final class SettingsPanesTests: XCTestCase {
         settings.restoreLastConversation = settings.restoreLastConversation
         settings.allowPageAccessibility = settings.allowPageAccessibility
         settings.pageZoom = settings.pageZoom
+        settings.wakeWindowMode = settings.wakeWindowMode
         settings.lastConversationURL = URL(string: "https://chatgpt.com/c/test")
         let stored = Set(UserDefaults(suiteName: suite)!.persistentDomain(forName: suite)?.keys.map { $0 } ?? [])
-        XCTAssertEqual(stored.count, 12)
+        XCTAssertEqual(stored.count, 13)
         let placed = Set(SettingsItem.allCases.flatMap(\.storageKeys))
         // rateLevel：旧版自带朗读的语速，界面早已不显示，存储保留不动；lastConversationURL：应用自己记的最近对话。
         let notShown: Set<String> = ["rateLevel", "lastConversationURL"]
@@ -108,6 +109,55 @@ final class SettingsPanesTests: XCTestCase {
         XCTAssertEqual(settings.pageZoom, PageZoom.actualSize)
         XCTAssertEqual(settings.hotKey, .standard)
         XCTAssertEqual(settings.modeKey, .modeStandard)
+    }
+
+    // MARK: - 唤醒时窗口模式（用户 2026-11-14：默认改为“保持上次模式”）
+
+    func testWakeWindowModeDefaultsToKeepLast() {
+        XCTAssertEqual(freshSettings().wakeWindowMode, .keepLast)
+    }
+
+    /// 老用户没有这个键：得到“保持上次模式”，已有的其他设置原样保留。
+    func testExistingUsersWithoutTheKeyKeepTheirOtherSettings() {
+        let old = freshSettings()
+        old.escapeHidesWindow = false
+        old.pageZoom = 1.25
+        old.restoreLastConversation = false
+        let defaults = UserDefaults(suiteName: suite)!
+        XCTAssertNil(defaults.persistentDomain(forName: suite)?["wakeWindowMode"])
+        let upgraded = AppSettings(defaults: defaults)
+        XCTAssertEqual(upgraded.wakeWindowMode, .keepLast)
+        XCTAssertFalse(upgraded.escapeHidesWindow)
+        XCTAssertEqual(upgraded.pageZoom, 1.25)
+        XCTAssertFalse(upgraded.restoreLastConversation)
+        XCTAssertNil(defaults.persistentDomain(forName: suite)?["wakeWindowMode"], "只读取，不替老用户写入")
+    }
+
+    func testWakeWindowModeSurvivesARestart() {
+        let settings = freshSettings()
+        settings.wakeWindowMode = .alwaysQuick
+        XCTAssertEqual(AppSettings(defaults: UserDefaults(suiteName: suite)!).wakeWindowMode, .alwaysQuick)
+        settings.wakeWindowMode = .keepLast
+        XCTAssertEqual(AppSettings(defaults: UserDefaults(suiteName: suite)!).wakeWindowMode, .keepLast)
+    }
+
+    func testUnknownStoredWakeWindowModeFallsBackToKeepLast() {
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set("sometimes", forKey: "wakeWindowMode")
+        XCTAssertEqual(AppSettings(defaults: defaults).wakeWindowMode, .keepLast)
+    }
+
+    func testWakeWindowModeTextsExistInEveryLanguage() {
+        let keys = ["settings.wakeMode", "settings.wakeMode.note", "settings.wakeMode.keepLast", "settings.wakeMode.alwaysQuick"]
+        for language in AppLanguage.allCases {
+            for key in keys {
+                XCTAssertNotEqual(L10n.string(key, in: language), key, "\(language.rawValue) 缺 \(key)")
+            }
+        }
+        XCTAssertEqual(L10n.string("settings.wakeMode", in: .simplifiedChinese), "唤醒时窗口模式")
+        XCTAssertEqual(WakeWindowMode.allCases.map { $0.title(in: .simplifiedChinese) }, ["保持上次模式", "总是小窗"])
+        XCTAssertEqual(WakeWindowMode.allCases, [.keepLast, .alwaysQuick], "默认的放在前面")
     }
 
     // MARK: - 四种语言

@@ -192,6 +192,87 @@ final class WindowExperienceTests: XCTestCase {
         return NSPoint(x: visible.minX + 23, y: visible.minY + 17)
     }
 
+    // MARK: - 唤醒快捷键保持上次模式（用户 2026-11-14：默认“保持上次模式”，不设时限）
+
+    /// 完整窗口隐藏后按唤醒键：仍是完整窗口，大小和位置不变（同一块屏幕）。改动前这里会变回小窗。
+    @MainActor func testHotKeyWakeKeepsTheFullWindowByDefault() throws {
+        let (controller, window) = try quickWindowAwayFromEdges()
+        controller.show(mode: .full)
+        let moved = try cornerOrigin(of: window)
+        window.setFrameOrigin(moved)
+        let full = window.frame
+        controller.hide(reason: "唤醒快捷键")
+        controller.toggle(wake: .keepLast)
+        XCTAssertTrue(window.isVisible)
+        XCTAssertEqual(controller.mode, .full)
+        XCTAssertEqual(window.frame, full)
+    }
+
+    @MainActor func testHotKeyWakeKeepsTheQuickWindow() throws {
+        let (controller, window) = try quickWindowAwayFromEdges()
+        let before = window.frame
+        controller.hide(reason: "唤醒快捷键")
+        controller.toggle(wake: .keepLast)
+        XCTAssertEqual(controller.mode, .quick)
+        XCTAssertEqual(window.frame, before)
+    }
+
+    /// 每个隐藏入口都一样：Esc、⌘W、顶部和红色关闭按钮、网页 Esc 都走 hide()，不改模式。
+    @MainActor func testEveryHideEntryKeepsTheFullWindowForTheHotKey() throws {
+        let entries: [(String, @MainActor (ChatWindowController, NSWindow) -> Void)] = [
+            ("唤醒快捷键", { c, _ in c.hide(reason: "唤醒快捷键") }),
+            ("⌘W", { c, _ in c.hide(reason: "⌘W") }),
+            ("窗口 Esc", { _, w in w.makeFirstResponder(nil); w.cancelOperation(nil) }),   // 焦点不在网页时
+            ("网页 Esc", { c, _ in c.hide(reason: "网页 Esc") }),
+            ("顶部关闭按钮", { c, _ in c.hide(reason: "顶部关闭按钮") }),
+            ("红色关闭按钮", { c, w in XCTAssertFalse(c.windowShouldClose(w)) }),
+        ]
+        for (name, hide) in entries {
+            let (controller, window) = try quickWindowAwayFromEdges()
+            controller.show(mode: .full)
+            let full = window.frame
+            hide(controller, window)
+            XCTAssertFalse(window.isVisible, name)
+            controller.toggle(wake: .keepLast)
+            XCTAssertEqual(controller.mode, .full, name)
+            XCTAssertEqual(window.frame.size, full.size, name)
+            controller.hide(reason: "测试")
+        }
+    }
+
+    /// 选“总是小窗”：完整窗口隐藏后按唤醒键回到小窗，放在记住的小窗位置；改回来后又保持完整窗口。
+    @MainActor func testAlwaysQuickReturnsToQuickAndSwitchingBackKeepsFull() throws {
+        let (controller, window) = try quickWindowAwayFromEdges()
+        let quick = window.frame
+        controller.show(mode: .full)
+        controller.hide(reason: "唤醒快捷键")
+        controller.toggle(wake: .alwaysQuick)
+        XCTAssertEqual(controller.mode, .quick)
+        XCTAssertEqual(window.frame, quick)
+        controller.show(mode: .full)
+        controller.hide(reason: "唤醒快捷键")
+        controller.toggle(wake: .keepLast)
+        XCTAssertEqual(controller.mode, .full)
+    }
+
+    /// 窗口还在动画、网页还在排版时就隐藏：按用户最后一次的选择叫出来。
+    @MainActor func testHidingMidSwitchWakesInTheChosenMode() throws {
+        let (controller, window, _, page) = try switchFixture()
+        controller.show(mode: .full)              // 网页还没排好，窗口还没动
+        controller.hide(reason: "唤醒快捷键")
+        controller.toggle(wake: .keepLast)
+        XCTAssertEqual(controller.mode, .full)
+        XCTAssertEqual(window.frame.size, ChatWindowController.fullSize)
+        XCTAssertFalse(controller.isShowingFrozenPage)
+        page.finishLayout.forEach { $0() }        // 网页晚到的回答不再改窗口
+        XCTAssertEqual(window.frame.size, ChatWindowController.fullSize)
+        controller.show(mode: .quick)             // 又切回小窗，还没缩小就隐藏
+        controller.hide(reason: "⌘W")
+        controller.toggle(wake: .keepLast)
+        XCTAssertEqual(controller.mode, .quick)
+        XCTAssertEqual(window.frame.size, ChatWindowController.quickSize)
+    }
+
     // MARK: - 放大缩小时窗口不位移
 
     private func topLeft(_ frame: NSRect) -> NSPoint { NSPoint(x: frame.minX, y: frame.maxY) }

@@ -97,6 +97,10 @@
 "settings.shortcut.footer" = "点一下框，再按下想用的组合。";
 "settings.pageZoom" = "页面缩放";
 "settings.pageZoom.note" = "小窗和完整窗口共用，也可以按 ⌘+、⌘-、⌘0。";
+"settings.wakeMode" = "唤醒时窗口模式";
+"settings.wakeMode.note" = "按唤醒快捷键时使用。点 Dock 图标或按 ⌘Tab 时保持当前模式。";
+"settings.wakeMode.keepLast" = "保持上次模式";
+"settings.wakeMode.alwaysQuick" = "总是小窗";
 "settings.web.enable" = "启用网页增强";
 "settings.web.focus" = "唤醒后聚焦官方输入框";
 "settings.web.escape" = "普通聊天状态下 Esc 隐藏窗口";

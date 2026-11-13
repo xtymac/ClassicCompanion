@@ -302,11 +302,24 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         return window.isVisible && window.isKeyWindow && NSApp.isActive && !window.isMiniaturized
     }
 
-    /// 快捷键 / 重新打开时使用的模式。默认 Quick；Phase 0 对照测试（phase0LaunchFull）时为 Full。
+    /// 启动时和“总是小窗”时唤醒快捷键使用的模式。默认 Quick；Phase 0 对照测试（phase0LaunchFull）时为 Full。
     var defaultShowMode: Mode = .quick
 
-    func toggle() {
-        isShownAndActive ? hide(reason: "唤醒快捷键") : show(mode: defaultShowMode)
+    /// 唤醒快捷键。setting 在按下时读取，改设置不动当前窗口。
+    func toggle(wake setting: WakeWindowMode) {
+        isShownAndActive ? hide(reason: "唤醒快捷键")
+            : show(mode: Self.hotKeyWakeMode(setting, last: mode, defaultMode: defaultShowMode))
+    }
+
+    /// 唤醒快捷键传给 show(mode:) 的模式。没有时限，判断里也没有时间。
+    /// 保持上次模式：小窗照旧放到这块屏幕记住的位置；完整窗口返回 nil，和 Dock、⌘Tab 找回一样放置（同一块屏幕上留在原处），
+    /// 仍经过 show()，唤醒后聚焦输入框等照旧。总是小窗：改动之前的行为。
+    /// 隐藏途中还在切换的，hide() 已先做完切换，last 就是用户最后选的模式。
+    nonisolated static func hotKeyWakeMode(_ setting: WakeWindowMode, last: Mode, defaultMode: Mode) -> Mode? {
+        switch setting {
+        case .alwaysQuick: defaultMode
+        case .keepLast: last == .full ? nil : last
+        }
     }
 
     enum RevealAction { case none, activate, restore }
@@ -317,7 +330,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// Dock、Finder 再次打开、⌘Tab：找回现有窗口。保持当前模式，不碰网页。可见和最小化的窗口留在原处；
-    /// 隐藏窗口出现在鼠标所在屏幕，见 keepsPositionOnReveal。快捷键不走这里：从隐藏状态唤醒仍回到默认模式。
+    /// 隐藏窗口出现在鼠标所在屏幕，见 keepsPositionOnReveal。唤醒快捷键在“保持上次模式”下找回完整窗口用同样的放置规则。
     func reveal() {
         guard let window else { return }
         switch Self.revealAction(visible: window.isVisible, miniaturized: window.isMiniaturized, shownAndActive: isShownAndActive) {
@@ -369,7 +382,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         onWillShow?(newMode ?? mode)
         let screen = Self.screenForShow(modeChanged: modeChanged, windowVisible: window.isVisible,
                                         current: window.screen, underMouse: Self.screenUnderMouse())
-        // newMode 为空只来自 reveal()：找回现有窗口，不是快捷键唤醒。
+        // newMode 为空：reveal() 找回现有窗口，或唤醒快捷键在“保持上次模式”下找回完整窗口。
         let restoringMinimized = newMode == nil && window.isMiniaturized
         let staysInPlace = newMode == nil && Self.keepsPositionOnReveal(
             mode: mode, miniaturized: window.isMiniaturized, onTargetScreen: window.screen.map { $0 == screen } ?? false)

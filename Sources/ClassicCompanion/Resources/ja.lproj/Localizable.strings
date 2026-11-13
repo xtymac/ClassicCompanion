@@ -97,6 +97,10 @@
 "settings.shortcut.footer" = "枠をクリックしてから、使いたい組み合わせを押してください。";
 "settings.pageZoom" = "ページの拡大/縮小";
 "settings.pageZoom.note" = "クイックとフルウインドウで共通です。⌘+、⌘-、⌘0 でも変更できます。";
+"settings.wakeMode" = "表示時のウインドウモード";
+"settings.wakeMode.note" = "表示 / 非表示のショートカットで使われます。Dock のアイコンや ⌘Tab で戻したときは今のモードのままです。";
+"settings.wakeMode.keepLast" = "前回のモードのまま";
+"settings.wakeMode.alwaysQuick" = "常にクイック";
 "settings.web.enable" = "Web 補助機能を使う";
 "settings.web.focus" = "表示したときに ChatGPT の入力欄にカーソルを置く";
 "settings.web.escape" = "通常のチャット中は Esc でウインドウを隠す";
