@@ -12,11 +12,13 @@ SwiftUI、AppKit、WKWebView で ChatGPT の公式サイトを表示するアプ
 
 これは [Apache-2.0](LICENSE) で公開する**ソースリポジトリ**です。ソースコード、ダウンロード、フィードバックをこのリポジトリにまとめています。
 
-**[DMG をダウンロード →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.1/ClassicCompanion-0.1.0-beta.1-20261110.0137-arm64.dmg)** · [リリース情報](https://github.com/xtymac/ClassicCompanion/releases) · [フィードバック](https://github.com/xtymac/ClassicCompanion/issues)
+**[0.1.0-beta.2 の DMG をダウンロード →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.2/ClassicCompanion-0.1.0-beta.2-20261113.1719-arm64.dmg)** · [リリース情報](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.2) · [フィードバック](https://github.com/xtymac/ClassicCompanion/issues)
+
+最新のベータ版：0.1.0-beta.2（ビルド 20261113.1719）、プレリリース。macOS 15 以降の Apple シリコン搭載 Mac 用です。0.1.0-beta.1 をお使いの場合は、一度だけ手動でこのバージョンをインストールしてください。以降のバージョンはアプリ内でアップデートできます。
 
 ## レビューと検証
 
-検証結果と未検証項目は[レビューガイド](docs/review.md)を参照してください。初回オフラインからの復旧、アプリ内アップデート（Sparkle 2。確認するまで何もダウンロードしません。[updates.md](docs/updates.md)）、稲妻のメニューバーアイコン、新規チャット直後の入力が消える問題の修正を含みますが、公開済みベータ v0.1.0-beta.1（20261110.0137）にはいずれも含まれません。
+検証結果と未検証項目は[レビューガイド](docs/review.md)を参照してください。0.1.0-beta.2（ビルド 20261113.1719）から、公開ビルドに初回オフラインからの復旧、アプリ内アップデート（Sparkle 2。確認するまで何もダウンロードしません。[updates.md](docs/updates.md)）、稲妻のメニューバーアイコン、新規チャット直後の入力が消える問題の修正が含まれます。0.1.0-beta.1（20261110.0137）にはいずれも含まれません。
 
 ## ビルドとテスト
 
@@ -48,7 +50,7 @@ debug は ad-hoc 署名を使うため、開発者の配布用証明書や公証
 
 ## 既知の制限
 
-公式サイトの DOM 変更で Web 拡張が動かなくなる可能性があります。初回オフライン時の復旧はソースで修正済みですが、公開ビルドには未反映です。システムのオフライン通知（実際に Wi-Fi を切った場合）とログイン時の実起動は未検証です。画像プレビュー、対話型コンポーネント、読み上げ中の遷移、長い会話のスクロール、一部のウインドウ・IME 動作は追加確認が必要です。macOS 15/26、新規ユーザー、単一画面のフルスクリーン環境は検証範囲外で、Intel は非対応です。詳細は[ベータ版の説明](docs/trial-notes.ja.md)とレビューガイドを参照してください。
+公式サイトの DOM 変更で Web 拡張が動かなくなる可能性があります。初回オフライン時の復旧は 0.1.0-beta.2 から公開ビルドに含まれています。システムのオフライン通知（実際に Wi-Fi を切った場合）とログイン時の実起動は未検証です。画像プレビュー、対話型コンポーネント、読み上げ中の遷移、長い会話のスクロール、一部のウインドウ・IME 動作は追加確認が必要です。macOS 15/26、新規ユーザー、単一画面のフルスクリーン環境は検証範囲外で、Intel は非対応です。詳細は[ベータ版の説明](docs/trial-notes.ja.md)とレビューガイドを参照してください。
 
 
 ## 貢献とライセンス

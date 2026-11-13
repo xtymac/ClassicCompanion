@@ -12,11 +12,13 @@ Classic Companion wraps the official ChatGPT website with SwiftUI, AppKit and WK
 
 This is the **public source repository**, licensed under [Apache-2.0](LICENSE). This repository brings together source code, downloads and feedback.
 
-**[Download DMG →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.1/ClassicCompanion-0.1.0-beta.1-20261110.0137-arm64.dmg)** · [Release notes](https://github.com/xtymac/ClassicCompanion/releases) · [Feedback](https://github.com/xtymac/ClassicCompanion/issues)
+**[Download 0.1.0-beta.2 (DMG) →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.2/ClassicCompanion-0.1.0-beta.2-20261113.1719-arm64.dmg)** · [Release notes](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.2) · [Feedback](https://github.com/xtymac/ClassicCompanion/issues)
+
+Latest beta: 0.1.0-beta.2 (build 20261113.1719), a pre-release for Apple silicon Macs with macOS 15 or later. If you have 0.1.0-beta.1, install this version once by hand; later versions can be installed from within the app.
 
 ## Review and verification
 
-See the [review guide](docs/review.md) for validation results, architecture and remaining limitations. The source includes offline first-load recovery, in-app updates (Sparkle 2, nothing is downloaded before you confirm; see [updates.md](docs/updates.md)), the lightning-bolt menu bar icon and a fix for New Chat clearing a just-typed draft; the published beta v0.1.0-beta.1 (build 20261110.0137) has none of these.
+See the [review guide](docs/review.md) for validation results, architecture and remaining limitations. Since 0.1.0-beta.2 (build 20261113.1719), published builds include offline first-load recovery, in-app updates (Sparkle 2, nothing is downloaded before you confirm; see [updates.md](docs/updates.md)), the lightning-bolt menu bar icon and a fix for New Chat clearing a just-typed draft; 0.1.0-beta.1 (build 20261110.0137) has none of these.
 
 ## Build and test
 
@@ -48,7 +50,7 @@ The debug build uses ad-hoc signing and needs no maintainer signing certificate 
 
 ## Known limitations
 
-The official site's DOM can change and break optional web enhancements. Offline first-load recovery is fixed in source but not yet in a published build, and the system offline signal (Wi-Fi actually off) and a real login-time launch remain unverified. Image previews, interactive components, Read Aloud transitions, long-chat scrolling and some window/IME behavior still need review. macOS 15/26, Intel, fresh accounts and single-display full-screen behavior are not covered by the recorded acceptance checks; Intel is unsupported. See the complete [beta notes](docs/trial-notes.en.md) and the review guide.
+The official site's DOM can change and break optional web enhancements. Offline first-load recovery ships from 0.1.0-beta.2, but the system offline signal (Wi-Fi actually off) and a real login-time launch remain unverified. Image previews, interactive components, Read Aloud transitions, long-chat scrolling and some window/IME behavior still need review. macOS 15/26, Intel, fresh accounts and single-display full-screen behavior are not covered by the recorded acceptance checks; Intel is unsupported. See the complete [beta notes](docs/trial-notes.en.md) and the review guide.
 
 
 ## Contributing and licensing

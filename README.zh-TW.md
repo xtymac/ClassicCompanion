@@ -12,11 +12,13 @@
 
 這是採用 [Apache-2.0](LICENSE) 的**公開原始碼儲存庫**。原始碼、下載及使用者意見統一於本儲存庫。
 
-**[下載 DMG →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.1/ClassicCompanion-0.1.0-beta.1-20261110.0137-arm64.dmg)** · [版本說明](https://github.com/xtymac/ClassicCompanion/releases) · [回饋](https://github.com/xtymac/ClassicCompanion/issues)
+**[下載 0.1.0-beta.2（DMG）→](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.2/ClassicCompanion-0.1.0-beta.2-20261113.1719-arm64.dmg)** · [版本說明](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.2) · [回饋](https://github.com/xtymac/ClassicCompanion/issues)
+
+最新試用版：0.1.0-beta.2（建置 20261113.1719），預先發布版本，適用於 macOS 15 或以上版本的 Apple 晶片 Mac。已安裝 0.1.0-beta.1 的使用者需要手動安裝一次本版，之後的版本可以在 App 內更新。
 
 ## 審查與驗證
 
-架構、驗證結果與未驗證項目見[審查指南](docs/review.md)。原始碼包含首次離線載入復原、App 內更新（Sparkle 2，確認之前不會下載，見 [updates.md](docs/updates.md)）、閃電選單列圖示，以及新增對話後剛輸入的內容被清掉的修正；已發布 beta v0.1.0-beta.1（20261110.0137）皆不包含。
+架構、驗證結果與未驗證項目見[審查指南](docs/review.md)。自 0.1.0-beta.2（建置 20261113.1719）起，發布版本包含首次離線載入復原、App 內更新（Sparkle 2，確認之前不會下載，見 [updates.md](docs/updates.md)）、閃電選單列圖示，以及新增對話後剛輸入的內容被清掉的修正；0.1.0-beta.1（20261110.0137）皆不包含。
 
 ## 建置與測試
 
@@ -48,7 +50,7 @@ debug 使用 ad-hoc 簽署，不需要維護者的發布憑證或公證認證資
 
 ## 已知限制
 
-官方網站 DOM 變更可能影響網頁增強；首次離線載入後的復原已在原始碼中修正，但尚未納入已發布版本，系統離線訊號（實際關閉 Wi-Fi）及登入時的實際啟動仍未驗證。圖片預覽、互動元件、朗讀切換、長對話捲動及部分視窗、輸入法行為仍需確認。尚未驗證 macOS 15/26、全新使用者和單螢幕全螢幕情境；不支援 Intel。完整問題見[試用版說明](docs/trial-notes.zh-Hant.md)及 review 指南。
+官方網站 DOM 變更可能影響網頁增強；首次離線載入後的復原自 0.1.0-beta.2 起納入發布版本，但系統離線訊號（實際關閉 Wi-Fi）及登入時的實際啟動仍未驗證。圖片預覽、互動元件、朗讀切換、長對話捲動及部分視窗、輸入法行為仍需確認。尚未驗證 macOS 15/26、全新使用者和單螢幕全螢幕情境；不支援 Intel。完整問題見[試用版說明](docs/trial-notes.zh-Hant.md)及 review 指南。
 
 
 ## 貢獻與授權

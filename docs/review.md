@@ -16,7 +16,7 @@ Privacy descriptions are implementation goals to inspect, not an independent sec
 
 ## Verification
 
-Public-tree validation results are recorded in [verification.md](verification.md). The source includes the first-load recovery fix; the downloadable beta v0.1.0-beta.1 (20261110.0137) predates it. Publication of this repository does not publish an updated installer.
+Public-tree validation results are recorded in [verification.md](verification.md). The source includes the first-load recovery fix; 0.1.0-beta.2 (20261113.1719) is the first published build that contains it, and 0.1.0-beta.1 (20261110.0137) predates it. Installers are published separately as Releases.
 
 Prior isolated-copy acceptance recorded six proxy-simulated network checks: offline launch/reconnection, reload button and command, backoff/exhaustion, disconnection after a page is present, wake versus mode-switch behavior, and reload while the first load is pending. Those prior checks are not a new live acceptance run of this public export.
 

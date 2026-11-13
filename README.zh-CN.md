@@ -12,11 +12,13 @@
 
 这是采用 [Apache-2.0](LICENSE) 的**公开源码仓库**。源码、下载和用户反馈统一在本仓库。
 
-**[下载 DMG →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.1/ClassicCompanion-0.1.0-beta.1-20261110.0137-arm64.dmg)** · [版本说明](https://github.com/xtymac/ClassicCompanion/releases) · [反馈](https://github.com/xtymac/ClassicCompanion/issues)
+**[下载 0.1.0-beta.2（DMG）→](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.2/ClassicCompanion-0.1.0-beta.2-20261113.1719-arm64.dmg)** · [版本说明](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.2) · [反馈](https://github.com/xtymac/ClassicCompanion/issues)
+
+最新试用版：0.1.0-beta.2（构建 20261113.1719），预发布版，适用于 macOS 15 或更新版本的 Apple 芯片 Mac。已安装 0.1.0-beta.1 的用户需要手动安装一次本版，之后的版本可以在应用内更新。
 
 ## 审查与验证
 
-架构、验证结果和未验证事项见[审查指南](docs/review.md)。源码包含首次离线加载恢复、应用内更新（Sparkle 2，确认之前不会下载，见 [updates.md](docs/updates.md)）、闪电菜单栏图标，以及新建对话后刚输入的内容被清掉的修复；已发布的 beta v0.1.0-beta.1（20261110.0137）都不包含。
+架构、验证结果和未验证事项见[审查指南](docs/review.md)。从 0.1.0-beta.2（构建 20261113.1719）起，发布版包含首次离线加载恢复、应用内更新（Sparkle 2，确认之前不会下载，见 [updates.md](docs/updates.md)）、闪电菜单栏图标，以及新建对话后刚输入的内容被清掉的修复；0.1.0-beta.1（20261110.0137）都不包含。
 
 ## 构建与测试
 
@@ -48,7 +50,7 @@ debug 使用 ad-hoc 签名，不需要维护者的发布证书或公证凭据，
 
 ## 已知限制
 
-官网 DOM 变化可能影响网页增强；首次离线加载后的恢复已在源码中修复，但尚未进入已发布版本，系统断网信号（真正关闭 Wi-Fi）和开机登录时的真实启动仍未验证。图片预览、交互组件、朗读切换、长对话滚动及部分窗口和输入法行为仍需验证。现有验收未覆盖 macOS 15/26、全新用户和单屏全屏场景；不支持 Intel。完整问题见[试用版说明](docs/trial-notes.md)及 review 指南。
+官网 DOM 变化可能影响网页增强；首次离线加载后的恢复从 0.1.0-beta.2 起包含在发布版中，但系统断网信号（真正关闭 Wi-Fi）和开机登录时的真实启动仍未验证。图片预览、交互组件、朗读切换、长对话滚动及部分窗口和输入法行为仍需验证。现有验收未覆盖 macOS 15/26、全新用户和单屏全屏场景；不支持 Intel。完整问题见[试用版说明](docs/trial-notes.md)及 review 指南。
 
 
 ## 贡献与授权
