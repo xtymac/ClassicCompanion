@@ -125,6 +125,25 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private let bar: NSView
     private var backgroundObservation: NSKeyValueObservation?
     private var pendingBackground: DispatchWorkItem?
+    /// 启动保护：从启动画面出现到网页第一次加载完成，不采用 WebKit 报的页面底色。这段时间顶部一条、启动画面、
+    /// 窗口底色和“无法连接”提示保持启动时的颜色（上次记下的页面颜色，没有就跟随系统），也不保存。
+    /// 2026-11-14 冷启动复现：深色启动画面在网页提交前变浅，加载完成后才变回深色。按日志时间推算，那时报出的浅色
+    /// 还不是 ChatGPT 页面的颜色；这是推断，日志没有记下颜色数值。
+    /// 加载失败和启动画面到时限都不解除：那时窗口里可能还没有页面。之后哪一次加载完成都会解除。
+    private var holdsPageColor = false
+    /// 解除启动保护时 WebKit 报着的颜色。它在加载完成前就有了，可能还是临时颜色：先不采用，等页面颜色变化；
+    /// 到 pageColorSettleLimit 还没变，再按当前颜色采用（页面本来就是这个颜色）。
+    private var colorBeforeFirstLoad: NSColor?
+    /// 进入和解除启动保护时加一。排着队的颜色更新只在代号没变时生效，旧回调不会把临时颜色采用或保存。
+    private var pageColorGeneration = 0
+    /// 解除启动保护后，加载完成前就有的颜色最多等多久。复现里真实颜色在加载完成后约 24–68 ms 报出（按日志时间推算）。
+    var pageColorSettleLimit: TimeInterval = 1
+    /// 启动画面结束后正在淡出的那层，淡出完就没了。
+    private weak var launchFade: NSHostingView<LaunchScreen>?
+    /// 正在淡出的那层（测试用）。
+    var launchFadeView: NSHostingView<LaunchScreen>? { launchFade }
+    /// 启动保护是否还在（测试和诊断用）。
+    var isHoldingPageColor: Bool { holdsPageColor }
     /// 顶部一条和启动画面用的外观（测试用）。
     var chromeAppearance: NSAppearance? { bar.appearance }
     /// 小窗和完整窗口切换键，跟随设置。
@@ -200,7 +219,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
 
         applyAppearance()
         // 页面换底色（ChatGPT 切换浅色、深色）时跟着变。导航刚开始时 WebKit 会短暂报出默认白色，
-        // 稳定 150ms 再采用，免得每次加载都闪一下浅色。
+        // 稳定 150ms 再采用，免得每次加载都闪一下浅色。启动时另有启动保护，见 holdsPageColor。
         backgroundObservation = webView.observe(\.underPageBackgroundColor) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.pageBackgroundChanged() }
         }
@@ -496,12 +515,13 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     func beginLaunchScreen() {
         launchCover.isHidden = false
         launchStarted = Date()
+        holdPageColor()
         DispatchQueue.main.asyncAfter(deadline: .now() + launchScreenLimit) { [weak self] in
             MainActor.assumeIsolated { self?.endLaunchScreen("超过时限") }
         }
     }
 
-    /// 网页加载完、加载失败或到时限时调用。之后不再出现。
+    /// 网页加载完、加载失败或到时限时调用。之后不再出现。启动保护不在这里解除，见 pageDidFinishLoading()。
     func endLaunchScreen(_ outcome: String) {
         guard isShowingLaunchScreen else { return }
         diagnostics.log("launch", "启动画面结束：\(outcome)（\(Int(Date().timeIntervalSince(launchStarted) * 1000))ms）")
@@ -510,13 +530,21 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// 网页可能还没画出第一帧：盖一层同样的画面淡出。启动画面本身已经结束。
+    /// 这层的底色和文字、图标用同一个外观，都固定在启动画面结束那一刻：淡出途中页面颜色变了也不跟着换。
     private func fadeOutLaunchScreen() {
         guard let container = launchCover.superview else { return }
-        let fade = NSHostingView(rootView: LaunchScreen(appearance: appearance))
-        fade.appearance = launchCover.appearance
+        let look = launchCover.effectiveAppearance
+        var fill = appearance.background
+        if fill == nil {
+            // 没有记下页面颜色时启动画面跟随系统：把系统颜色按这一刻的外观换成固定颜色。
+            look.performAsCurrentDrawingAppearance { fill = NSColor.textBackgroundColor.usingColorSpace(.sRGB) }
+        }
+        let fade = NSHostingView(rootView: LaunchScreen(appearance: appearance, fixedBackground: fill))
+        fade.appearance = look
         fade.frame = launchCover.frame
         fade.autoresizingMask = [.width, .height]
         container.addSubview(fade, positioned: .above, relativeTo: launchCover)
+        launchFade = fade
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
             fade.animator().alphaValue = 0
@@ -525,13 +553,56 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private func pageBackgroundChanged() {
+    /// 进入启动保护。已经排着队的颜色更新作废：取消，并且换代号，万一已经出队也不生效。
+    private func holdPageColor() {
+        holdsPageColor = true
+        colorBeforeFirstLoad = nil
+        pageColorGeneration += 1
         pendingBackground?.cancel()
+        pendingBackground = nil
+        diagnostics.log("appearance", "启动保护：网页加载完成前不跟随页面底色（保持\(Self.shade(appearance.background))）")
+    }
+
+    /// 网页加载完成时调用（AppDelegate.onMainFrameLoaded，每次都调用，只有启动保护还在时起作用）。
+    /// 解除时 WebKit 报着的颜色不马上采用：它可能还是加载完成前的临时颜色。页面颜色变了再按原来的规则采用；
+    /// 一直不变就在 pageColorSettleLimit 后按它采用。
+    func pageDidFinishLoading() {
+        guard holdsPageColor else { return }
+        holdsPageColor = false
+        pageColorGeneration += 1
+        let generation = pageColorGeneration
+        let current = webView.underPageBackgroundColor
+        colorBeforeFirstLoad = current
+        diagnostics.log("appearance", "启动保护解除：加载完成时报的是\(Self.shade(current))，等页面颜色变化再采用")
+        DispatchQueue.main.asyncAfter(deadline: .now() + pageColorSettleLimit) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.pageColorGeneration == generation, self.colorBeforeFirstLoad != nil else { return }
+                self.colorBeforeFirstLoad = nil
+                self.diagnostics.log("appearance", "加载完成后 \(Int(self.pageColorSettleLimit * 1000))ms 页面颜色没有变，按当前颜色采用")
+                self.pageBackgroundChanged()
+            }
+        }
+        pageBackgroundChanged()
+    }
+
+    private func pageBackgroundChanged() {
+        if holdsPageColor {
+            diagnostics.log("appearance", "启动保护中：页面底色报为\(Self.shade(webView.underPageBackgroundColor))，不采用")
+            return
+        }
+        pendingBackground?.cancel()
+        let generation = pageColorGeneration
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, self.pageColorGeneration == generation, !self.holdsPageColor else { return }
+                let color = self.webView.underPageBackgroundColor
+                if let before = self.colorBeforeFirstLoad {
+                    // 还是加载完成前就有的颜色：不采用，也不保存。
+                    guard !PageAppearance.sameColor(color, before) else { return }
+                    self.colorBeforeFirstLoad = nil
+                }
                 let wasDark = self.appearance.isDark
-                self.appearance.update(self.webView.underPageBackgroundColor)
+                self.appearance.update(color)
                 if self.appearance.isDark != wasDark {
                     self.diagnostics.log("appearance", "页面底色：\(self.appearance.isDark == true ? "深色" : "浅色")")
                 }
@@ -540,6 +611,13 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         }
         pendingBackground = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    /// 日志里只写深浅，不写颜色值。
+    private static func shade(_ color: NSColor?) -> String {
+        guard let rgb = color?.usingColorSpace(.sRGB) else { return "系统颜色" }
+        guard rgb.alphaComponent > 0.5 else { return "透明" }
+        return PageAppearance.isDark(rgb) ? "深色" : "浅色"
     }
 
     /// 只改原生控件；网页和窗口本身不设外观，ChatGPT 选“系统”时网页仍跟随 macOS。

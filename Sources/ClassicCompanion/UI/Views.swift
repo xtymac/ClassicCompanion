@@ -244,6 +244,8 @@ final class ToolbarState: ObservableObject {
 /// 启动时网页加载完之前显示。底色用上次记下的页面颜色。图标跟随应用图标资源，换正式图标时不用改这里。
 struct LaunchScreen: View {
     @ObservedObject var appearance: PageAppearance
+    /// 启动画面结束后淡出的那层用：底色固定，不再跟着页面颜色变（文字和图标的外观由宿主视图固定）。
+    var fixedBackground: NSColor?
     @ObservedObject private var languages = LanguageController.shared
 
     var body: some View {
@@ -256,7 +258,7 @@ struct LaunchScreen: View {
             ProgressView().controlSize(.small).accessibilityLabel(L10n.string("launch.opening"))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: appearance.background ?? .textBackgroundColor))
+        .background(Color(nsColor: fixedBackground ?? appearance.background ?? .textBackgroundColor))
     }
 }
 

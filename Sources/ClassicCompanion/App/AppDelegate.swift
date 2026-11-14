@@ -116,6 +116,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         web.onMainFrameLoaded = { [weak self] in
             guard let self else { return }
             self.windowController.endLaunchScreen("网页已加载")
+            // 网页第一次加载完成才恢复跟随页面底色；加载失败、启动画面到时限都不恢复，等之后哪次加载完成。
+            self.windowController.pageDidFinishLoading()
             if self.windowController.isKey { self.focusInputSoon() }
         }
         // 加载失败时结束启动画面。WebKit 不显示错误页：首次加载失败时窗口里没有页面，

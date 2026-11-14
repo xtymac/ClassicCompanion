@@ -36,6 +36,15 @@ final class PageAppearance: ObservableObject {
         defaults.set(components, forKey: Self.key)
     }
 
+    /// 两个颜色在 sRGB 下几乎一样（容差和 update 判断“没变”相同，另比较不透明度）。取不到的颜色只和取不到的相同。
+    nonisolated static func sameColor(_ a: NSColor?, _ b: NSColor?) -> Bool {
+        let x = a?.usingColorSpace(.sRGB), y = b?.usingColorSpace(.sRGB)
+        guard let x, let y else { return x == nil && y == nil }
+        return [(x.redComponent, y.redComponent), (x.greenComponent, y.greenComponent),
+                (x.blueComponent, y.blueComponent), (x.alphaComponent, y.alphaComponent)]
+            .allSatisfy { abs($0 - $1) < 0.002 }
+    }
+
     /// 相对亮度低于中灰算深色。ChatGPT 深色底 #212121 约 0.015，浅色底接近 1。
     nonisolated static func isDark(_ color: NSColor) -> Bool {
         guard let c = color.usingColorSpace(.sRGB) else { return false }
