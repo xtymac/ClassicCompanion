@@ -85,7 +85,24 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private let quickPlacements = QuickPlacementStore(defaults: .standard)
     var fullSizes = FullWindowSizeStore(defaults: .standard, minimumWidth: ChatWindowController.fullModeDragWidth)
     /// 启动画面最长显示时间。到时就露出网页本身，官方页面自己显示加载或错误。
+    /// 2026-11-15 起只在网页已经提交（窗口里有页面）时这样：还没提交时露出的只是空白网页区（白色），
+    /// 启动画面继续显示，直到加载完成、加载失败、提交后 pageRevealLimit，或 launchScreenCap。
     var launchScreenLimit: TimeInterval = 10
+    /// 从启动画面出现起最多显示多久（用户 2026-11-15 定为 30 秒）。到了照原来的方式结束，不一直挡着。
+    var launchScreenCap: TimeInterval = 30
+    /// 遮挡（到时限后还在的启动画面、“无法连接”提示）在提交后最多再留多久。一直没有加载完成（例如子资源卡住）时，
+    /// 到时就撤，不一直挡着已经能用的页面。和颜色兜底取同一个值。
+    var pageRevealLimit: TimeInterval = 1
+    /// 到时限时网页还没提交，启动画面继续显示中。
+    private var launchAwaitsPage = false
+    /// 主框架提交过（窗口里有页面）。
+    private var hasCommittedPage = false
+    /// 主框架已提交、还没加载完成。
+    private var awaitingFinish = false
+    /// 提示收到“可以收起”时网页刚提交、还没画出来：留到加载完成再淡出。
+    private var noticeAwaitsLoad = false
+    /// 每次提交和加载完成时加一。提交后的兜底只在代号没变时生效。
+    private var commitGeneration = 0
     private var launchStarted = Date()
     private var lastDragLog = Date.distantPast
     /// 窗口已最小化到 Dock。
@@ -120,6 +137,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     }
     /// 正在显示的提示（测试和诊断用），没显示是 nil。
     var shownLoadProblem: LoadRecovery.Status? { loadProblemCover.isHidden ? nil : loadProblem.status }
+    /// 提示收起后正在淡出的那层，淡出完就没了（测试用）。
+    private weak var loadProblemFade: NSHostingView<LoadProblemView>?
+    var loadProblemFadeView: NSHostingView<LoadProblemView>? { loadProblemFade }
     /// 页面底色，顶部一条和启动画面跟着它变浅或变深。
     let appearance: PageAppearance
     private let bar: NSView
@@ -507,7 +527,15 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// 跟着 WebRuntime.loadProblem 变。
+    /// “可以收起”在提交时就来了，那时网页还没画出来，收起会露出空白白色（2026-11-15 对照）：
+    /// 网页已提交、还没加载完成时先留着（内容停在收起前的状态），加载完成时淡出；提交后 pageRevealLimit 还没加载完成就收起。
     func showLoadProblem(_ status: LoadRecovery.Status) {
+        if status == .hidden, !loadProblemCover.isHidden, awaitingFinish {
+            if !noticeAwaitsLoad { diagnostics.log("nav", "无法连接提示：网页已提交，留到加载完成") }
+            noticeAwaitsLoad = true
+            return
+        }
+        noticeAwaitsLoad = false
         loadProblem.status = status
         loadProblemCover.isHidden = status == .hidden
     }
@@ -515,18 +543,55 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     func beginLaunchScreen() {
         launchCover.isHidden = false
         launchStarted = Date()
+        launchAwaitsPage = false
         holdPageColor()
         DispatchQueue.main.asyncAfter(deadline: .now() + launchScreenLimit) { [weak self] in
-            MainActor.assumeIsolated { self?.endLaunchScreen("超过时限") }
+            MainActor.assumeIsolated { self?.launchScreenLimitReached() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + launchScreenCap) { [weak self] in
+            MainActor.assumeIsolated { self?.endLaunchScreen("超过上限") }
         }
     }
 
-    /// 网页加载完、加载失败或到时限时调用。之后不再出现。启动保护不在这里解除，见 pageDidFinishLoading()。
+    /// 到时限：网页已经提交就照原来结束；还没提交就继续显示，等加载完成、失败、提交后兜底或上限。
+    private func launchScreenLimitReached() {
+        guard isShowingLaunchScreen else { return }
+        guard !hasCommittedPage else { return endLaunchScreen("超过时限") }
+        launchAwaitsPage = true
+        diagnostics.log("launch", "启动画面到时限：网页还没提交，继续显示（等加载完成、失败、提交后 \(Int(pageRevealLimit * 1000))ms，"
+                        + "最多到 \(Int(launchScreenCap)) 秒）")
+    }
+
+    /// 网页加载完、加载失败、到时限（已提交）、提交后兜底或到上限时调用。之后不再出现。
+    /// 启动保护不在这里解除，见 pageDidFinishLoading()。
     func endLaunchScreen(_ outcome: String) {
         guard isShowingLaunchScreen else { return }
         diagnostics.log("launch", "启动画面结束：\(outcome)（\(Int(Date().timeIntervalSince(launchStarted) * 1000))ms）")
+        launchAwaitsPage = false
         launchCover.isHidden = true
         fadeOutLaunchScreen()
+    }
+
+    /// 主框架提交时调用（AppDelegate.onMainFrameCommitted，在“提示可以收起”之前）。
+    /// 提交后 pageRevealLimit 还没加载完成：到时限后还在的启动画面结束，留着的提示收起。
+    func pageDidCommit() {
+        hasCommittedPage = true
+        awaitingFinish = true
+        commitGeneration += 1
+        let generation = commitGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + pageRevealLimit) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.commitGeneration == generation, self.awaitingFinish else { return }
+                let waited = "提交后 \(Int(self.pageRevealLimit * 1000))ms 还没加载完成"
+                if self.launchAwaitsPage { self.endLaunchScreen(waited) }
+                if self.noticeAwaitsLoad {
+                    self.diagnostics.log("nav", "无法连接提示：\(waited)，收起")
+                    self.noticeAwaitsLoad = false
+                    self.loadProblem.status = .hidden
+                    self.loadProblemCover.isHidden = true
+                }
+            }
+        }
     }
 
     /// 网页可能还没画出第一帧：盖一层同样的画面淡出。启动画面本身已经结束。
@@ -534,22 +599,49 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private func fadeOutLaunchScreen() {
         guard let container = launchCover.superview else { return }
         let look = launchCover.effectiveAppearance
-        var fill = appearance.background
-        if fill == nil {
-            // 没有记下页面颜色时启动画面跟随系统：把系统颜色按这一刻的外观换成固定颜色。
-            look.performAsCurrentDrawingAppearance { fill = NSColor.textBackgroundColor.usingColorSpace(.sRGB) }
-        }
-        let fade = NSHostingView(rootView: LaunchScreen(appearance: appearance, fixedBackground: fill))
+        let fade = NSHostingView(rootView: LaunchScreen(appearance: appearance, fixedBackground: fixedFill(look)))
         fade.appearance = look
         fade.frame = launchCover.frame
         fade.autoresizingMask = [.width, .height]
         container.addSubview(fade, positioned: .above, relativeTo: launchCover)
         launchFade = fade
+        fadeAway(fade)
+    }
+
+    /// 加载完成时收起留着的提示：和启动画面一样盖一层同样的提示淡出，内容、底色和外观固定在这一刻。
+    private func fadeOutLoadProblem() {
+        let shown = loadProblem.status
+        loadProblem.status = .hidden
+        loadProblemCover.isHidden = true
+        guard let container = loadProblemCover.superview else { return }
+        let look = loadProblemCover.effectiveAppearance
+        let frozen = LoadProblemModel()
+        frozen.status = shown
+        let fade = NSHostingView(rootView: LoadProblemView(model: frozen, appearance: appearance, fixedBackground: fixedFill(look)))
+        fade.sizingOptions = []
+        fade.appearance = look
+        fade.frame = loadProblemCover.frame
+        fade.autoresizingMask = [.width, .height]
+        container.addSubview(fade, positioned: .above, relativeTo: loadProblemCover)
+        loadProblemFade = fade
+        fadeAway(fade)
+    }
+
+    /// 遮挡淡出用的固定底色：记下的页面颜色；没有记下时启动画面和提示跟随系统，把系统颜色按这一刻的外观换成固定颜色。
+    private func fixedFill(_ look: NSAppearance) -> NSColor? {
+        var fill = appearance.background
+        if fill == nil {
+            look.performAsCurrentDrawingAppearance { fill = NSColor.textBackgroundColor.usingColorSpace(.sRGB) }
+        }
+        return fill
+    }
+
+    private func fadeAway(_ view: NSView) {
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
-            fade.animator().alphaValue = 0
+            view.animator().alphaValue = 0
         } completionHandler: {
-            MainActor.assumeIsolated { fade.removeFromSuperview() }
+            MainActor.assumeIsolated { view.removeFromSuperview() }
         }
     }
 
@@ -567,6 +659,13 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 解除时 WebKit 报着的颜色不马上采用：它可能还是加载完成前的临时颜色。页面颜色变了再按原来的规则采用；
     /// 一直不变就在 pageColorSettleLimit 后按它采用。
     func pageDidFinishLoading() {
+        awaitingFinish = false
+        commitGeneration += 1
+        if noticeAwaitsLoad {
+            noticeAwaitsLoad = false
+            diagnostics.log("nav", "无法连接提示：加载完成，淡出")
+            fadeOutLoadProblem()
+        }
         guard holdsPageColor else { return }
         holdsPageColor = false
         pageColorGeneration += 1

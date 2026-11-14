@@ -212,6 +212,17 @@ final class LoadRecoveryWebTests: XCTestCase {
         XCTAssertEqual(web.loadProblem, .hidden)
     }
 
+    /// 提交时先通知窗口“提交了”，再发“提示可以收起”：窗口据此把提示留到加载完成（2026-11-15 空白白屏）。
+    func testTheCommitIsReportedBeforeTheProblemIsCleared() {
+        let web = makeRuntime()
+        var events: [String] = []
+        web.onLoadProblemChange = { events.append("problem \($0)") }
+        web.onMainFrameCommitted = { events.append("commit") }
+        failFirstLoad(web)
+        web.webView(web.webView, didCommit: nil)
+        XCTAssertEqual(events, ["problem waiting", "commit", "problem hidden"])
+    }
+
     func testCancelledLoadIsNotAProblem() {
         let web = makeRuntime()
         failFirstLoad(web, code: NSURLErrorCancelled)

@@ -272,6 +272,8 @@ final class LoadProblemModel: ObservableObject {
 struct LoadProblemView: View {
     @ObservedObject var model: LoadProblemModel
     @ObservedObject var appearance: PageAppearance
+    /// 收起后淡出的那层用：底色固定，不再跟着页面颜色变（文字和图标的外观由宿主视图固定）。
+    var fixedBackground: NSColor?
     @ObservedObject private var languages = LanguageController.shared
 
     var body: some View {
@@ -294,7 +296,7 @@ struct LoadProblemView: View {
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: appearance.background ?? .textBackgroundColor))
+        .background(Color(nsColor: fixedBackground ?? appearance.background ?? .textBackgroundColor))
     }
 
     private var detail: String {

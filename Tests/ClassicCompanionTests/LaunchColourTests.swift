@@ -184,10 +184,12 @@ final class LaunchColourTests: XCTestCase {
     }
 
     /// 启动画面到时限先结束，网页之后才加载完成：保护一直保持到加载完成，然后照常跟随。
+    /// 到时限时结束启动画面要网页已经提交（2026-11-15 起，见 PageRevealTests），所以这里先提交。
     func testFollowingResumesWhenTheLoadFinishesAfterTheLaunchScreenTimedOut() async throws {
         make(saved: savedDark)
         controller.launchScreenLimit = 0.05
         controller.beginLaunchScreen()
+        controller.pageDidCommit()
         try await waitUntil { !controller.isShowingLaunchScreen }
         XCTAssertFalse(controller.isShowingLaunchScreen)
         XCTAssertTrue(controller.isHoldingPageColor)

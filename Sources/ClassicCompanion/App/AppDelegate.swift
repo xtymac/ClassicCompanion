@@ -125,6 +125,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         // （2026-11-11 开机白屏）。
         web.onLoadFailed = { [weak self] in self?.windowController.endLaunchScreen("加载失败") }
         web.onLoadProblemChange = { [weak self] status in self?.windowController.showLoadProblem(status) }
+        // 提交时先告诉窗口：到时限后还在的启动画面和留着的提示要等加载完成（或提交后 1 秒）再撤。
+        web.onMainFrameCommitted = { [weak self] in self?.windowController.pageDidCommit() }
         windowController.onReloadRequest = { [weak self] in self?.web.reload() }
         updates = UpdateController(diagnostics: diagnostics)
 

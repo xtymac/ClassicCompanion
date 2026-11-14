@@ -61,11 +61,13 @@ final class WindowExperienceTests: XCTestCase {
         XCTAssertFalse(controller.isShowingLaunchScreen)
     }
 
-    /// 加载很慢或失败时也不能一直挡着：到时限就露出网页本身（官方页面自己显示加载或错误）。
+    /// 加载很慢时也不能一直挡着：到时限就露出网页本身（官方页面自己显示加载或错误）。
+    /// 2026-11-15 起只在网页已经提交（窗口里有页面）时这样；还没提交时见 PageRevealTests。
     @MainActor func testLaunchScreenGivesWayAfterTheLimit() {
         let controller = makeController()
         controller.launchScreenLimit = 0.05
         controller.beginLaunchScreen()
+        controller.pageDidCommit()
         let deadline = Date().addingTimeInterval(2)
         while controller.isShowingLaunchScreen, Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.02))

@@ -19,6 +19,8 @@ final class WebRuntime: NSObject {
     var onURLChange: ((URL?) -> Void)?
     /// 主框架加载完成
     var onMainFrameLoaded: (() -> Void)?
+    /// 主框架提交时调用，在“提示可以收起”（onLoadProblemChange(.hidden)）之前。
+    var onMainFrameCommitted: (() -> Void)?
     /// 主框架加载失败
     var onLoadFailed: (() -> Void)?
     /// 网页请求隐藏窗口（Esc）
@@ -350,9 +352,11 @@ extension WebRuntime: WKNavigationDelegate {
         publishLoadProblem()
     }
 
-    /// 页面一提交就收起“无法连接”提示，不等整页加载完。
+    /// 页面一提交就取消重试、记下有页面，并告诉窗口“提示可以收起”。窗口先收到提交，
+    /// 会把提示留到加载完成再淡出（2026-11-15：提交时网页还没画出来，立刻收起会露出空白白色）。
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         guard webView === self.webView else { return }
+        onMainFrameCommitted?()
         pageArrived()
     }
 
