@@ -155,3 +155,78 @@ Trial notes after the checks (2026-11-14): one paragraph was added to each of th
 Attached notes restored (2026-11-14): the four attached `TrialNotes.*.md` files were restored from the copies kept before the edit, so they again equal the trial notes inside build 20261114.1404 (made from `816276a`). `SHA256SUMS` was regenerated and is byte-identical to the one made at packaging, and `scripts/verify-release.sh --final`, with its checks unchanged, passes 76 of 76 again. The 72 of 76 result above is kept as history. Until the next build, the note that updates and ordinary restarts don't restore the scroll position is carried by the release text and this record only.
 
 The paragraph in `docs/trial-notes*.md` since `b9457bb` is text for the next version. It is not the packaging source of build 20261114.1404, whose trial notes come from `816276a`; don't regenerate or replace 1404's attached notes from the current `docs/`. The paragraph goes into the app and the attached notes together in the next build.
+
+## Launch colours and covers (builds 20261114.2343 and 20261115.0209, not release candidates) — 2026-11-15
+
+Two commits: `fb7e005` keeps the launch colours until the page first finishes loading, and `6a3f817` keeps the cover (the launch screen or the "Can't connect" notice) until the page has loaded after a retry or a slow first load. This records development progress. It is not a release approval, and it does not show that the flicker is fully solved.
+
+Nothing was released. There was no notarization, Release, tag, upload or appcast change. Build 20261114.1404 and its packages are unchanged and stay frozen, and the installed app was not replaced. Builds 20261114.2343 (`fb7e005`) and 20261115.0209 (`6a3f817`) are Developer ID signed with the hardened runtime and a secure timestamp, and they are not notarized. Their version string is still 0.1.0-beta.3, which has not been published.
+
+**Launch colours (`fb7e005`, build 20261114.2343).** Before this change, on a cold launch of build 20261114.1404 with macOS in Dark mode and the signed-out ChatGPT home page, a dark launch screen turned light and then faded back to the dark page. The app's log showed WebKit reporting a light page colour before the ChatGPT page committed. That this light colour is the blank web view's, and that it caused the 1404 flicker, is an inference from the code and the log timing; it has not been proved.
+
+| Check | Result |
+| --- | --- |
+| `swift test --filter LaunchColourTests` | Passed: 13 tests, no windows opened |
+| `swift test --skip 'ChromeTests\|PageTests\|WindowExperienceTests'` | Passed: 227 XCTest and 40 Swift Testing tests, zero failures |
+| ChromeTests, PageTests, WindowExperienceTests | Passed: 107 tests, zero failures |
+| Mutation check | Each of the four parts of the change was removed in turn. Each time, tests failed (7, 3, 1 and 2), and the source was restored byte for byte |
+| `scripts/build-app.sh release` (Developer ID) | Passed: build 20261114.2343 |
+
+The real WebKit cold load in the test run did not report a light colour during the hold. That test therefore shows only that no light colour was shown. The temporary light colour itself is covered by tests that set the page colour directly.
+
+Isolated-copy check, 2026-11-14:
+- **Setup.** The copy had its own bundle ID and test data and was not signed in. The system appearance was Dark and was not changed. Each launch was recorded frame by frame, and the brightness of the launch screen, the page area and the top bar was measured (mean brightness from 0 to 1; "light" means above 0.6). Conditions matched the 1404 reproduction.
+- **Before (1404).** With no saved page colour or a saved dark colour, 6 of 6 cold launches went from the dark launch screen to a light one and back to dark.
+- **After (2343).** There were 9 cold launches, 3 each with no saved colour, a saved light colour and a saved dark colour. The first 3 ran before the screen locked. The other 6 ran after it was unlocked and idle again, under the same conditions.
+  - With no saved colour or a saved dark colour (6 launches), no frame of the launch screen, the page area or the top bar was brighter than 0.6.
+  - With a saved light colour, which is out of date in Dark mode, each launch switched from light to dark once, as before the change.
+- **Log.** In all 9 launches, WebKit reported a light page colour 145 to 274 ms before the page committed. It was held and not saved. The dark colour was adopted 177 to 193 ms after the load finished, and the one-second fallback was not used. Afterwards the saved colour was the page's dark colour every time.
+- **Black first frame.** The first recorded frame was entirely black in 4 of the 9 launches, in 3 of 8 launches of 1404, and in 3 of the 4 normal launches of build 20261115.0209 below. The cause is unknown and is not attributed. That it happened before and after the changes does not show it is unrelated to the app.
+- **After loading.** With tool-driven input, the copy's own menu reloaded the page 3 times after the first load. Each reload committed and finished, and there were no light frames in the 1,853 frames recorded. New Chat was also chosen 3 times, but the page was already a new chat and no navigation happened. New Chat is therefore not verified.
+
+**Blank white after a failed or slow first load (found 2026-11-15).** These paths were checked on test variants: build 20261114.2347 (the source of `fb7e005`) and build 20261115.0030 (the source of 1404, `816276a`), each with the same test-only patch, which is not in this repository. The patch sends the app's web traffic through a local proxy, so the connection could be cut and restored without turning off the Mac's network. Each run started from empty website data. These variants are not a real network disconnect on the official binary.
+- **Path A: the first load fails, then an automatic retry succeeds (3 runs each).** On both variants the page area went blank white after the "Can't connect" notice hid at the commit. It stayed white until the page painted, 41 to 64 ms after the load finished: about 0.2 s on the 1404 source and 0.24 to 0.31 s with `fb7e005`. On the 1404 source, the notice and the top bar were already light during the failure, and white was saved as the page colour. With `fb7e005` they stayed dark, so the white showed as dark → white → dark.
+- **Path B: the first load is slower than the 10-second launch-screen limit; the proxy held the connection for 12 s (3 runs each).** On the 1404 source the launch screen turned white about 0.4 s after the window appeared and stayed white for about 11 s in all, and white was saved. With `fb7e005` the launch screen stayed dark for the 10 seconds, then the page area was blank white for about 1.0 to 1.1 s.
+- Only that 1404 also shows the blank white is established. That the cause is the same is not claimed.
+
+**Covers (`6a3f817`, build 20261115.0209).**
+- After a commit, the "Can't connect" notice stays, showing its last state, until the load finishes. It then fades out over 0.2 s, like the launch screen. If the load has not finished 1 s after the commit, the notice is hidden as before.
+- At the 10-second limit, the launch screen ends as before only if the page has committed. Otherwise it stays until the load finishes or fails, until 1 s after a commit, or until 30 s after it appeared. Before this change, it always ended at 10 s.
+- This is still a timing rule (the load has finished, then a 0.2 s fade), not a signal that the page has painted.
+
+| Check | Result |
+| --- | --- |
+| `swift test --skip 'ChromeTests\|PageTests\|WindowExperienceTests'` | Passed: 242 XCTest and 40 Swift Testing tests, zero failures, including the 14 new PageRevealTests (no windows opened) |
+| ChromeTests, PageTests, WindowExperienceTests | Passed: 107 tests, zero failures |
+| Mutation check | Ten parts of the change were removed one at a time. Each time, 1 to 4 tests failed, and the source was restored byte for byte |
+| `scripts/build-app.sh release` (Developer ID) | Passed: build 20261115.0209 |
+
+Isolated-copy check, 2026-11-15. All input was tool-driven, and no physical key or mouse input was recorded during the runs. Each copy had its own bundle ID and test data, was not signed in, and ran with macOS in Dark mode.
+- **Paths A and B, 3 runs each, alternating with `fb7e005`.** The proxy test variants were build 20261114.2347 (`fb7e005`) and build 20261115.0210 (`6a3f817` with the same test-only patch). Each run started from empty website data. **These runs are not an acceptance of the official binary with a real network disconnect.**
+  - **A.** Before the change, all 3 runs showed blank white for about 0.2 to 0.35 s. After it, the blank white did not appear in any of the 3 runs: no frame of the page area was brighter than 0.6. The notice stayed until the load finished, 195 to 232 ms after the commit, and then faded to the dark page.
+  - **B.** Before the change, all 3 runs showed blank white for about 0.9 to 1.3 s after the limit. After it, the blank white did not appear in any of the 3 runs: no frame of the page area was brighter than 0.6. The launch screen stayed past the limit and ended when the load finished, 11.4 to 11.7 s after the window appeared.
+  - In 2 of these 6 runs, the first frame of the fade was a little lighter than the cover across the whole page area for one frame (20 and 24 against 14, on a 0–255 scale).
+- **Normal launch on build 20261115.0209.** There were 4 cold launches (no saved colour, dark, dark, no saved colour). Then another launch with a saved dark colour was followed by 3 reloads from the copy's menu. Website data was empty only for the first launch, as in the 2343 series. Every launch screen ended when the load finished, 594 to 692 ms after it started.
+  - In 3 of the 4 launches, the brightest frame of the page area during the fade was 0.10 to 0.15. That is the same range as the 2343 series (0.07 to 0.18).
+  - **In one launch with no saved colour, the fading launch screen turned light grey for about 60 ms (peak 0.66, a pixel value of 169 of 255) before the dark page appeared.** The dark page appeared about 100 ms after the load finished; in the other three launches it had appeared by about 40 to 60 ms (frames are about 20 ms apart). Neither the cause nor whether this is a regression has been determined.
+  - Apart from moving into helper functions, the fade code of the normal launch did not change. That is a lead for the investigation, not grounds for ruling out a regression. A limited comparison of builds 20261114.2343 and 20261115.0209 is planned.
+  - All 3 reloads committed and finished. No frame of the page area was brighter than 0.081, and no two adjacent frames differed by more than 0.05.
+- **Fallbacks not reached.** In these runs, neither the 1-second fallback after a commit (for the notice or the launch screen) nor the 30-second cap was reached. They are covered by unit tests only.
+
+Known limits:
+- These changes do not show that the flicker is fully solved. Both are timing rules. When the page paints late, the fade can still show a lighter colour, as in the launch above.
+- If the page commits but has not finished loading after one second, the cover goes away. Blank white can then show until the page paints.
+- If the real page colour is reported more than one second after the load finishes, the one-second colour fallback adopts whatever colour is current then, which may still be a temporary one.
+- If the real colour is reported before the load finishes, it is adopted only after the one-second fallback. In one launch after loading, this happened. With an out-of-date saved colour, the top bar then changes about one second later than before `fb7e005`. It is a single switch, not a flicker.
+- If the page never finishes loading, the launch colours stay until a later load finishes.
+- In path A, the notice keeps showing that it is reconnecting for about 0.2 s after the page has connected. In path B, a slow first load now keeps the launch screen beyond 10 seconds, up to 30 seconds.
+
+Not verified:
+- Light system appearance
+- A ChatGPT theme that differs from the system
+- Signed-in chats
+- Hiding and showing the window
+- New Chat
+- A real network disconnect on the official builds 20261114.2343 and 20261115.0209
+- The 1-second fallback after a commit and the 30-second cap in a real run
+- Physical key presses
