@@ -209,9 +209,30 @@ Isolated-copy check, 2026-11-15. All input was tool-driven, and no physical key 
 - **Normal launch on build 20261115.0209.** There were 4 cold launches (no saved colour, dark, dark, no saved colour). Then another launch with a saved dark colour was followed by 3 reloads from the copy's menu. Website data was empty only for the first launch, as in the 2343 series. Every launch screen ended when the load finished, 594 to 692 ms after it started.
   - In 3 of the 4 launches, the brightest frame of the page area during the fade was 0.10 to 0.15. That is the same range as the 2343 series (0.07 to 0.18).
   - **In one launch with no saved colour, the fading launch screen turned light grey for about 60 ms (peak 0.66, a pixel value of 169 of 255) before the dark page appeared.** The dark page appeared about 100 ms after the load finished; in the other three launches it had appeared by about 40 to 60 ms (frames are about 20 ms apart). Neither the cause nor whether this is a regression has been determined.
-  - Apart from moving into helper functions, the fade code of the normal launch did not change. That is a lead for the investigation, not grounds for ruling out a regression. A limited comparison of builds 20261114.2343 and 20261115.0209 is planned.
+  - Apart from moving into helper functions, the fade code of the normal launch did not change. That is a lead for the investigation, not grounds for ruling out a regression. A limited comparison of builds 20261114.2343 and 20261115.0209 followed; see below.
   - All 3 reloads committed and finished. No frame of the page area was brighter than 0.081, and no two adjacent frames differed by more than 0.05.
 - **Fallbacks not reached.** In these runs, neither the 1-second fallback after a commit (for the notice or the launch screen) nor the 30-second cap was reached. They are covered by unit tests only.
+
+**Limited comparison of builds 20261114.2343 and 20261115.0209, 2026-11-15.** Two new isolated copies, one made from each official build, were cold-launched 3 times each, alternating: 2343, 0209, 0209, 2343, 2343, 0209. Before each launch, the copy's website data and settings were cleared, no page colour was saved, and macOS was checked to be in Dark mode. Both builds were recorded and analysed the same way. All input was tool-driven, and no physical key or mouse input was recorded during the runs. All 6 launches completed.
+
+Times are relative to the load finishing. In every run, the launch screen began to fade at that moment. Frames are about 20 ms apart, so each time is ±1 frame. "Lighter frames" are frames in which the area under the fading launch screen was lighter than the launch screen itself (a pixel value of 30 of 255, measured away from its icon and text).
+
+| Run | Build | Lighter frames | Lightest (when) | Dark page appeared | Brightest frame of the page area |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 20261114.2343 | 2 | 99 of 255 (+49 ms) | +66 ms | 0.39 |
+| 2 | 20261115.0209 | 2 | 50 of 255 (+35 ms) | +60 ms | 0.20 |
+| 3 | 20261115.0209 | 1 | 34 of 255 (+14 ms) | +37 ms | 0.14 |
+| 4 | 20261114.2343 | 0 | — | +28 ms | 0.13 |
+| 5 | 20261114.2343 | 0 | — | +33 ms | 0.13 |
+| 6 | 20261115.0209 | 1 | 34 of 255 (+14 ms) | +39 ms | 0.14 |
+
+- Build 20261114.2343 also showed the area under the fading launch screen turning lighter before the dark page appeared (run 1). This shows only that the older build has it too.
+- No frame was brighter than 0.6 in these 6 launches. The 0.66 seen earlier on build 20261115.0209 did not recur. Whether build 20261114.2343 can reach that level was not shown.
+- This comparison does not rule out a regression. No further rounds were run.
+- In the two runs that turned lightest, the dark page appeared latest (+66 and +60 ms). That the brightness depends on how long after the load finishes the page paints is an inference from these 6 runs only.
+- From the commit to the load finishing took 268 to 332 ms on build 20261114.2343 and 203 to 211 ms on build 20261115.0209. These were live network loads, 3 per build, and the difference is not attributed.
+- Run 1 received a different version of the ChatGPT home page from the other 5 runs. This is not attributed.
+- The dark page colour was adopted 159 to 205 ms after the load finished, and afterwards the saved colour was the page's black in every run.
 
 Known limits:
 - These changes do not show that the flicker is fully solved. Both are timing rules. When the page paints late, the fade can still show a lighter colour, as in the launch above.
