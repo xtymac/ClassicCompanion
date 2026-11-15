@@ -50,7 +50,7 @@ The debug build uses ad-hoc signing and needs no maintainer signing certificate 
 
 ## Known limitations
 
-The official site's DOM can change and break optional web enhancements. Offline first-load recovery ships from 0.1.0-beta.2, but the system offline signal (Wi-Fi actually off) and a real login-time launch remain unverified. Image previews, interactive components, Read Aloud transitions, long-chat scrolling and some window/IME behavior still need review. macOS 15/26, Intel, fresh accounts and single-display full-screen behavior are not covered by the recorded acceptance checks; Intel is unsupported. See the complete [beta notes](docs/trial-notes.en.md) and the review guide.
+The official site's DOM can change and break optional web enhancements. Offline first-load recovery ships from 0.1.0-beta.2, but the system offline signal (Wi-Fi actually off) and a real login-time launch remain unverified. Image previews, interactive components, Read Aloud transitions, long-chat scrolling and some window/IME behavior still need review. Voice conversations are not supported yet: the app refuses the page's microphone requests. macOS 15/26, Intel, fresh accounts and single-display full-screen behavior are not covered by the recorded acceptance checks; Intel is unsupported. See the complete [beta notes](docs/trial-notes.en.md) and the review guide.
 
 
 ## Contributing and licensing

@@ -61,6 +61,7 @@ This build is signed with Developer ID and notarized by Apple. The first time yo
 7. After `⌘M`, opening the app again (other than by clicking the Dock) occasionally leaves the window at the Dock icon without expanding. Quitting and reopening the app restores it. The cause hasn’t been found yet.
 8. On the test Mac, whose system language is English, the Edit menu shows Undo / Redo in English whatever the app language, and with the app in Chinese or Japanese the View menu has no Enter Full Screen and similar items. This was observed on the test Mac; the cause hasn’t been confirmed.
 9. On the test Mac, whose preferred languages are English, Japanese and Simplified Chinese, choosing Traditional Chinese by hand shows punctuation in the app’s native windows in its Simplified Chinese or Japanese form (for example, “，” and “。” sit at the lower left instead of the center). This was observed on the test Mac; the cause hasn’t been confirmed.
+10. Voice conversations aren’t supported yet. The app currently refuses the page’s requests to use the microphone, so a voice conversation can’t start, and other features of the page that need the microphone don’t work either. For voice conversations, use the official ChatGPT app or a browser.
 
 ## Feedback
 
