@@ -12,7 +12,7 @@ Not an official OpenAI app and not affiliated with OpenAI.
 
 - Minimum requirements: macOS 15.0 or later, Apple silicon (arm64) only. Intel-based Macs aren’t supported.
 - Verified on: one MacBook Pro with Apple M4 Max running macOS 27.2 (installing from the DMG, first launch, all four app languages and the main features).
-- Not yet verified: macOS 15 and macOS 26; other Macs and fresh user accounts; installing from the ZIP; some physical-key and input-method actions, which have been tested only with tool-driven input; receiving an in-app update from the real update address; for Window Mode When Shown, VoiceOver speech and waking on a smaller screen where the window has to shrink.
+- Not yet verified: macOS 15 and macOS 26; other Macs and fresh user accounts; installing from the ZIP; some physical-key and input-method actions, which have been tested only with tool-driven input; receiving an in-app update from the real update address; using the app with VoiceOver (including how Window Mode When Shown is read); waking on a smaller screen where the window has to shrink; ChatGPT’s theme set differently from the macOS appearance; how this build behaves during a real network outage and when the network comes back (the new cover handling was tried only on a test build with a simulated outage).
 
 ## Install
 
@@ -62,6 +62,9 @@ This build is signed with Developer ID and notarized by Apple. The first time yo
 8. On the test Mac, whose system language is English, the Edit menu shows Undo / Redo in English whatever the app language, and with the app in Chinese or Japanese the View menu has no Enter Full Screen and similar items. This was observed on the test Mac; the cause hasn’t been confirmed.
 9. On the test Mac, whose preferred languages are English, Japanese and Simplified Chinese, choosing Traditional Chinese by hand shows punctuation in the app’s native windows in its Simplified Chinese or Japanese form (for example, “，” and “。” sit at the lower left instead of the center). This was observed on the test Mac; the cause hasn’t been confirmed.
 10. Voice conversations aren’t supported yet. The app currently refuses the page’s requests to use the microphone, so a voice conversation can’t start, and other features of the page that need the microphone don’t work either. For voice conversations, use the official ChatGPT app or a browser.
+11. When the app opens, the launch screen and the top of the window first use the page color saved last time. If that color is out of date (for example, ChatGPT’s theme follows the system and macOS changed from light to dark while the app was closed), the old color shows first, the page switches between light and dark once after it loads, and the top of the window follows about 1 second later.
+12. When the app opens, the launch screen’s fade-out, which takes about 0.2 seconds, occasionally looks briefly lighter (most noticeable in dark appearance). This isn’t fully solved.
+13. Whether hiding and showing the window, or switching between the Quick and Full window, causes a brief flash couldn’t be determined with the screen-recording test tools. One check by eye on the test Mac showed nothing unusual. Not confirmed yet.
 
 ## Feedback
 
