@@ -10,7 +10,7 @@ final class UpdateStatus: ObservableObject {
     /// 首次询问的回答、设置里的开关都改这一个值，所以菜单、设置和 Sparkle 自己永远一致。
     @Published fileprivate(set) var automaticallyChecks = false
     @Published fileprivate(set) var canCheck = false
-    /// 定时检查发现、还没被用户看过的新版本（温和提醒：只在菜单、菜单栏菜单和设置里提示，不弹窗），
+    /// 定时检查发现、还没被用户看过的新版本（只在菜单、菜单栏菜单和设置里提示，不弹窗），
     /// 或者等用户授权下载并安装（或确认安装）的版本。菜单和设置里显示“有新版本”，点了打开对应的窗口。
     @Published fileprivate(set) var pendingVersion: String?
     /// 有等用户回答的确认窗口（授权下载并安装，或确认安装）。这时 Sparkle 的会话还没结束、canCheck 为 false，
@@ -34,9 +34,10 @@ final class UpdateStatus: ObservableObject {
 ///
 /// - 不自动下载、不自动安装、不退出时安装（Info.plist：SUAllowsAutomaticUpdates = NO，SUAutomaticallyUpdate 不设）。
 /// - 是否自动检查：第二次启动时由 Sparkle 标准提示询问，之后在设置里改。
-/// - 定时检查发现新版本不弹窗、不抢焦点：用 Sparkle 的温和提醒接口，只在菜单、菜单栏菜单和设置里提示，不用 Dock 角标。
-/// - 下载之前用户必须在确认窗口里授权“下载并安装”（ConfirmingUserDriver）：授权之前不启动安装器，
-///   正常退出、崩溃或被强制退出都不会安装。授权后下载、验证完成就安装并重新启动。
+/// - 定时检查发现新版本不弹窗、不抢焦点：只在菜单、菜单栏菜单和设置里提示，不用 Dock 角标。
+/// - 发现新版本只确认一次：下载之前用户必须在应用自己的确认窗口里授权“下载并安装”（ConfirmingUserDriver），
+///   不再先显示 Sparkle 的新版本窗口。授权之前不启动安装器，正常退出、崩溃或被强制退出都不会安装。
+///   授权后下载、验证完成就安装并重新启动。
 ///   不根据有没有声音、空闲时间或“生成中”判断能否重启。
 ///
 /// SPUUpdater 和标准界面的委托回调都在主线程（Sparkle 文档）；SPUStandardUserDriverDelegate 的头文件没标主线程，所以用 @preconcurrency。
@@ -166,21 +167,10 @@ final class UpdateController: NSObject, SPUUpdaterDelegate, @preconcurrency SPUS
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.releaseTermination("会话结束") }
     }
 
-    // MARK: - SPUStandardUserDriverDelegate：温和提醒
+    // MARK: - SPUStandardUserDriverDelegate
 
-    var supportsGentleScheduledUpdateReminders: Bool { true }
-
-    /// 定时检查一律由这里处理，不让标准界面弹出更新窗口：
-    /// 标准界面会在应用刚启动、或用户切回应用时把更新窗口设为键盘焦点，这时用户按快捷键打开聊天窗口打字，回车会按到“安装更新”。
-    func standardUserDriverShouldHandleShowingScheduledUpdate(_ update: SUAppcastItem, andInImmediateFocus immediateFocus: Bool) -> Bool {
-        false
-    }
-
-    func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState) {
-        guard !handleShowingUpdate else { return }
-        status.pendingVersion = update.displayVersionString
-        diagnostics.log("update", "定时检查发现 \(update.displayVersionString)：只在菜单、菜单栏菜单和设置里提示")
-    }
+    // 发现新版本时不用标准界面的新版本窗口（ConfirmingUserDriver.updateFound），所以标准界面的温和提醒接口用不上：
+    // 定时检查发现的新版本由 ConfirmingUserDriver 记成等确认，只在菜单、菜单栏菜单和设置里提示，不弹窗、不抢焦点。
 
     // 不用 Dock 角标（用户 2026-11-12 决定）：更新功能不碰 Dock 图标的任何状态。
 

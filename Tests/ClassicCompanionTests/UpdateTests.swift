@@ -193,9 +193,10 @@ final class UpdateTests: XCTestCase {
 
     // MARK: - 下载之前的授权和安装确认
 
-    private func readyView(_ language: AppLanguage, kind: UpdatePromptKind, version: String? = "0.1.0-beta.2") -> NSHostingView<UpdateReadyView> {
+    private func readyView(_ language: AppLanguage, kind: UpdatePromptKind, version: String? = "0.1.0-beta.2",
+                           notes: UpdateNotes? = nil) -> NSHostingView<UpdateReadyView> {
         LanguageController.shared.preference = LanguagePreference(rawValue: language.rawValue)!
-        let host = NSHostingView(rootView: UpdateReadyView(kind: kind, version: version, gate: UpdatePromptGate(), onInstall: {}, onLater: {}))
+        let host = NSHostingView(rootView: UpdateReadyView(kind: kind, version: version, notes: notes, gate: UpdatePromptGate(), onInstall: {}, onLater: {}))
         host.layoutSubtreeIfNeeded()
         return host
     }
@@ -209,7 +210,7 @@ final class UpdateTests: XCTestCase {
             .japanese: ["生成", "読み上げ", "入力"],
         ]
         for language in AppLanguage.allCases {
-            for key in ["update.ready.windowTitle", "update.ready.later"] {
+            for key in ["update.ready.windowTitle", "update.ready.later", "update.authorize.notesTitle"] {
                 XCTAssertNotEqual(L10n.string(key, in: language), key, "\(language) 缺 \(key)")
             }
             for kind in [UpdatePromptKind.authorize, .install] {
@@ -256,6 +257,59 @@ final class UpdateTests: XCTestCase {
                 }
             }
         }
+    }
+
+    private func betaThreeNotes() throws -> UpdateNotes {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("docs/release-notes/0.1.0-beta.3.html")
+        return UpdateNotes(description: try String(contentsOf: url, encoding: .utf8), format: "html")
+    }
+
+    /// 发现新版本时只有这一个确认窗口，所以里面要有更新内容：固定高度的滚动框，长说明不把窗口撑高；
+    /// 只在 authorize 里显示，install（已经授权过）不显示。
+    func testAuthorizationPromptShowsTheNotesInAFixedBox() throws {
+        let notes = try betaThreeNotes()
+        for language in AppLanguage.allCases {
+            XCTAssertNotNil(notes.text(in: language), "\(language)")
+            let plain = readyView(language, kind: .authorize, version: "0.1.0-beta.3").fittingSize
+            let withNotes = readyView(language, kind: .authorize, version: "0.1.0-beta.3", notes: notes).fittingSize
+            XCTAssertEqual(withNotes.width, 480, accuracy: 1, "\(language)")
+            XCTAssertGreaterThan(withNotes.height, plain.height + UpdateReadyView.notesHeight, "\(language)：更新内容框在")
+            XCTAssertLessThan(withNotes.height, 600, "\(language) 需要 \(withNotes.height)")
+            let install = readyView(language, kind: .install, version: "0.1.0-beta.3", notes: notes).fittingSize
+            let installPlain = readyView(language, kind: .install, version: "0.1.0-beta.3").fittingSize
+            XCTAssertEqual(install.height, installPlain.height, accuracy: 1, "\(language)：install 不显示更新内容")
+        }
+        // 很长的说明也不把窗口撑高。
+        let long = UpdateNotes(description: "<ul>" + String(repeating: "<li>A long line of release notes text.</li>", count: 80) + "</ul>", format: nil)
+        let short = UpdateNotes(description: "<ul><li>One.</li></ul>", format: nil)
+        XCTAssertEqual(readyView(.english, kind: .authorize, notes: long).fittingSize.height,
+                       readyView(.english, kind: .authorize, notes: short).fittingSize.height, accuracy: 1)
+    }
+
+    /// 定时检查发现新版本：不显示任何窗口（也不用 Sparkle 的新版本窗口），只记成等授权，菜单和设置里显示“有新版本”；
+    /// 没有回复 Sparkle，所以什么都不下载。会话结束时清掉，也不回复。
+    func testScheduledUpdateWaitsForAuthorizationWithoutAWindow() {
+        let driver = ConfirmingUserDriver(standard: SPUStandardUserDriver(hostBundle: .main, delegate: nil))
+        var logs: [String] = []
+        var pendingChanges: [String?] = []
+        driver.log = { logs.append($0) }
+        driver.onPendingInstallChange = { pendingChanges.append($0) }
+        var choices: [SPUUserUpdateChoice] = []
+        driver.updateFound(version: "0.1.0-beta.3", build: "20261117.0000", notes: try? betaThreeNotes(),
+                           installing: false, userInitiated: false, reply: { choices.append($0) })
+        XCTAssertEqual(choices, [], "没有回复：不下载")
+        XCTAssertTrue(driver.hasPendingInstallDecision)
+        XCTAssertFalse(driver.isHoldingInstall, "还没有安装器，退出不用等")
+        XCTAssertEqual(pendingChanges, ["0.1.0-beta.3"])
+        XCTAssertTrue(logs.contains { $0.contains("只在菜单和设置里提示") }, logs.joined(separator: "\n"))
+        XCTAssertFalse(NSApp.windows.contains { $0.isVisible && $0.title == L10n.string("update.ready.windowTitle") }, "不弹窗")
+
+        driver.dismissUpdateInstallation()
+        XCTAssertEqual(choices, [])
+        XCTAssertFalse(driver.hasPendingInstallDecision)
+        XCTAssertEqual(pendingChanges, ["0.1.0-beta.3", nil])
     }
 
     /// 窗口出现后主按钮先停 1 秒，然后自动恢复；重新叫回窗口时重新计时。

@@ -196,9 +196,10 @@
 "update.ready.laterNote" = "「あとで」を選ぶと、今回のダウンロードは破棄されます。Classic Companion はそのまま使え、終了時にもインストールされません。あとでインストールするには「アップデートを確認…」を選んでください。";
 "update.ready.install" = "インストールして再起動";
 "update.ready.later" = "あとで";
-"update.authorize.title" = "このアップデートをダウンロードしてインストールしますか？";
+"update.authorize.title" = "新しいバージョンがあります。ダウンロードしてインストールしますか？";
 "update.authorize.message" = "確認すると Classic Companion %@ をダウンロードします。ダウンロードと検証が終わると、Classic Companion は自動的に終了し、アップデートをインストールして再び開きます。改めて確認することはありません。ダウンロード中は進行状況ウインドウでキャンセルできます。";
 "update.authorize.messageNoVersion" = "確認すると Classic Companion の新しいバージョンをダウンロードします。ダウンロードと検証が終わると、Classic Companion は自動的に終了し、アップデートをインストールして再び開きます。改めて確認することはありません。ダウンロード中は進行状況ウインドウでキャンセルできます。";
 "update.authorize.reminder" = "確認する前に、生成中の回答が終わるのを待ち、読み上げを止め、入力中の内容を仕上げるかコピーしてください。ダウンロードが終わるとすぐに再起動するため、送信していない文字が失われることがあります。";
 "update.authorize.laterNote" = "「あとで」を選ぶかこのウインドウを閉じると、何もダウンロードもインストールもされません。Classic Companion はそのまま使えます。あとでインストールするには「アップデートを確認…」を選んでください。";
 "update.authorize.install" = "ダウンロードしてインストール";
+"update.authorize.notesTitle" = "アップデートの内容";
