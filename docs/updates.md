@@ -26,13 +26,14 @@ The isolated upgrade-test tooling (a separate test copy with its own bundle iden
 
 ## What users see
 
-- **Check for Updates…** in the app menu, below About. It opens Sparkle's standard windows: checking → up to date / new version (version and notes) / error.
+- **Check for Updates…** in the app menu, below About. It shows Sparkle's standard checking window, then Sparkle's standard "up to date" or error message, or — when a new version is found — Classic Companion's own Download and Install window (below). Sparkle's own new-version window is not used, so the user confirms only once.
 - **Settings → General → Updates**: "Check for updates automatically", with the note that downloading, installing and relaunching always ask first. The switch reads and writes Sparkle's `automaticallyChecksForUpdates` directly, so Sparkle's first-run question, the setting and Sparkle itself always agree. Builds without update configuration (`swift run`) show the switch disabled.
 - **First question**: Sparkle's standard flow: not on the first launch, asked once on the second launch. `Info.plist` does not preset `SUEnableAutomaticChecks`.
-- **Scheduled checks (daily, `SUScheduledCheckInterval` = 86400) never pop up or take focus.** Sparkle's gentle-reminder API is used: a "new version" marker next to Check for Updates…, an item at the top of the status-bar menu and a line in Settings. No Dock badge is used; the update code never touches `NSApp.dockTile`. Sparkle's update window opens only when the user clicks one of these.
+- **Scheduled checks (daily, `SUScheduledCheckInterval` = 86400) never pop up or take focus.** The driver keeps the found update waiting without a window: a "new version" marker next to Check for Updates…, an item at the top of the status-bar menu and a line in Settings. No Dock badge is used; the update code never touches `NSApp.dockTile`. The Download and Install window opens only when the user clicks one of these.
 - **No automatic download or install**: `SUAllowsAutomaticUpdates = NO`.
-- **Consent before download; after consent the app installs and relaunches on its own.** After the user chooses Install Update in Sparkle's window, Classic Companion shows its own consent window (in the app language). At this point nothing has been downloaded and no installer is running.
-  - **Download and Install** (Return): Sparkle downloads, verifies the EdDSA signature before extraction (`SUVerifyUpdateBeforeExtraction`), installs and relaunches without asking again. The button is disabled for 1 second after the window appears so a held or repeated Return from Sparkle's window does not confirm it.
+- **One confirmation, before download; after it the app installs and relaunches on its own.** When a new version is found, Classic Companion shows its own consent window instead of Sparkle's new-version window: the version, the release notes for the app language in a fixed-height scrolling box, and the reminder below. This is the only confirmation (user decision 2026-11-17; earlier builds showed Sparkle's window with Install Update first and then this window). At this point nothing has been downloaded and no installer is running.
+  - There is no Skip This Version button. Later means the next daily check finds the version again and shows the marker.
+  - **Download and Install** (Return): Sparkle downloads, verifies the EdDSA signature before extraction (`SUVerifyUpdateBeforeExtraction`), installs and relaunches without asking again. The button is disabled for 1 second after the window appears so a held or repeated Return (for example while typing) does not confirm it. For a manual check the window takes focus only if the app is active; otherwise it comes to the front without taking focus.
   - **Later** (Esc, ⌘., or closing the window): replies "dismiss" to Sparkle. Nothing is downloaded or installed.
   - Quitting, crashing or being force-quit while the consent window is open installs nothing.
   - Quitting during the download interrupts it and nothing is installed. A normal quit (⌘Q, log out, shut down) after the download, while Sparkle is verifying and extracting, cancels that install first (waiting up to 10 seconds for Sparkle to end the session).
@@ -46,7 +47,7 @@ The isolated upgrade-test tooling (a separate test copy with its own bundle iden
 
 - The app's own text (menu items, the Updates group, the "new version" marker, status-menu items, the consent window, accessibility labels) is in the four `Localizable.strings` files and follows the **language chosen in the app**.
 - **Sparkle's own windows** use Sparkle's bundled translations and follow the **macOS language** (system language or the per-app language in System Settings), not the language chosen in the app. Sparkle chooses its translation from the process's `AppleLanguages`; changing that would also change the ChatGPT page language, so it is not done. The trial notes state this.
-- **Update notes** are one HTML fragment in the appcast with a section per language (`lang="en" / "zh-Hans" / "zh-Hant" / "ja"`), so every user sees their language regardless of the macOS language.
+- **Update notes** are one HTML fragment in the appcast with a section per language (`lang="en" / "zh-Hans" / "zh-Hant" / "ja"`). The consent window shows only the section for the app language (English if that language has none), as plain text (`ReleaseNotesText`: no HTML engine, no links). Release notes given only as an external link are not shown; this project's appcast embeds them.
 
 ## Configuration (Info.plist, written by build-app.sh)
 

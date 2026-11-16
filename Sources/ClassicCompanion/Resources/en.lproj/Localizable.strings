@@ -196,9 +196,10 @@
 "update.ready.laterNote" = "Not Now discards this download. Classic Companion keeps working and won’t install anything when you quit. Choose Check for Updates… to install it later.";
 "update.ready.install" = "Install and Relaunch";
 "update.ready.later" = "Not Now";
-"update.authorize.title" = "Download and install this update?";
+"update.authorize.title" = "A new version is available. Download and install it?";
 "update.authorize.message" = "Classic Companion %@ will be downloaded. As soon as it’s downloaded and verified, Classic Companion quits, installs the update and reopens on its own, without asking again. You can cancel in the progress window while it downloads.";
 "update.authorize.messageNoVersion" = "The new version of Classic Companion will be downloaded. As soon as it’s downloaded and verified, Classic Companion quits, installs the update and reopens on its own, without asking again. You can cancel in the progress window while it downloads.";
 "update.authorize.reminder" = "Before you confirm, wait for any reply that’s still being generated, stop Read Aloud, and finish or copy anything you’re typing. The app restarts as soon as the download is ready, and unsent text may be lost.";
 "update.authorize.laterNote" = "Not Now or closing this window downloads and installs nothing. Classic Companion keeps working. Choose Check for Updates… to install it later.";
 "update.authorize.install" = "Download and Install";
+"update.authorize.notesTitle" = "Release Notes";

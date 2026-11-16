@@ -1,13 +1,15 @@
 import AppKit
 import Sparkle
 
-/// Sparkle 的用户界面：几乎全部交给官方 SPUStandardUserDriver（权限询问、检查进度、发现新版本和更新说明、
-/// 下载进度、无更新、错误提示），只在两处插入应用自己的确认（UpdatePromptWindow）。
+/// Sparkle 的用户界面：权限询问、检查进度、下载进度、无更新、错误提示交给官方 SPUStandardUserDriver；
+/// 发现新版本时不用标准的新版本窗口，直接显示应用自己的确认（UpdatePromptWindow），它是唯一的一次确认
+/// （用户 2026-11-17：不需要两次确认）。
 ///
 /// 安装边界（Sparkle 2.10.1，SPUUserDriver.h；2026-11-13 隔离实测）：下载完成、开始验证和解压时 Sparkle 就启动安装器，
 /// 从那时起应用自己退出——包括崩溃、被强制退出，这些应用拦不住——就会安装。Sparkle 没有“只下载、不启动安装器”的官方接口。
 /// 所以用户必须在下载之前明确授权：
-/// 1. 标准新版本窗口里选“安装更新”时，先不把选择交给 Sparkle，而是显示“下载并安装”确认（authorize）。
+/// 1. 发现新版本（showUpdateFound）时显示“下载并安装”确认（authorize），里面有版本号、当前语言的更新内容和提醒。
+///    手动检查：确认窗口直接出现。定时检查：不弹窗，只在菜单、菜单栏菜单和设置里提示，用户点了才显示。
 ///    “稍后”或关闭窗口回复 Dismiss：不下载、不启动安装器，什么都不装。
 /// 2. 授权后才回复 Install：Sparkle 下载、验证、解压。准备好（showReady）时按授权直接回复 Install，安装并重新启动，不再询问。
 ///    没有授权就到了这一步（不应发生）回复 Skip：按 SPUUserDriver.h，这一步的 Skip 只取消正在进行的安装，不会跳过这个版本。
@@ -21,6 +23,7 @@ final class ConfirmingUserDriver: NSObject, SPUUserDriver {
     var onPendingInstallChange: (String?) -> Void = { _ in }
 
     private var version: String?
+    private var notes: UpdateNotes?
     private var prompt: UpdatePromptWindow?
     private var pending: (kind: UpdatePromptKind, reply: (SPUUserUpdateChoice) -> Void)?
     /// 用户在这次更新会话里授权了“下载并安装”。会话结束、出错或开始新的会话时清掉。
@@ -56,30 +59,31 @@ final class ConfirmingUserDriver: NSObject, SPUUserDriver {
     // MARK: - 插入的确认
 
     func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
-        version = appcastItem.displayVersionString
+        updateFound(version: appcastItem.displayVersionString, build: appcastItem.versionString,
+                    notes: UpdateNotes(description: appcastItem.itemDescription, format: appcastItem.itemDescriptionFormat),
+                    installing: state.stage == .installing, userInitiated: state.userInitiated, reply: reply)
+    }
+
+    /// showUpdateFound 的内容（SPUUserUpdateState 在测试里不能构造）。
+    func updateFound(version: String, build: String, notes: UpdateNotes?, installing: Bool, userInitiated: Bool,
+                     reply: @escaping (SPUUserUpdateChoice) -> Void) {
+        self.version = version
+        self.notes = notes
         authorized = false
-        log("发现新版本 \(appcastItem.displayVersionString)（\(appcastItem.versionString)），\(state.userInitiated ? "手动检查" : "定时检查")")
-        if state.stage == .installing {
+        log("发现新版本 \(version)（\(build)），\(userInitiated ? "手动检查" : "定时检查")")
+        // 手动检查时 Sparkle 的“正在检查更新…”窗口还开着：它本来在标准新版本窗口出现时关掉，这里不用那个窗口，所以自己关。
+        // 标准界面的 dismissUpdateInstallation 只关它自己的窗口、清它自己的状态，不结束 Sparkle 的更新会话；
+        // 之后的下载进度窗口由 showDownloadInitiated 重新建。
+        if userInitiated { standard.dismissUpdateInstallation() }
+        if installing {
             // 安装器已经在等。标准提醒在这一步会给“退出时安装”，所以用确认窗口：确认才安装，“稍后”取消安装。
             // 按 SPUUserDriver.h，这里的 Skip 也会跳过这个版本的定时提醒，手动“检查更新…”仍能找到它。
-            // 定时检查发现的不弹窗，只在菜单和设置里提示（温和提醒）。
-            presentPrompt(.install, takeFocus: state.userInitiated, show: state.userInitiated, reply: reply)
+            presentPrompt(.install, takeFocus: userInitiated, show: userInitiated, reply: reply)
             return
         }
-        standard.showUpdateFound(with: appcastItem, state: state) { [weak self] choice in
-            guard let self else {
-                // 不会发生（驱动和应用同生命周期）；万一发生也不在没有授权时安装。
-                reply(choice == .install ? .dismiss : choice)
-                return
-            }
-            self.log("新版本提示：\(Self.describe(choice))")
-            guard choice == .install else {
-                reply(choice)
-                return
-            }
-            // 用户刚在 Sparkle 窗口里点了按钮，应用在前台：确认窗口取得焦点（主按钮先停 1 秒，见 UpdatePromptGate）。
-            self.presentPrompt(.authorize, takeFocus: NSApp.isActive, reply: reply)
-        }
+        // 手动检查：用户刚选了“检查更新…”，确认窗口直接出现；应用在前台时取得焦点（主按钮先停 1 秒，见 UpdatePromptGate）。
+        // 定时检查：不弹窗、不抢焦点（用户可能正在聊天窗口里打字），只在菜单、菜单栏菜单和设置里提示，点了才显示。
+        presentPrompt(.authorize, takeFocus: userInitiated && NSApp.isActive, show: userInitiated, reply: reply)
     }
 
     func showReady(toInstallAndRelaunch reply: @escaping (SPUUserUpdateChoice) -> Void) {
@@ -116,7 +120,7 @@ final class ConfirmingUserDriver: NSObject, SPUUserDriver {
         pending = (kind, reply)
         prompt?.close()
         let window = UpdatePromptWindow(
-            kind: kind, version: version,
+            kind: kind, version: version, notes: notes,
             onInstall: { [weak self] in self?.confirm() },
             onLater: { [weak self] in self?.decline() })
         prompt = window
@@ -191,13 +195,11 @@ final class ConfirmingUserDriver: NSObject, SPUUserDriver {
         standard.showUserInitiatedUpdateCheck(cancellation: cancellation)
     }
 
-    func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {
-        standard.showUpdateReleaseNotes(with: downloadData)
-    }
+    // 外链的更新说明（releaseNotesLink）：标准界面只在它自己的新版本窗口里显示，这里没有那个窗口，所以不显示。
+    // 本项目的 appcast 用内嵌说明（itemDescription），确认窗口里显示。
+    func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {}
 
-    func showUpdateReleaseNotesFailedToDownloadWithError(_ error: any Error) {
-        standard.showUpdateReleaseNotesFailedToDownloadWithError(error)
-    }
+    func showUpdateReleaseNotesFailedToDownloadWithError(_ error: any Error) {}
 
     func showUpdateNotFoundWithError(_ error: any Error, acknowledgement: @escaping () -> Void) {
         log("没有可用的新版本（\(Self.describe(error))）")
@@ -259,15 +261,6 @@ final class ConfirmingUserDriver: NSObject, SPUUserDriver {
     }
 
     // MARK: - 日志用的描述（不含网址、路径和错误原文）
-
-    static func describe(_ choice: SPUUserUpdateChoice) -> String {
-        switch choice {
-        case .install: "安装"
-        case .dismiss: "稍后提醒"
-        case .skip: "跳过这个版本"
-        @unknown default: "未知（\(choice.rawValue)）"
-        }
-    }
 
     static func describe(_ error: any Error) -> String {
         let error = error as NSError
