@@ -72,6 +72,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 切到完整窗口或放好它时的左上角。切回小窗时还在这里，说明用户没有移动过它。
     private var fullTopLeftWhenPlaced: NSPoint?
     private let webView: WKWebView
+    /// 网页在窗口里占的位置（顶部一条下面的整块区域）。网页视图放在里面铺满；
+    /// 窗口里的约束、启动画面、提示、旧画面和切换时的固定大小都对着它，不直接对着网页视图。
+    private let webContainer: NSView
     private let diagnostics: Diagnostics
     private var previousApp: NSRunningApplication?
     private var screenObserver: Any?
@@ -183,7 +186,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         loadProblem = problem
         loadProblemCover = NSHostingView(rootView: LoadProblemView(model: problem, appearance: appearance))
         // 不让 SwiftUI 的尺寸变成约束：长文字挤窄后折成很多行，最小高度会把窗口撑到 858 以上（藏着也一样，1159 窗口测试）。
-        // 大小只跟着网页的四条边。
+        // 大小只跟着网页所在位置（webContainer）的四条边。
         loadProblemCover.sizingOptions = []
         let window = ChatWindow(contentRect: NSRect(origin: .zero, size: Self.quickSize),
                                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -205,9 +208,13 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         bar.safeAreaRegions = []
         bar.translatesAutoresizingMaskIntoConstraints = false
         webView.translatesAutoresizingMaskIntoConstraints = false
+        let webContainer = NSView()
+        self.webContainer = webContainer
+        webContainer.translatesAutoresizingMaskIntoConstraints = false
+        webContainer.addSubview(webView)
         let container = NSView()
         container.addSubview(bar)
-        container.addSubview(webView)
+        container.addSubview(webContainer)
         // 提示在网页之上、启动画面之下：启动画面结束后才露出来。
         loadProblemCover.translatesAutoresizingMaskIntoConstraints = false
         loadProblemCover.isHidden = true
@@ -215,24 +222,29 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         launchCover.translatesAutoresizingMaskIntoConstraints = false
         launchCover.isHidden = true
         container.addSubview(launchCover)
-        let edges = [webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-                     webView.bottomAnchor.constraint(equalTo: container.bottomAnchor)]
+        let edges = [webContainer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                     webContainer.bottomAnchor.constraint(equalTo: container.bottomAnchor)]
         webEdges = edges
         NSLayoutConstraint.activate(edges + [
             // 顶部一条占住原来的标题栏位置，按钮在里面。
             bar.topAnchor.constraint(equalTo: container.topAnchor),
             bar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            webView.topAnchor.constraint(equalTo: bar.bottomAnchor),
-            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            launchCover.topAnchor.constraint(equalTo: webView.topAnchor),
-            launchCover.leadingAnchor.constraint(equalTo: webView.leadingAnchor),
-            launchCover.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
-            launchCover.bottomAnchor.constraint(equalTo: webView.bottomAnchor),
-            loadProblemCover.topAnchor.constraint(equalTo: webView.topAnchor),
-            loadProblemCover.leadingAnchor.constraint(equalTo: webView.leadingAnchor),
-            loadProblemCover.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
-            loadProblemCover.bottomAnchor.constraint(equalTo: webView.bottomAnchor),
+            webContainer.topAnchor.constraint(equalTo: bar.bottomAnchor),
+            webContainer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            // 网页视图铺满它的位置。
+            webView.topAnchor.constraint(equalTo: webContainer.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: webContainer.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: webContainer.bottomAnchor),
+            launchCover.topAnchor.constraint(equalTo: webContainer.topAnchor),
+            launchCover.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor),
+            launchCover.trailingAnchor.constraint(equalTo: webContainer.trailingAnchor),
+            launchCover.bottomAnchor.constraint(equalTo: webContainer.bottomAnchor),
+            loadProblemCover.topAnchor.constraint(equalTo: webContainer.topAnchor),
+            loadProblemCover.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor),
+            loadProblemCover.trailingAnchor.constraint(equalTo: webContainer.trailingAnchor),
+            loadProblemCover.bottomAnchor.constraint(equalTo: webContainer.bottomAnchor),
         ])
         window.contentView = container
         window.webView = webView
@@ -908,7 +920,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         guard layoutChange === change, change.snapshotArrived, let frame = change.frame,
               let window, let prepare = onPrepareLayout else { return }
         guard let image = change.snapshot else { return finishLayoutChange() }
-        let size = NSSize(width: frame.width, height: frame.height - (window.frame.height - webView.frame.height))
+        let size = NSSize(width: frame.width, height: frame.height - (window.frame.height - webContainer.frame.height))
         freezePage(image, covering: size)
         pinWeb(to: size)
         prepare(size) { [weak self, weak change] in
@@ -943,8 +955,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
 
     /// 盖住网页的整块区域（切换前后两种大小里大的那个）：左上是旧画面，其余是页面底色（窗口底色就是页面底色）。
     private func freezePage(_ image: NSImage, covering target: NSSize) {
-        guard let container = webView.superview, let window else { return }
-        let old = webView.frame
+        guard let container = webContainer.superview, let window else { return }
+        let old = webContainer.frame
         let size = NSSize(width: max(old.width, target.width), height: max(old.height, target.height))
         let view = FrozenPageView(frame: NSRect(x: old.minX, y: old.maxY - size.height, width: size.width, height: size.height))
         view.fill = window.backgroundColor
@@ -966,10 +978,10 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
 
     private func pinWeb(to size: NSSize) {
         NSLayoutConstraint.deactivate(webEdges)
-        webPin = [webView.widthAnchor.constraint(equalToConstant: size.width),
-                  webView.heightAnchor.constraint(equalToConstant: size.height)]
+        webPin = [webContainer.widthAnchor.constraint(equalToConstant: size.width),
+                  webContainer.heightAnchor.constraint(equalToConstant: size.height)]
         NSLayoutConstraint.activate(webPin)
-        webView.superview?.layoutSubtreeIfNeeded()
+        webContainer.superview?.layoutSubtreeIfNeeded()
     }
 
     private func unpinWeb() {
@@ -977,7 +989,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         NSLayoutConstraint.deactivate(webPin)
         webPin = []
         NSLayoutConstraint.activate(webEdges)
-        webView.superview?.layoutSubtreeIfNeeded()
+        webContainer.superview?.layoutSubtreeIfNeeded()
     }
 
     private static func topLeft(_ frame: NSRect) -> NSPoint {
