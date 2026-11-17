@@ -321,12 +321,21 @@ final class WindowExperienceTests: XCTestCase {
         return (controller, window, web, page)
     }
 
+    /// 网页视图铺满它所在的位置（放网页的容器）：容器里面不能另有固定大小或偏移。
+    @MainActor private func assertWebFillsItsPlace(_ web: WKWebView, line: UInt = #line) throws {
+        let place = try XCTUnwrap(web.superview, line: line)
+        XCTAssertEqual(web.frame, place.bounds, "网页视图铺满它所在的位置", line: line)
+    }
+
     /// 网页是否贴着窗口内容区的右边和下边：切换结束后不能留下临时的固定大小。
+    /// 网页视图的 frame 是相对容器的，所以把它的范围换到内容区坐标里再比；里外两层都要对：它铺满容器，容器贴着窗口。
     @MainActor private func assertWebFollowsWindow(_ web: WKWebView, _ window: NSWindow, line: UInt = #line) throws {
         let content = try XCTUnwrap(window.contentView)
         content.layoutSubtreeIfNeeded()
-        XCTAssertEqual(web.frame.maxX, content.bounds.maxX, line: line)
-        XCTAssertEqual(web.frame.minY, content.bounds.minY, line: line)
+        try assertWebFillsItsPlace(web, line: line)
+        let area = web.convert(web.bounds, to: content)
+        XCTAssertEqual(area.maxX, content.bounds.maxX, line: line)
+        XCTAssertEqual(area.minY, content.bounds.minY, line: line)
     }
 
     /// 用户（1442）选了“窗口先动”：按下后窗口立刻变大小，网页随后排好。
@@ -338,10 +347,13 @@ final class WindowExperienceTests: XCTestCase {
         XCTAssertEqual(controller.mode, .full)
         XCTAssertTrue(controller.isShowingFrozenPage, "网页还没排好，继续盖着")
         XCTAssertEqual(page.requested.first?.width, ChatWindowController.fullSize.width)
-        window.contentView?.layoutSubtreeIfNeeded()
+        let content = try XCTUnwrap(window.contentView)
+        content.layoutSubtreeIfNeeded()
         XCTAssertEqual(web.frame.width, ChatWindowController.fullSize.width, "网页已按目标大小排版")
+        try assertWebFillsItsPlace(web)
+        // 旧画面的 frame 在内容区坐标里，网页视图的 frame 相对容器：换到内容区坐标再比。
         let cover = try XCTUnwrap(controller.frozenPageFrame)
-        XCTAssertTrue(cover.contains(web.frame), "新露出的区域也盖着")
+        XCTAssertTrue(cover.contains(web.convert(web.bounds, to: content)), "新露出的区域也盖着")
         XCTAssertEqual(controller.frozenPageBackground, window.backgroundColor, "盖着的底色就是页面底色")
         page.finishLayout[0]()
         XCTAssertEqual(window.frame.size, ChatWindowController.fullSize)
@@ -388,6 +400,7 @@ final class WindowExperienceTests: XCTestCase {
         XCTAssertEqual(page.requested.last?.height, ChatWindowController.quickSize.height - chrome)
         window.contentView?.layoutSubtreeIfNeeded()
         XCTAssertEqual(web.frame.width, ChatWindowController.quickSize.width)
+        try assertWebFillsItsPlace(web)
         XCTAssertTrue(controller.isShowingFrozenPage, "网页还没排好：旧画面继续盖着")
         page.finishLayout[1]()
         XCTAssertFalse(controller.isShowingFrozenPage)
