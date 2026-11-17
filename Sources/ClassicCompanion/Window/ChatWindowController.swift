@@ -8,7 +8,8 @@ final class ChatWindow: NSPanel {
     /// 由控制器设置：非网页焦点时的 Esc 处理（网页焦点下的 Esc 由适配脚本判断）
     var onCancel: (() -> Void)?
 
-    /// 网页获得焦点时，Esc 是否隐藏窗口由适配脚本判断（可识别 IME 组合与网页弹层），这里不处理
+    /// 网页获得焦点时，Esc 是否隐藏窗口由适配脚本判断（可识别 IME 组合与网页弹层），这里不处理。
+    /// 指向窗口里当前显示的网页视图（不是放网页的容器），换网页视图时由控制器跟着换，见 replaceWebView。
     weak var webView: NSView?
 
     override func cancelOperation(_ sender: Any?) {
@@ -55,7 +56,7 @@ final class ChatWindow: NSPanel {
     }
 }
 
-/// 单窗口、单 WebView。Quick / Full 通过调整同一窗口尺寸切换，不迁移 WebView。
+/// 单窗口，窗口里一次显示一个 WebView（可以换成另一个，见 replaceWebView）。Quick / Full 通过调整同一窗口尺寸切换，不迁移 WebView。
 @MainActor
 final class ChatWindowController: NSWindowController, NSWindowDelegate {
     enum Mode { case quick, full }
@@ -71,7 +72,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private var resizingByHand = false
     /// 切到完整窗口或放好它时的左上角。切回小窗时还在这里，说明用户没有移动过它。
     private var fullTopLeftWhenPlaced: NSPoint?
-    private let webView: WKWebView
+    /// 窗口里当前显示的网页视图。只经 replaceWebView 换。
+    private(set) var webView: WKWebView
     /// 网页在窗口里占的位置（顶部一条下面的整块区域）。网页视图放在里面铺满；
     /// 窗口里的约束、启动画面、提示、旧画面和切换时的固定大小都对着它，不直接对着网页视图。
     private let webContainer: NSView
@@ -162,7 +164,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 解除启动保护时 WebKit 报着的颜色。它在加载完成前就有了，可能还是临时颜色：先不采用，等页面颜色变化；
     /// 到 pageColorSettleLimit 还没变，再按当前颜色采用（页面本来就是这个颜色）。
     private var colorBeforeFirstLoad: NSColor?
-    /// 进入和解除启动保护时加一。排着队的颜色更新只在代号没变时生效，旧回调不会把临时颜色采用或保存。
+    /// 进入和解除启动保护、换网页视图时加一。排着队的颜色更新只在代号没变时生效，旧回调不会把临时颜色采用或保存。
     private var pageColorGeneration = 0
     /// 解除启动保护后，加载完成前就有的颜色最多等多久。复现里真实颜色在加载完成后约 24–68 ms 报出（按日志时间推算）。
     var pageColorSettleLimit: TimeInterval = 1
@@ -232,11 +234,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
             bar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             webContainer.topAnchor.constraint(equalTo: bar.bottomAnchor),
             webContainer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            // 网页视图铺满它的位置。
-            webView.topAnchor.constraint(equalTo: webContainer.topAnchor),
-            webView.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: webContainer.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: webContainer.bottomAnchor),
+        ] + Self.fill(webView, in: webContainer) + [
             launchCover.topAnchor.constraint(equalTo: webContainer.topAnchor),
             launchCover.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor),
             launchCover.trailingAnchor.constraint(equalTo: webContainer.trailingAnchor),
@@ -255,11 +253,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         window.center()
 
         applyAppearance()
-        // 页面换底色（ChatGPT 切换浅色、深色）时跟着变。导航刚开始时 WebKit 会短暂报出默认白色，
-        // 稳定 150ms 再采用，免得每次加载都闪一下浅色。启动时另有启动保护，见 holdsPageColor。
-        backgroundObservation = webView.observe(\.underPageBackgroundColor) { [weak self] _, _ in
-            MainActor.assumeIsolated { self?.pageBackgroundChanged() }
-        }
+        observePageBackground(of: webView)
 
         // 显示器变化后确保窗口仍在可见范围内
         screenObserver = NotificationCenter.default.addObserver(
@@ -541,6 +535,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
 
     /// 组词时切换窗口大小，候选框会留在原地（K14 实测，中文、日文相同）：通知输入法重新读取光标位置。
     /// 网页重新排版比窗口慢，排版完成后再通知几次。
+    /// 每次到点都取那时显示的网页视图：候选框跟的是屏幕上那一页的光标；中途换过网页视图时，旧网页已经不在窗口里、
+    /// 焦点也交走了，通知它没有用；通知新网页只是让输入法多读一次它的光标位置。
     private func refreshInputMethodPosition() {
         diagnostics.log("ime", "切换模式后请求输入法重新定位 上下文=\(webView.inputContext != nil)")
         for delay in [0, 0.15, 0.4, 0.8] {
@@ -555,6 +551,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     static func forceActivate() { forceActivateDeprecated() }
 
     /// 唤醒后记录原生焦点状态：应用是否激活、窗口是否为 key、第一响应者是否在 WebView 内、前台应用。
+    /// “在 WebView 内”按到点时显示的网页视图算：要回答的是焦点在不在用户看到的那一页里；中途换过网页视图时焦点已跟着交过去。
     private func logActivationState(after delay: TimeInterval) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             MainActor.assumeIsolated {
@@ -750,6 +747,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         let current = webView.underPageBackgroundColor
         colorBeforeFirstLoad = current
         diagnostics.log("appearance", "启动保护解除：加载完成时报的是\(Self.shade(current))，等页面颜色变化再采用")
+        // 这次等待属于现在这个网页视图的这次加载：中途换过网页视图时 pageColorGeneration 已经变了，到点不起作用。
         DispatchQueue.main.asyncAfter(deadline: .now() + pageColorSettleLimit) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.pageColorGeneration == generation, self.colorBeforeFirstLoad != nil else { return }
@@ -768,6 +766,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         }
         pendingBackground?.cancel()
         let generation = pageColorGeneration
+        // 这次更新属于报颜色的那个网页视图：换网页视图时取消并换代号，到点时不会去读换上来的网页。
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.pageColorGeneration == generation, !self.holdsPageColor else { return }
@@ -809,6 +808,77 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     func toggleMode() {
         guard layoutChange?.windowPlaced ?? true else { return }
         show(mode: mode == .quick ? .full : .quick)
+    }
+
+    // MARK: - 换网页视图
+
+    /// 换掉窗口里显示的网页视图。为以后的聊天标签页准备，现在还没有地方调用；从不调用时一切和以前一样。
+    ///
+    /// 跟着换的：webContainer 里的视图和铺满它的约束（旧网页视图连同它的约束从容器里拿掉，这里不再持有它）、
+    /// ChatWindow.webView（Esc 判断）、页面底色观察（先停掉旧的，旧网页之后报什么都不起作用）、
+    /// 键盘焦点（原来在旧网页里才交给新网页，不在就不动）。
+    ///
+    /// 进行中的模式切换先结束，和隐藏、显示、拖边一样：快照和排版都是旧网页的，
+    /// 晚到的快照、排版完成和时限回调因为 layoutChange 已经不是它们那次而不起作用。
+    ///
+    /// 页面加载状态（hasCommittedPage、awaitingFinish、commitGeneration、noticeAwaitsLoad、launchAwaitsPage、
+    /// holdsPageColor、colorBeforeFirstLoad 和“无法连接”提示）在阶段 2 之前还是窗口一份。这里不保存、不恢复、不重设，
+    /// 换过之后它们就当作新网页视图的。所以前提是换的时候这些状态都已经停下来（pageStateIsSettled）；
+    /// 没停下来时记一行日志，调试版断言。
+    /// 只动排着队的页面颜色更新：取消，并把 pageColorGeneration 加一（和进入启动保护同一个办法），
+    /// 所以旧网页排下的 150ms 更新和加载完成后的等待到点时都不生效，不会把旧网页的颜色、也不会把新网页的颜色当成这次的结果。
+    /// 新网页此刻报着的颜色不马上采用：顶部一条和窗口底色保持原样，等新网页的颜色变化（切换时要不要马上采用留给阶段 3）。
+    func replaceWebView(with newWebView: WKWebView) {
+        guard newWebView !== webView else { return }
+        finishLayoutChange(animated: false)
+        let settled = pageStateIsSettled
+        if !settled {
+            diagnostics.log("window", "换网页视图时页面加载状态还没停下来：状态仍按窗口一份算，可能不属于新网页")
+        }
+        assert(settled, "换网页视图的前提：页面加载状态已经停下来（见 replaceWebView）")
+        let old = webView
+        let hadFocus = (window?.firstResponder as? NSView)?.isDescendant(of: old) ?? false
+        backgroundObservation?.invalidate()
+        backgroundObservation = nil
+        pendingBackground?.cancel()
+        pendingBackground = nil
+        pageColorGeneration += 1
+
+        newWebView.translatesAutoresizingMaskIntoConstraints = false
+        webContainer.addSubview(newWebView)
+        NSLayoutConstraint.activate(Self.fill(newWebView, in: webContainer))
+        webView = newWebView
+        (window as? ChatWindow)?.webView = newWebView
+        observePageBackground(of: newWebView)
+        // 要在拿掉旧网页之前交：拿掉第一响应者时 AppKit 会把焦点交给窗口本身。
+        if hadFocus { window?.makeFirstResponder(newWebView) }
+        old.removeFromSuperview()
+        diagnostics.log("window", "换网页视图：焦点\(hadFocus ? "在旧网页里，交给新网页" : "不在网页里，没动")")
+    }
+
+    /// 换网页视图的前提（见 replaceWebView）：没有启动画面和启动保护、没有在等加载完成前的颜色、
+    /// 不在“已提交、还没加载完成”中、没有显示或留着“无法连接”提示。
+    private var pageStateIsSettled: Bool {
+        !isShowingLaunchScreen && !launchAwaitsPage && !holdsPageColor && colorBeforeFirstLoad == nil
+            && !awaitingFinish && !noticeAwaitsLoad && loadProblemCover.isHidden
+    }
+
+    /// 网页视图铺满 webContainer 的四条约束。
+    private static func fill(_ view: NSView, in place: NSView) -> [NSLayoutConstraint] {
+        [view.topAnchor.constraint(equalTo: place.topAnchor),
+         view.leadingAnchor.constraint(equalTo: place.leadingAnchor),
+         view.trailingAnchor.constraint(equalTo: place.trailingAnchor),
+         view.bottomAnchor.constraint(equalTo: place.bottomAnchor)]
+    }
+
+    /// 页面换底色（ChatGPT 切换浅色、深色）时跟着变。导航刚开始时 WebKit 会短暂报出默认白色，
+    /// 稳定 150ms 再采用，免得每次加载都闪一下浅色。启动时另有启动保护，见 holdsPageColor。
+    /// 只观察当前显示的网页视图：先停掉之前的观察。
+    private func observePageBackground(of view: WKWebView) {
+        backgroundObservation?.invalidate()
+        backgroundObservation = view.observe(\.underPageBackgroundColor) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.pageBackgroundChanged() }
+        }
     }
 
     // MARK: - 布局
@@ -940,7 +1010,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         if window.isVisible { refreshInputMethodPosition() }
     }
 
-    /// 网页排好或到时限时调用；隐藏、再次显示和开始拖动边缘时也调用：先结束这次切换，窗口和网页都和模式一致。
+    /// 网页排好或到时限时调用；隐藏、再次显示、开始拖动边缘和换网页视图时也调用：先结束这次切换，窗口和网页都和模式一致。
     private func finishLayoutChange(animated: Bool = true) {
         guard let change = layoutChange else { return }
         layoutChange = nil
