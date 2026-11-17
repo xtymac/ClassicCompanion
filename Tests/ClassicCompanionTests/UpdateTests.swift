@@ -312,6 +312,18 @@ final class UpdateTests: XCTestCase {
         XCTAssertEqual(pendingChanges, ["0.1.0-beta.3", nil])
     }
 
+    /// 版本号是空的（不应发生）：用构建号，菜单和设置里的“有新版本”仍然有东西可显示，等确认的更新不会藏起来。
+    func testPendingUpdateWithoutVersionUsesTheBuild() {
+        let driver = ConfirmingUserDriver(standard: SPUStandardUserDriver(hostBundle: .main, delegate: nil))
+        var pendingChanges: [String?] = []
+        driver.onPendingInstallChange = { pendingChanges.append($0) }
+        driver.updateFound(version: "", build: "20261117.0000", notes: nil,
+                           installing: false, userInitiated: false, reply: { _ in })
+        XCTAssertEqual(pendingChanges, ["20261117.0000"])
+        driver.dismissUpdateInstallation()
+        XCTAssertEqual(pendingChanges, ["20261117.0000", nil])
+    }
+
     /// 窗口出现后主按钮先停 1 秒，然后自动恢复；重新叫回窗口时重新计时。
     func testPromptGateHoldsTheMainButtonBriefly() {
         let gate = UpdatePromptGate()

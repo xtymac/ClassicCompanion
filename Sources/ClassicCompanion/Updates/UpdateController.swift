@@ -40,9 +40,10 @@ final class UpdateStatus: ObservableObject {
 ///   授权后下载、验证完成就安装并重新启动。
 ///   不根据有没有声音、空闲时间或“生成中”判断能否重启。
 ///
-/// SPUUpdater 和标准界面的委托回调都在主线程（Sparkle 文档）；SPUStandardUserDriverDelegate 的头文件没标主线程，所以用 @preconcurrency。
+/// SPUUpdater 的委托回调都在主线程（Sparkle 文档）。标准界面不设委托：发现新版本时不用它的新版本窗口，
+/// 它的温和提醒接口用不上；“有新版本”的状态只由 ConfirmingUserDriver.onPendingInstallChange 设置和清除。
 @MainActor
-final class UpdateController: NSObject, SPUUpdaterDelegate, @preconcurrency SPUStandardUserDriverDelegate {
+final class UpdateController: NSObject, SPUUpdaterDelegate {
     let status = UpdateStatus()
     let configuration: UpdateConfiguration?
     private let diagnostics: Diagnostics
@@ -56,7 +57,7 @@ final class UpdateController: NSObject, SPUUpdaterDelegate, @preconcurrency SPUS
         configuration = UpdateConfiguration(infoDictionary: bundle.infoDictionary)
         super.init()
         guard configuration != nil else { return }
-        let standard = SPUStandardUserDriver(hostBundle: bundle, delegate: self)
+        let standard = SPUStandardUserDriver(hostBundle: bundle, delegate: nil)
         let driver = ConfirmingUserDriver(standard: standard)
         driver.log = { [weak self] in self?.diagnostics.log("update", $0) }
         driver.onPendingInstallChange = { [weak self] version in
@@ -167,14 +168,6 @@ final class UpdateController: NSObject, SPUUpdaterDelegate, @preconcurrency SPUS
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.releaseTermination("会话结束") }
     }
 
-    // MARK: - SPUStandardUserDriverDelegate
-
-    // 发现新版本时不用标准界面的新版本窗口（ConfirmingUserDriver.updateFound），所以标准界面的温和提醒接口用不上：
     // 定时检查发现的新版本由 ConfirmingUserDriver 记成等确认，只在菜单、菜单栏菜单和设置里提示，不弹窗、不抢焦点。
-
     // 不用 Dock 角标（用户 2026-11-12 决定）：更新功能不碰 Dock 图标的任何状态。
-
-    func standardUserDriverWillFinishUpdateSession() {
-        status.pendingVersion = nil
-    }
 }
