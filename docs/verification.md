@@ -251,3 +251,32 @@ Not verified:
 - A real network disconnect on the official builds 20261114.2343 and 20261115.0209
 - The 1-second fallback after a commit and the 30-second cap in a real run
 - Physical key presses
+
+## Release 0.1.0-beta.3 (build 20261117.1150) — 2026-11-18
+
+Published as a pre-release: <https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.3>. The tag `v0.1.0-beta.3` points to `50a557b363376fc8a7f7606160782965b473deaf`, the commit the build was made from. Compared with `50da684`, whose program code matches test build 20261115.0209 above, it changes only the update flow: one confirmation instead of two (pull request #4). Later commits on `main` change documentation and the update feed only. The Release is not marked Latest, and the 0.1.0-beta.1 and 0.1.0-beta.2 Releases, tags and assets are unchanged. After publication the Release text was reordered to English, Japanese, Simplified Chinese and Traditional Chinese, matching the READMEs; the wording did not change.
+
+| Check | Result |
+| --- | --- |
+| Developer ID signing, hardened runtime, secure timestamp | Passed |
+| Apple notarization | App Accepted with no issues; ticket stapled. The first DMG file was lost on the build Mac after packaging, so the DMG was made again from the notarized app inside the original ZIP, and only that DMG was submitted: Accepted with no issues, ticket stapled. The app in the DMG is identical, file for file, to the app in the ZIP |
+| `scripts/verify-release.sh --final` | 76 of 76 checks passed with the final DMG and ZIP |
+| `scripts/prepare-appcast.sh` | 13 of 13 checks passed (dry run and final) against the live beta.2 appcast |
+| Gatekeeper with a simulated download | A copy of the final DMG marked as downloaded by a browser was accepted (Notarized Developer ID); the app copied out of it was accepted and identical to the app in the ZIP |
+
+In-app update, isolated test (2026-11-17, MacBook Pro with Apple M4 Pro, macOS 27.0.1). The test copies had their own bundle ID, a local test feed, a test update-signing key and a local-network exception, and were re-signed; they did not use the live feed.
+- From 0.1.0-beta.2 to this build: the user signed in, checked for updates and confirmed the install. This step still needed two confirmations, because the running 0.1.0-beta.2 decides the flow. After the update, sign-in, an unsent draft, the last chat and the settings were kept, and the user confirmed the shortcuts and Keep Last Mode with a physical keyboard.
+- From this build to a test version with a changed build number, re-signed (tool-driven input): only the app's own confirmation window appeared, with its button unavailable at first; one click on Download and Install downloaded, verified, installed and reopened the app without asking again, and sign-in, draft, chat and settings were kept. The window's look was not checked by eye.
+
+Install from the DMG (2026-11-18, MacBook Pro with Apple M4 Max, macOS 27.2, replacing 0.1.0-beta.2, which was kept for rollback). A copy of the final DMG marked as downloaded was opened in the Finder; the user dragged the app to Applications and opened it there. It ran from Applications as 0.1.0-beta.3 (20261117.1150) with the same code signature hash as the app in the DMG, and Gatekeeper accepted it (Notarized Developer ID). The user confirmed that sign-in, an unsent draft and the last chat were kept. An earlier attempt that copied the app with a command-line tool ran from a translocated location and is not counted.
+
+| Check after publication (signed out, no authorization header) | Result |
+| --- | --- |
+| Release page | Loads and shows the pre-release |
+| Downloads | All seven files downloaded and are byte-for-byte identical to the checked files |
+| `SHA256SUMS` | `shasum -a 256 -c` passes for the six files |
+| Downloaded DMG | Stapled notarization ticket valid; Gatekeeper accepted it as Notarized Developer ID |
+
+Update feed: <https://raw.githubusercontent.com/xtymac/ClassicCompanion/main/appcast.xml>, updated in commit `d26ca82276a87386417d5b0c258cafe489df3f3e` after the downloads above passed. The file is the appcast generated and checked with `scripts/prepare-appcast.sh` for this build and was committed unchanged. It adds one entry in the beta channel (version 0.1.0-beta.3, build 20261117.1150, minimum macOS 15.0, arm64, enclosure URL equal to the published ZIP's download address, length 2780855 bytes, the ZIP's size) and keeps the 0.1.0-beta.2 entry unchanged. Its release notes come from `docs/release-notes/0.1.0-beta.3.html` as of `8fc216d`. The feed signature and the ZIP's update signature were verified with the release public key. Signed out, the feed address returned HTTP 200 with content byte-for-byte identical to the committed file.
+
+Not verified: an existing 0.1.0-beta.2 installation receiving this version through the live feed, Check for Updates on the installed 0.1.0-beta.3 against the live feed, the look of the new confirmation window checked by eye and its VoiceOver speech, the first-opening confirmation, installing from the ZIP, a clean setup, macOS 15 and macOS 26.
