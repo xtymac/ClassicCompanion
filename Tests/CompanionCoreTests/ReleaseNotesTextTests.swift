@@ -37,6 +37,36 @@ import Testing
         #expect(ReleaseNotesText.plainText(from: "  line one\n\n line two ", format: "plain-text", language: "en") == "line one\nline two")
     }
 
+    /// 语言标签不分大小写，也认前缀（ja-JP、zh）；都不匹配时用英文。
+    @Test func languageTagsMatchLoosely() {
+        let html = #"<section lang="ZH-hans"><p>简体</p></section><section lang="ja-JP"><p>日本語</p></section><section lang="zh"><p>中文</p></section><section lang="EN"><p>English</p></section>"#
+        #expect(ReleaseNotesText.plainText(from: html, language: "zh-Hans") == "简体")
+        #expect(ReleaseNotesText.plainText(from: html, language: "ja") == "日本語")
+        #expect(ReleaseNotesText.plainText(from: html, language: "zh-Hant") == "中文")
+        #expect(ReleaseNotesText.plainText(from: html, language: "ko") == "English")
+        #expect(ReleaseNotesText.plainText(from: #"<section lang="de"><p>Deutsch</p></section><section lang="fr"><p>Français</p></section>"#,
+                                           language: "ja") == "Deutsch", "没有英文时用第一段")
+    }
+
+    /// 段落之外的文字（共同说明）保留，位置不变；其他语言的段落去掉。
+    @Test func textOutsideSectionsIsKept() {
+        let html = #"<p><b>Security notice</b> for everyone.</p><section lang="en"><p>English</p></section><section lang="ja"><p>日本語</p></section><p>Footer</p>"#
+        #expect(ReleaseNotesText.plainText(from: html, language: "ja") == "Security notice for everyone.\n日本語\nFooter")
+        #expect(ReleaseNotesText.plainText(from: html, language: "en") == "Security notice for everyone.\nEnglish\nFooter")
+    }
+
+    /// 注释、style、script 不显示成文字。
+    @Test func commentsStylesAndScriptsAreDropped() {
+        let html = "<style>\nul{margin:0}\n</style><!-- if a > b\n --><ul><li>One</li></ul><script>alert(1)</script><!--x-->"
+        #expect(ReleaseNotesText.plainText(from: html, language: "en") == "• One")
+    }
+
+    /// 编辑器和 Markdown 转换常出的排版实体也解码；不认识的原样保留。
+    @Test func typographicEntitiesAreDecoded() {
+        let html = "<p>What&rsquo;s new &mdash; Settings &rarr; General&hellip; &ldquo;A&rdquo; &copy; &AMP; &unknownthing;</p>"
+        #expect(ReleaseNotesText.plainText(from: html, language: "en") == "What’s new — Settings → General… “A” © & &unknownthing;")
+    }
+
     @Test func emptyNotesGiveNil() {
         #expect(ReleaseNotesText.plainText(from: nil, language: "en") == nil)
         #expect(ReleaseNotesText.plainText(from: "", language: "en") == nil)
@@ -55,7 +85,9 @@ import Testing
             let text = try #require(ReleaseNotesText.plainText(from: html, language: language), "\(language)")
             #expect(text.hasPrefix(heading), "\(language)：\(text.prefix(40))")
             #expect(text.contains("\n• "), "\(language)：要有列表项")
-            #expect(!text.contains("<") && !text.contains(">") && !text.contains("&amp;"), "\(language)：不留标签和实体")
+            #expect(!text.contains("<") && !text.contains(">"), "\(language)：不留标签")
+            #expect(text.range(of: #"&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);"#, options: .regularExpression) == nil,
+                    "\(language)：不留实体")
             texts.insert(text)
         }
         #expect(texts.count == 4, "四种语言各不相同")
