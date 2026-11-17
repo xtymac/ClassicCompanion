@@ -12,9 +12,9 @@ Classic Companion wraps the official ChatGPT website with SwiftUI, AppKit and WK
 
 This is the **public source repository**, licensed under [Apache-2.0](LICENSE). This repository brings together source code, downloads and feedback.
 
-**[Download 0.1.0-beta.2 (DMG) →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.2/ClassicCompanion-0.1.0-beta.2-20261113.1719-arm64.dmg)** · [Release notes](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.2) · [Feedback](https://github.com/xtymac/ClassicCompanion/issues)
+**[Download 0.1.0-beta.3 (DMG) →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.3/ClassicCompanion-0.1.0-beta.3-20261117.1150-arm64.dmg)** · [Release notes](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.3) · [Feedback](https://github.com/xtymac/ClassicCompanion/issues)
 
-Latest beta: 0.1.0-beta.2 (build 20261113.1719), a pre-release for Apple silicon Macs with macOS 15 or later. If you have 0.1.0-beta.1, install this version once by hand; later versions can be installed from within the app.
+Latest beta: 0.1.0-beta.3 (build 20261117.1150), a pre-release for Apple silicon Macs with macOS 15 or later. If you have 0.1.0-beta.2, choose Check for Updates… in the Classic Companion menu. If you have 0.1.0-beta.1, install this version once by hand; later versions can be installed from within the app.
 
 ## Review and verification
 

@@ -12,9 +12,9 @@
 
 这是采用 [Apache-2.0](LICENSE) 的**公开源码仓库**。源码、下载和用户反馈统一在本仓库。
 
-**[下载 0.1.0-beta.2（DMG）→](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.2/ClassicCompanion-0.1.0-beta.2-20261113.1719-arm64.dmg)** · [版本说明](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.2) · [反馈](https://github.com/xtymac/ClassicCompanion/issues)
+**[下载 0.1.0-beta.3（DMG）→](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.3/ClassicCompanion-0.1.0-beta.3-20261117.1150-arm64.dmg)** · [版本说明](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.3) · [反馈](https://github.com/xtymac/ClassicCompanion/issues)
 
-最新试用版：0.1.0-beta.2（构建 20261113.1719），预发布版，适用于 macOS 15 或更新版本的 Apple 芯片 Mac。已安装 0.1.0-beta.1 的用户需要手动安装一次本版，之后的版本可以在应用内更新。
+最新试用版：0.1.0-beta.3（构建 20261117.1150），预发布版，适用于 macOS 15 或更新版本的 Apple 芯片 Mac。已安装 0.1.0-beta.2 的用户可以在 Classic Companion 菜单里选择“检查更新…”。已安装 0.1.0-beta.1 的用户需要手动安装一次本版，之后的版本可以在应用内更新。
 
 ## 审查与验证
 

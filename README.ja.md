@@ -12,9 +12,9 @@ SwiftUI、AppKit、WKWebView で ChatGPT の公式サイトを表示するアプ
 
 これは [Apache-2.0](LICENSE) で公開する**ソースリポジトリ**です。ソースコード、ダウンロード、フィードバックをこのリポジトリにまとめています。
 
-**[0.1.0-beta.2 の DMG をダウンロード →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.2/ClassicCompanion-0.1.0-beta.2-20261113.1719-arm64.dmg)** · [リリース情報](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.2) · [フィードバック](https://github.com/xtymac/ClassicCompanion/issues)
+**[0.1.0-beta.3 の DMG をダウンロード →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.3/ClassicCompanion-0.1.0-beta.3-20261117.1150-arm64.dmg)** · [リリース情報](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.3) · [フィードバック](https://github.com/xtymac/ClassicCompanion/issues)
 
-最新のベータ版：0.1.0-beta.2（ビルド 20261113.1719）、プレリリース。macOS 15 以降の Apple シリコン搭載 Mac 用です。0.1.0-beta.1 をお使いの場合は、一度だけ手動でこのバージョンをインストールしてください。以降のバージョンはアプリ内でアップデートできます。
+最新のベータ版：0.1.0-beta.3（ビルド 20261117.1150）、プレリリース。macOS 15 以降の Apple シリコン搭載 Mac 用です。0.1.0-beta.2 をお使いの場合は、Classic Companion メニューの「アップデートを確認…」を選んでください。0.1.0-beta.1 をお使いの場合は、一度だけ手動でこのバージョンをインストールしてください。以降のバージョンはアプリ内でアップデートできます。
 
 ## レビューと検証
 
