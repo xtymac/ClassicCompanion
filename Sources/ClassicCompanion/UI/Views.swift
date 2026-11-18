@@ -14,6 +14,8 @@ struct WebBar: View {
     var onBarPress: (_ clickCount: Int, _ moved: Bool) -> Void = { _, _ in }
     @ObservedObject var state: ToolbarState
     @ObservedObject var appearance: PageAppearance
+    /// 关闭按钮右边的闪电。测试和预览里换成指定的图。
+    var icon: NSImage = BarIdentity.bolt
     @ObservedObject private var languages = LanguageController.shared
 
     var body: some View {
@@ -21,6 +23,7 @@ struct WebBar: View {
         let toggle = L10n.string(state.quick ? "bar.toFull" : "bar.toQuick")
         HStack(spacing: 10) {
             GlassCircleButton(symbol: "xmark", label: hide, help: L10n.format("format.withShortcut", hide, "⌘W"), action: onClose)
+            BarIdentity(icon: icon)
             Spacer(minLength: 0)
             GlassCircleButton(symbol: "square.and.pencil", label: newChat, help: L10n.format("format.withShortcut", newChat, "⌘N"),
                               action: onNewChat)
@@ -39,6 +42,43 @@ struct WebBar: View {
     }
 
     static let height: CGFloat = 52
+}
+
+/// 关闭按钮右边的闪电和应用名：这一条和别的聊天应用的窗口长得太像，容易点错，靠它认出是哪个应用（用户 2026-11-18）。
+/// 闪电和菜单栏图标是同一张模板图，和名字一样是灰色。试过应用图标（白底方块和圆形按钮并排不协调）、
+/// 团子线条和实心团子（太抢眼），用户定为只放闪电。
+/// 只是标识：不收鼠标事件，这一块仍然可以拖动和双击；辅助功能里窗口标题已经是应用名，不再重复。
+/// 窗口窄时名字可以被挤短，闪电不缩。
+struct BarIdentity: View {
+    let icon: NSImage
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: BarIdentity.iconSide, height: BarIdentity.iconSide)
+            Text(BarIdentity.name)
+                .font(.system(size: 15, weight: .semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(.secondary)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    static let name = "Classic Companion"
+    /// 菜单栏图标的原始大小。
+    static let iconSide: CGFloat = 18
+
+    /// 菜单栏用的那张闪电模板图。没打包运行时没有这个资源，和菜单栏一样退回系统符号。
+    static var bolt: NSImage {
+        let image = NSImage(named: "MenuBarIconTemplate")
+            ?? NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil) ?? NSImage()
+        image.isTemplate = true
+        return image
+    }
 }
 
 /// 顶部一条的底：上沿是半透明磨砂，透出窗口后面的桌面；往下渐变成页面底色，下沿和页面连成一块（用户 2026-11-08）。
