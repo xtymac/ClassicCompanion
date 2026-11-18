@@ -51,7 +51,7 @@ fix_rpaths "$APP/Contents/MacOS/$EXECUTABLE"
 # 先把调试符号另存到 build/<构建号>/（只留本机，用来看崩溃报告），再去掉。
 dsymutil "$APP/Contents/MacOS/$EXECUTABLE" -o "$OUT_DIR/$EXECUTABLE.dSYM"
 strip -S "$APP/Contents/MacOS/$EXECUTABLE"
-# 应用图标直接用设计交付的 icns（镂空闪电团子 design/lightning-outline/final，2026-11-09 用户定），不在构建里重新导出，避免被别的源图或占位图覆盖。
+# 应用图标直接使用已确认的石墨灰小闪电版 icns，不在构建里重新导出，避免被其他源图或占位图覆盖。
 [[ -s assets/icon/AppIcon.icns ]] || { echo "错误：缺少 assets/icon/AppIcon.icns" >&2; exit 1; }
 cp assets/icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cmp -s assets/icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns" || { echo "错误：应用里的图标和 assets/icon/AppIcon.icns 不一致" >&2; exit 1; }
