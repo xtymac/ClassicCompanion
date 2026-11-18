@@ -24,7 +24,7 @@ final class LaunchColourTests: XCTestCase {
     private var shown: [NSColor?] = []
     private var watch: AnyCancellable?
 
-    private func make(saved: NSColor?) {
+    private func make(saved: NSColor?, initialPageColor: NSColor? = nil) {
         let name = "LaunchColourTests-\(UUID().uuidString)"
         addTeardownBlock { UserDefaults().removePersistentDomain(forName: name) }
         defaults = UserDefaults(suiteName: name)!
@@ -32,6 +32,9 @@ final class LaunchColourTests: XCTestCase {
             defaults.set([rgb.redComponent, rgb.greenComponent, rgb.blueComponent].map(Double.init), forKey: "pageBackgroundRGB")
         }
         web = WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        // 需要模拟颜色变化时，在控制器开始观察前设定起点。新 WebView 可能已经是白色，
+        // 再赋白色不会触发 KVO。真实网页加载测试不设此值，保留 WebKit 自动报告页面底色。
+        if let initialPageColor { web.underPageBackgroundColor = initialPageColor }
         appearance = PageAppearance(defaults: defaults)
         diagnostics = Diagnostics()
         controller = ChatWindowController(webView: web, toolbar: EmptyView(), diagnostics: diagnostics, appearance: appearance)
@@ -71,7 +74,7 @@ final class LaunchColourTests: XCTestCase {
 
     /// 启动保护开始前已经排队的颜色更新（150ms 后才执行）不能在保护期间生效。
     func testAColourUpdateQueuedBeforeTheLaunchScreenIsDropped() async throws {
-        make(saved: savedDark)
+        make(saved: savedDark, initialPageColor: pageBlack)
         web.underPageBackgroundColor = white
         controller.beginLaunchScreen()
         try await pause(0.5)
@@ -81,7 +84,7 @@ final class LaunchColourTests: XCTestCase {
 
     /// 启动画面显示期间 WebKit 报的颜色既不显示也不保存。
     func testColoursReportedDuringTheLaunchScreenAreNeitherShownNorSaved() async throws {
-        make(saved: savedDark)
+        make(saved: savedDark, initialPageColor: pageBlack)
         controller.beginLaunchScreen()
         web.underPageBackgroundColor = white
         try await pause(0.5)
@@ -222,7 +225,7 @@ final class LaunchColourTests: XCTestCase {
 
     /// 没有启动画面（例如测试或以后别的入口）时和原来一样直接跟随。
     func testWithoutALaunchScreenThePageColourIsFollowedAsBefore() async throws {
-        make(saved: savedDark)
+        make(saved: savedDark, initialPageColor: pageBlack)
         web.underPageBackgroundColor = white
         try await waitUntil { appearance.isDark == false }
         XCTAssertEqual(appearance.isDark, false)
@@ -261,6 +264,27 @@ final class LaunchColourTests: XCTestCase {
     }
 
     // MARK: - 真实 WebKit
+
+    /// 新 WebView 的默认白色可能和真实浅色页面相同，没有 KVO 变化也必须在启动保护解除后跟随。
+    func testAColdLoadOfAWhitePageIsFollowedEvenWithoutAColourChange() async throws {
+        make(saved: savedDark)
+        controller.pageColorSettleLimit = 0.3
+        let finished = Finished()
+        web.navigationDelegate = finished
+        controller.beginLaunchScreen()
+        web.loadHTMLString("<html><body style='background:#ffffff'>x</body></html>", baseURL: nil)
+        try await waitUntil(5) { finished.done }
+        XCTAssertTrue(finished.done)
+        try assertStillDark("真实白色页面加载完成前保持启动颜色")
+        XCTAssertTrue(shown.isEmpty)
+        controller.endLaunchScreen("网页已加载")
+        controller.pageDidFinishLoading()
+        try await waitUntil { PageAppearance.sameColor(appearance.background, white) }
+        XCTAssertTrue(PageAppearance.sameColor(appearance.background, white))
+        XCTAssertTrue(PageAppearance.sameColor(savedColor, white))
+        XCTAssertEqual(controller.chromeAppearance?.name, .aqua)
+        XCTAssertEqual(shown.count, 1, "只在保护解除后采用白色一次")
+    }
 
     /// 真实 WebKit 冷加载一个深色页面，按应用的顺序在加载完成时结束启动画面、解除保护：
     /// 原生部分从头到尾没有用过浅色，最后是页面的颜色。WebKit 加载前报出什么颜色记在测试输出里，不作判断。
