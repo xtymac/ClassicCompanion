@@ -36,6 +36,26 @@ final class ChromeTests: XCTestCase {
         XCTAssertEqual(remembered.redComponent, 0x21 / 255.0, accuracy: 0.01)
     }
 
+    private func makeBar(background: NSColor, width: CGFloat, icon: NSImage) -> NSHostingView<WebBar> {
+        let appearance = PageAppearance(defaults: makeDefaults())
+        appearance.update(background)
+        let bar = WebBar(onClose: {}, onNewChat: {}, onToggleMode: {}, onDoubleClick: {},
+                         state: ToolbarState(), appearance: appearance, icon: icon)
+        let host = NSHostingView(rootView: bar)
+        host.appearance = appearance.nsAppearance
+        host.frame = NSRect(x: 0, y: 0, width: width, height: WebBar.height)
+        host.layoutSubtreeIfNeeded()
+        return host
+    }
+
+    /// 顶部左边有闪电和应用名，用来和别的聊天应用的窗口区分；窗口最窄（480）时这一条也放得下。
+    func testBarShowsAppIdentityAndFitsTheNarrowestWindow() {
+        XCTAssertEqual(BarIdentity.name, "Classic Companion")
+        let host = makeBar(background: .white, width: 480, icon: NSImage(size: NSSize(width: 64, height: 64)))
+        XCTAssertLessThanOrEqual(host.fittingSize.width, 480)
+        XCTAssertEqual(host.fittingSize.height, WebBar.height)
+    }
+
     /// 没有红黄绿三个按钮和标题；⌘W 和关闭仍然只隐藏窗口。
     func testNoSystemButtonsAndCloseStillHides() throws {
         let controller = ChatWindowController(webView: WKWebView(), toolbar: EmptyView(), diagnostics: Diagnostics(),
