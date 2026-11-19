@@ -20,7 +20,7 @@ import CompanionCore
 /// 不再回来读“现在选中的”。等完先看它还在不在这组里，不在就不做；会被更新的请求取代的（聚焦）还看代号。
 /// 后台的事从不改前台。设置（网页增强、页面缩放、网页无障碍、弹窗标题）每个标签页都改。
 /// 每个标签页的运行时在这组里时都登记在共用的网络状态上（NetworkStatus 只通知，重试与否由各页自己的恢复规则决定），
-/// 离开这组时去掉（tabLeft(_:)）。
+/// 离开这组时去掉（tabLeft(_:)）。关闭标签页的收尾见 close(_:)：先让它的运行时和页面状态进入关闭态，再拿掉。
 /// 这里写的某个标签页的日志（页面变化、媒体状态、实验）带那个标签页的标签（TabLog，见 log(_:_:_:)）；窗口的日志不带。
 /// 选中的标签页和窗口显示着的页面要一致：应用里只有一个标签页，建窗口时传的就是它的 page；测试用 selectForTesting 两边一起设。
 ///
@@ -148,10 +148,42 @@ final class ChatTabs {
         TabLog(diagnostics: diagnostics, tab: tab.logTag)(category, message)
     }
 
-    /// 标签页离开这组时：从共用的网络状态上去掉，之后的网络变化不再送给它。现在只有测试的 removeForTesting(_:) 调用。
-    /// 关闭标签页的收尾（停掉它自己排好的重试、拆回调、释放网页视图等）留到以后，那时也从这里走。
+    /// 标签页离开这组时：从共用的网络状态上去掉，之后的网络变化不再送给它。close(_:) 和测试的 removeForTesting(_:) 调用。
     private func tabLeft(_ tab: ChatTab) {
         network.remove(tab.runtime)
+    }
+
+    // MARK: - 关闭标签页的收尾
+
+    /// 关闭标签页 tab 的收尾：之后它的任何事件、通知和计时都不再起作用，这组不再持有它（别处也不持有时，它连同运行时、
+    /// 页面状态和网页视图一起释放）。应用里现在还没有关闭标签页的入口（没有按键、菜单、标签栏），只有测试调用。
+    ///
+    /// 前提：tab 不是选中的（窗口显示的不是它）。关选中的标签页要先把选中项和窗口换到别的标签页，那是切换标签页的入口（以后做），
+    /// 这里不选下一个、不换网页视图、不投别的页面的状态。只有一个标签页时它就是选中的，所以也不能关（⌘W 隐藏窗口，不释放）。
+    /// tab 已经不在这组里（关过了，或者不是这组的）：什么都不做，所以关两遍是安全的。
+    ///
+    /// 顺序：先进入关闭态，再收尾。
+    /// 1. 运行时关闭（WebRuntime.close()）：不再自己发起加载、不再排重试，排着的重试取消，停止加载，回调断开，弹窗关掉。
+    /// 2. 页面状态关闭（ChatWindowController.pageClosed(_:)）：带这个页面的入口和它排着的兜底、颜色回调都不再起作用。
+    /// 3. 排着的聚焦任务取消（到点本来也因为它不是选中的而不做，这里让它马上结束、不再等）。
+    /// 4. 从列表（list）和 tabs 里一起拿掉，两者始终一一对应。不记入最近关闭（⇧⌘T 记哪个地址是重新打开的任务）。
+    /// 5. 从共用的网络状态上去掉（tabLeft）。
+    ///
+    /// 不取消的：进行中的新对话、证据采集和媒体实验、每秒的媒体状态和页面变化后的媒体日志。它们在下一次 holds 检查处停下
+    /// （不加载、不聚焦、不写诊断；运行时已关闭，加载也发不出去）；在这之前还拿着这个标签页，所以释放要等它们正在等的那一步
+    /// 网页脚本返回或超时。排版前记下的阅读位置留在 readingHolds 里（记下和放回按先后一一配对，不能拿掉一条），
+    /// 放回时因为它不在这组里而作废。
+    func close(_ tab: ChatTab) {
+        guard holds(tab) else { return }
+        precondition(!isSelected(tab), "关选中的标签页要先切换到别的标签页（切换入口以后做）")
+        tab.runtime.close()
+        windowController.pageClosed(tab.page)
+        tab.focusTask?.cancel()
+        tab.focusTask = nil
+        let result = list.close(tab.id, url: nil)
+        precondition(result == .closed(selectionChanged: false), "不选中的标签页从列表里拿掉，选中项不变")
+        tabs.removeAll { $0 === tab }
+        tabLeft(tab)
     }
 
     /// 把标签页 tab 的网页运行时的回调接到窗口上。启动时 AppDelegate 在原来接这些的地方调用，add(_:) 也调用。
@@ -196,7 +228,10 @@ final class ChatTabs {
 
     /// 标签页 tab 的地址变了。路径、适配器、“页面变化”日志和 0.8 秒后的媒体日志都是这个标签页的，不管选没选中
     /// （两行日志都带它的标签）；记下可恢复的对话地址跟着选中的标签页，只有它是选中的才记。
+    /// tab 已经不在这组里（关闭或拿掉了）就什么都不做：不改它的路径和适配器代号，不写日志。
+    /// 关闭时运行时已经断开这个回调（WebRuntime.close()），这里是这组自己的规则，拿掉而没关闭的（removeForTesting）也一样。
     private func urlChanged(_ url: URL?, for tab: ChatTab) {
+        guard holds(tab) else { return }
         if isSelected(tab), let restorable = NavigationPolicy.restorableConversationURL(url) {
             saveLastConversation(restorable)
         }
@@ -357,7 +392,8 @@ final class ChatTabs {
     }
 
     /// 只给测试用：把不选中的 tab 从这组里拿掉（列表里也关掉，不记最近关闭），再从网络状态上去掉（tabLeft(_:)）。
-    /// 别的都不做：不停它的加载、不拆它的回调、不取消它排着的任务。用来验证排着的任务到点时不再对它起作用。关闭标签页的收尾留到以后。
+    /// 别的都不做：不停它的加载、不拆它的回调、不取消它排着的任务。用来验证排着的任务到点时只靠 holds 检查就不再对它起作用。
+    /// 关闭标签页的收尾是 close(_:)。
     func removeForTesting(_ tab: ChatTab) {
         precondition(holds(tab) && !isSelected(tab), "只拿掉这组里不选中的标签页")
         _ = list.close(tab.id, url: nil)
