@@ -94,4 +94,25 @@ import Testing
         #expect(ReleaseNotesText.plainText(from: html, language: "zh-Hans")?.contains("唤醒时窗口模式") == true)
         #expect(ReleaseNotesText.plainText(from: html, language: "zh-Hans")?.contains("Window Mode") == false)
     }
+
+    /// 实际的 beta.4 说明：四种语言各取到自己那一段，各自提到应用名，没有剩下的标签或实体。
+    @Test func betaFourReleaseNotesSplitByLanguage() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("docs/release-notes/0.1.0-beta.4.html")
+        let html = try String(contentsOf: url, encoding: .utf8)
+        let first: [String: String] = ["en": "What’s new", "zh-Hans": "新功能", "zh-Hant": "新功能", "ja": "新機能"]
+        var texts: Set<String> = []
+        for (language, heading) in first {
+            let text = try #require(ReleaseNotesText.plainText(from: html, language: language), "\(language)")
+            #expect(text.hasPrefix(heading), "\(language)：\(text.prefix(40))")
+            #expect(text.contains("\n• "), "\(language)：要有列表项")
+            #expect(text.contains("Classic Companion"), "\(language)：提到窗口顶部的应用名")
+            #expect(!text.contains("<") && !text.contains(">"), "\(language)：不留标签")
+            #expect(text.range(of: #"&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);"#, options: .regularExpression) == nil,
+                    "\(language)：不留实体")
+            texts.insert(text)
+        }
+        #expect(texts.count == 4, "四种语言各不相同")
+    }
 }
