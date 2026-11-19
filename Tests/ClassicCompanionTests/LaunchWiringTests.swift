@@ -297,8 +297,9 @@ private final class Rig {
                             self?.timeline.append("读网页媒体状态")
                             return "none"
                         })
+        // 跟着真实鼠标、键盘、屏幕写的行不进时间线（见 LiveInputLogLines）。
         watch = diagnostics.$entries.dropFirst().sink { [weak self] entries in
-            guard let self, let entry = entries.last else { return }
+            guard let self, let entry = entries.last, !LiveInputLogLines.excludes(entry) else { return }
             if entry.message.hasPrefix("页面变化") { self.generationAtPageChange.append(self.tab.adapter.generation) }
             self.timeline.append("[\(entry.category)] \(entry.message)")
         }
