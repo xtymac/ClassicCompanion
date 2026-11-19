@@ -19,13 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let settings = AppSettings()
     private let languages = LanguageController.shared
     private let diagnostics = Diagnostics()
-    /// 现在唯一的聊天标签页：网页运行时、适配器、页面加载状态，和只属于这一页的 lastPath、focusTask。见 ChatTab。
-    /// 它也在 chatTabs 里，是那里选中的标签页。
-    private var tab: ChatTab!
     /// 标签页（顺序、选中项和标识的列表 TabList 也在这里）、它们的运行时回调怎么接到窗口上，和换页面、聚焦输入框。见 ChatTabs。
+    /// 现在只有启动时的那一个标签页。对选中的标签页做的操作（新对话、⌘R、媒体状态、证据采集）和设置的改动都经它，
+    /// 在操作开始时取选中的那个；这里不再另外留着一个标签页。
     private var chatTabs: ChatTabs!
-    private var network: NetworkStatus!
-    private let media = WebMediaMonitor()
     private let toolbarState = ToolbarState()
     private let pageAppearance = PageAppearance()
     private var mediaTimer: Timer?
@@ -88,14 +85,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         diagnostics.log("app", "界面语言 \(languages.language.rawValue)（设置：\(languages.preference.rawValue)，系统：\(Locale.preferredLanguages.prefix(3).joined(separator: ","))）")
 
-        // 网络状态由全应用共用的一个监视送给运行时；运行时自己不再开监视。
-        network = NetworkStatus()
+        // 网络状态由全应用共用的一个监视送给运行时；运行时自己不再开监视。运行时由 chatTabs 登记（见 ChatTabs.init）。
+        let network = NetworkStatus()
         let runtime = WebRuntime(diagnostics: diagnostics, settings: settings, watchesNetwork: false)
-        network.add(runtime)
         let adapter = ChatGPTAdapter(webView: runtime.webView, diagnostics: diagnostics, settings: settings)
         // 标签页列表开始时只有启动时的那一个；它的标识从这里来（TabID 只能由 TabList 发放）。列表随后交给 chatTabs。
         let tabList = TabList()
-        tab = ChatTab(id: tabList.selected, runtime: runtime, adapter: adapter)
+        let launchTab = ChatTab(id: tabList.selected, runtime: runtime, adapter: adapter)
         // 系统 TTS（SpeechController）已退出正式路径：1.2 版要求使用官方 Read Aloud，不实例化、不回退。
 
         let bar = WebBar(onClose: { [weak self] in self?.windowController.hide(reason: "顶部关闭按钮") },
@@ -109,36 +105,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                              self?.goInHistory(.back, eventWindow: self?.windowController?.window, source: "顶部返回箭头")
                          },
                          state: toolbarState, appearance: pageAppearance)
-        windowController = ChatWindowController(webView: tab.runtime.webView, toolbar: bar, diagnostics: diagnostics,
-                                                appearance: pageAppearance, page: tab.page)
+        windowController = ChatWindowController(webView: launchTab.runtime.webView, toolbar: bar, diagnostics: diagnostics,
+                                                appearance: pageAppearance, page: launchTab.page)
         // ⌘[ ⌘] 和鼠标侧键由聊天窗口处理（只管它自己的事件），目标页面在按下时解析一次。
         windowController.historyPage = { [weak self] in self?.historyPage(eventWindow: self?.windowController?.window) }
-        tab.runtime.onHistoryChange = { [weak self] in self?.historyChanged() }
+        launchTab.runtime.onHistoryChange = { [weak self] in self?.historyChanged() }
         windowController.onWillShow = { [weak self] mode in self?.toolbarState.quick = mode == .quick }
         windowController.onDidMiniaturize = { [weak self] in self?.releaseForegroundIfWindowless() }
-        windowController.onWillChangeLayout = { [weak self] in self?.tab.runtime.holdReadingPosition() }
-        windowController.onDidChangeLayout = { [weak self] in self?.tab.runtime.restoreReadingPosition() }
-        windowController.onSnapshotPage = { [weak self] done in
-            guard let self else { return done(nil) }
-            self.tab.runtime.snapshotPage(done)
-        }
-        windowController.onPrepareLayout = { [weak self] size, done in
-            guard let self else { return done() }
-            self.tab.runtime.prepareLayout(size: size, done: done)
-        }
-        windowController.onDidShow = { [weak self] kind in
-            self?.chatTabs.focusInputSoon()
-            self?.tab.runtime.windowShown(kind)
-        }
 
-        // 提示里的“重新加载”和网页运行时的回调（地址变化、Esc、加载完成、加载失败、提示变化、提交）接到窗口上，
+        // 窗口的回调里对选中的标签页做的（提示里的“重新加载”、窗口显示后、排版变化前后的阅读位置、切模式时的快照和排版）
+        // 和网页运行时的回调（地址变化、Esc、加载完成、加载失败、提示变化、提交）接到窗口上，
         // 还是在这里，内容见 ChatTabs.init 和 ChatTabs.wire(_:)。
-        chatTabs = ChatTabs(list: tabList, tab: tab, windowController: windowController, diagnostics: diagnostics,
+        chatTabs = ChatTabs(list: tabList, tab: launchTab, windowController: windowController, diagnostics: diagnostics,
+                            network: network,
                             hideWindow: { [weak self] reason in self?.windowController.hide(reason: reason) },
                             focusInput: { adapter in await adapter.focusInput() },
                             saveLastConversation: { [weak self] url in self?.settings.lastConversationURL = url },
-                            mediaState: { adapter in await adapter.webMediaState() })
-        chatTabs.wire(tab)
+                            mediaState: { adapter in await adapter.webMediaState() },
+                            openNewChat: { adapter in await adapter.openNewChatInPage() })
+        chatTabs.wire(launchTab)
         updates = UpdateController(diagnostics: diagnostics)
 
         buildMainMenu()
@@ -165,7 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
         let start = (settings.restoreLastConversation ? settings.lastConversationURL : nil) ?? WebRuntime.homeURL
         windowController.beginLaunchScreen()
-        tab.runtime.load(start)
+        launchTab.runtime.load(start)
         // 首次显示放到下一轮 run loop，确保激活在应用完成启动之后发生
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -281,19 +266,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 item.keyEquivalentModifierMask = equivalent?.modifiers ?? []
             }
         }.store(in: &cancellables)
+        // 网页增强、页面缩放、网页无障碍：每个标签页都改（ChatTabs）。
         Publishers.CombineLatest(settings.$webEnhancements, settings.$escapeHidesWindow)
             .dropFirst()
             .sink { [weak self] _, _ in
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    self.tab.runtime.applyEnhancementScripts()
+                    self.chatTabs.applyEnhancementScripts()
                 }
             }.store(in: &cancellables)
         settings.$pageZoom.dropFirst().removeDuplicates().sink { [weak self] zoom in
-            DispatchQueue.main.async { self?.tab.runtime.setPageZoom(zoom) }
+            DispatchQueue.main.async { self?.chatTabs.setPageZoom(zoom) }
         }.store(in: &cancellables)
         settings.$allowPageAccessibility.dropFirst().removeDuplicates().sink { [weak self] allowed in
-            DispatchQueue.main.async { self?.tab.runtime.setPageAccessibilityAllowed(allowed) }
+            DispatchQueue.main.async { self?.chatTabs.setPageAccessibilityAllowed(allowed) }
         }.store(in: &cancellables)
         // 定时检查发现新版本：“检查更新…”旁边加角标（温和提醒，不弹窗）。
         updates.status.$pendingVersion.removeDuplicates().sink { [weak self] version in
@@ -309,7 +295,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             self.diagnostics.log("app", "界面语言改为 \(language.rawValue)（设置：\(self.languages.preference.rawValue)）")
             self.buildMainMenu()
             self.retitleWindows()
-            self.tab.runtime.retitlePopups()
+            self.chatTabs.retitlePopups()
             self.updates.retitle()
         }.store(in: &cancellables)
     }
@@ -329,7 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     /// 每次操作开始时调用一次，之后只对返回的页面操作。以后有标签页时，这里返回这一刻选中的那一页。
     private func historyPage(eventWindow: NSWindow? = nil) -> WebRuntime? {
         let window = HistoryNavigation.commandWindow(keyWindow: NSApp.keyWindow, eventWindow: eventWindow)
-        return HistoryNavigation.target(for: window, chatWindow: windowController?.window, page: tab.runtime)
+        return HistoryNavigation.target(for: window, chatWindow: windowController?.window, page: chatTabs.selected.runtime)
     }
 
     /// 菜单和顶部返回箭头都从这里走（⌘[ ⌘] 和鼠标侧键由聊天窗口处理，见 ChatWindowController）。
@@ -343,27 +329,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     /// 顶部返回箭头只在不是聊天页面、并且能后退时显示。
     private func historyChanged() {
-        let shows = tab.runtime.showsBackButton
+        let page = chatTabs.selected.runtime
+        let shows = page.showsBackButton
         guard shows != toolbarState.showsBack else { return }
         toolbarState.showsBack = shows
-        diagnostics.log("nav", "顶部返回箭头\(shows ? "显示" : "收起")：\(Redactor.describe(tab.runtime.webView.url))")
+        diagnostics.log("nav", "顶部返回箭头\(shows ? "显示" : "收起")：\(Redactor.describe(page.webView.url))")
     }
 
     // MARK: - 网页媒体监视与证据采集
 
-    /// 每秒读取 WebKit 媒体播放状态（公开 API），仅显示，不控制。
+    /// 每秒读取 WebKit 媒体播放状态（公开 API），仅显示，不控制。每次读这一刻选中的标签页，见 ChatTabs.mediaTick()。
     private func startMediaMonitor() {
         mediaTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                Task {
-                    let state = await self.tab.adapter.webMediaState()
-                    self.diagnostics.webMediaState = state
-                    if state != self.media.state {
-                        self.diagnostics.log("media", "WebKit 媒体状态 \(self.media.state) → \(state)（窗口可见=\(self.windowController.window?.isVisible ?? false)）")
-                        self.media.state = state
-                    }
-                }
+                self.chatTabs.mediaTick()
             }
         }
     }
@@ -381,31 +361,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
     }
 
+    /// 对开始这一刻选中的标签页采集，每一步都对它做（ChatTabs.collectEvidence(measure:)），然后写报告文件。
     func collectEvidence(measure: Bool) async {
-        await tab.adapter.probe()
-        diagnostics.readAloudEvidence = await tab.adapter.readAloudEvidence()
-        if measure { diagnostics.mediaMeasurement = await tab.adapter.measureMedia() }
+        await chatTabs.collectEvidence(measure: measure)
         diagnostics.writeReportFile(build: Self.build)
     }
 
+    /// 对开始这一刻选中的标签页做实验（ChatTabs.runExperiment(_:)，步骤见 PageEvidence），然后写报告文件。
     func runExperiment(_ kind: ExperimentKind) async {
-        let wv = tab.runtime.webView
-        switch kind {
-        case .suspendAll:
-            await wv.setAllMediaPlaybackSuspended(true)
-            diagnostics.recordExperiment("WebKit setAllMediaPlaybackSuspended(true) → 状态 \(await tab.adapter.webMediaState())")
-        case .resumeAll:
-            await wv.setAllMediaPlaybackSuspended(false)
-            diagnostics.recordExperiment("WebKit setAllMediaPlaybackSuspended(false) → 状态 \(await tab.adapter.webMediaState())")
-        case .pauseAll:
-            await wv.pauseAllMediaPlayback()
-            diagnostics.recordExperiment("WebKit pauseAllMediaPlayback → 状态 \(await tab.adapter.webMediaState())")
-        case .setRate(let r):
-            diagnostics.recordExperiment("DOM playbackRate=\(r)：\(await tab.adapter.experimentSetRate(r))")
-        case .measure:
-            diagnostics.mediaMeasurement = await tab.adapter.measureMedia()
-            diagnostics.recordExperiment("测量：\(diagnostics.mediaMeasurement)")
-        }
+        await chatTabs.runExperiment(kind)
         diagnostics.writeReportFile(build: Self.build)
     }
 
@@ -554,16 +518,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         case .none: break
         }
     }
-    @objc private func newChat() {
-        Task { [weak self] in
-            guard let self else { return }
-            guard await self.tab.adapter.openNewChatInPage() else { self.tab.runtime.newChat(); return }
-            self.chatTabs.focusInputSoon()
-        }
-    }
-    @objc private func reloadPage() { tab.runtime.reload() }
+    /// 对按下这一刻选中的标签页，见 ChatTabs.newChat()。
+    @objc private func newChat() { chatTabs.newChat() }
+    /// ⌘R：按下这一刻选中的标签页。
+    @objc private func reloadPage() { chatTabs.reloadSelectedTab() }
     /// 朗读没有声音时手动用（issue #16）。找不到媒体进程时响一声，窗口和页面不动。
-    @objc private func restartAudio() { if !tab.runtime.restartMediaProcess() { NSSound.beep() } }
+    @objc private func restartAudio() { if !chatTabs.selected.runtime.restartMediaProcess() { NSSound.beep() } }
     /// 菜单作用于 key 窗口：聊天窗口在前面时是它的页面，登录弹窗等窗口在前面时没有目标（菜单项是灰的）。
     @objc private func historyBack() { goInHistory(.back, source: "菜单") }
     @objc private func historyForward() { goInHistory(.forward, source: "菜单") }
