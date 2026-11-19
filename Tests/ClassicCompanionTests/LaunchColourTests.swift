@@ -295,26 +295,65 @@ final class LaunchColourTests: XCTestCase {
 
     /// 真实 WebKit 冷加载一个深色页面，按应用的顺序在加载完成时结束启动画面、解除保护：
     /// 原生部分从头到尾没有用过浅色，最后是页面的颜色。WebKit 加载前报出什么颜色记在测试输出里，不作判断。
+    /// 失败时消息里带上加载和启动保护的状态（只有颜色、耗时、布尔值和错误代码；页面是固定的测试 HTML），通过时也打印一行。
     func testAColdLoadOfADarkPageNeverShowsALightColour() async throws {
         make(saved: savedDark)
         let finished = Finished()
         web.navigationDelegate = finished
+        // 加载超时提前结束时网页可能还在加载：收尾时停下，去掉代理。
+        addTeardownBlock { [web] in
+            web?.stopLoading()
+            web?.navigationDelegate = nil
+        }
         controller.beginLaunchScreen()
+        let loadStarted = Date()
         web.loadHTMLString("<html><body style='background:#212121'>x</body></html>", baseURL: nil)
         try await waitUntil(5) { finished.done }
-        XCTAssertTrue(finished.done)
+        let loadWait = Date().timeIntervalSince(loadStarted)
+        var colourWait: TimeInterval?
+        func state() -> String {
+            let launch = diagnostics.entries.filter { ["launch", "appearance"].contains($0.category) }.map(\.message)
+            return "加载：didCommit=\(finished.committed) didFinish=\(finished.done) 失败=\(finished.failure ?? "无")；"
+                + "等加载 \(String(format: "%.2f", loadWait))s，等颜色 \(colourWait.map { String(format: "%.2f", $0) + "s" } ?? "未开始")；"
+                + "background=\(Self.rgb(appearance.background)) underPage=\(Self.rgb(web.underPageBackgroundColor))；"
+                + "启动画面=\(controller.isShowingLaunchScreen) 启动保护=\(controller.isHoldingPageColor)；"
+                + "诊断：\(launch.isEmpty ? "无" : launch.joined(separator: "；"))"
+        }
+        // waitUntil 到时限不报错、直接返回：没加载完成就记一次失败并到此为止，
+        // 不再手动结束启动画面、解除保护，免得后面的颜色断言失败盖住原因。
+        XCTAssertTrue(finished.done, "网页 5 秒内没有加载完成：" + state())
+        guard finished.done else { return }
         controller.endLaunchScreen("网页已加载")
         controller.pageDidFinishLoading()
+        let colourStarted = Date()
         try await waitUntil(3) { appearance.background.map { abs($0.redComponent - 0x21 / 255.0) < 0.01 } ?? false }
-        let red = try XCTUnwrap(appearance.background?.usingColorSpace(.sRGB)?.redComponent)
-        XCTAssertEqual(red, 0x21 / 255.0, accuracy: 0.01)
-        XCTAssertTrue(neverShownLight)
+        colourWait = Date().timeIntervalSince(colourStarted)
+        print("LaunchColourTests 冷加载状态：" + state())
+        let red = try XCTUnwrap(appearance.background?.usingColorSpace(.sRGB)?.redComponent, state())
+        XCTAssertEqual(red, 0x21 / 255.0, accuracy: 0.01, state())
+        XCTAssertTrue(neverShownLight, state())
         let held = diagnostics.entries.filter { $0.message.contains("启动保护中") }.map(\.message)
         print("LaunchColourTests 冷加载时启动保护挡下的报告：\(held.isEmpty ? "无" : held.joined(separator: "；"))")
     }
+
+    /// sRGB 分量，三位小数；没有颜色时写 nil。
+    private static func rgb(_ color: NSColor?) -> String {
+        guard let c = color?.usingColorSpace(.sRGB) else { return "nil" }
+        return String(format: "(%.3f, %.3f, %.3f, a %.2f)", c.redComponent, c.greenComponent, c.blueComponent, c.alphaComponent)
+    }
 }
 
+/// 记下加载走到哪一步。失败只记错误的域和代码。
 private final class Finished: NSObject, WKNavigationDelegate {
+    var committed = false
     var done = false
+    var failure: String?
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { committed = true }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { done = true }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        failure = "didFail \((error as NSError).domain) \((error as NSError).code)"
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        failure = "didFailProvisionalNavigation \((error as NSError).domain) \((error as NSError).code)"
+    }
 }
