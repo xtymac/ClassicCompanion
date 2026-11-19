@@ -23,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var tabList = TabList()
     /// 现在唯一的聊天标签页：网页运行时、适配器、页面加载状态，和只属于这一页的 lastPath、focusTask。见 ChatTab。
     private var tab: ChatTab!
+    /// 这个标签页的运行时回调怎么接到窗口上，和换页面、聚焦输入框。见 ChatTabs。
+    private var tabs: ChatTabs!
     private var network: NetworkStatus!
     private let media = WebMediaMonitor()
     private let toolbarState = ToolbarState()
@@ -124,28 +126,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             self.tab.runtime.prepareLayout(size: size, done: done)
         }
         windowController.onDidShow = { [weak self] kind in
-            self?.focusInputSoon()
+            self?.tabs.focusInputSoon()
             self?.tab.runtime.windowShown(kind)
         }
 
-        tab.runtime.onURLChange = { [weak self] url in self?.urlChanged(url) }
-        tab.runtime.onEscapeRequest = { [weak self] in self?.windowController.hide(reason: "网页 Esc") }
-        // 页面加载完成时结束启动画面；若窗口在前台，再尝试聚焦一次（唤醒时页面可能尚未就绪）
-        tab.runtime.onMainFrameLoaded = { [weak self] in
-            guard let self else { return }
-            self.windowController.endLaunchScreen("网页已加载")
-            // 网页第一次加载完成才恢复跟随页面底色；加载失败、启动画面到时限都不恢复，等之后哪次加载完成。
-            self.windowController.pageDidFinishLoading()
-            if self.windowController.isKey { self.focusInputSoon() }
-        }
-        // 加载失败时结束启动画面。WebKit 不显示错误页：首次加载失败时窗口里没有页面，
-        // 由 WebRuntime 自动重试（退避、限次、断网不发请求），窗口盖“无法连接”提示，⌘R 和提示里的按钮显式加载失败的地址
-        // （2026-11-11 开机白屏）。
-        tab.runtime.onLoadFailed = { [weak self] in self?.windowController.endLaunchScreen("加载失败") }
-        tab.runtime.onLoadProblemChange = { [weak self] status in self?.windowController.showLoadProblem(status) }
-        // 提交时先告诉窗口：到时限后还在的启动画面和留着的提示要等加载完成（或提交后 1 秒）再撤。
-        tab.runtime.onMainFrameCommitted = { [weak self] in self?.windowController.pageDidCommit() }
-        windowController.onReloadRequest = { [weak self] in self?.tab.runtime.reload() }
+        // 网页运行时的回调（地址变化、Esc、加载完成、加载失败、提示变化、提交）和提示里的“重新加载”接到窗口上，
+        // 还是在这里、还是这个顺序，内容见 ChatTabs.wire(_:)。
+        tabs = ChatTabs(tab: tab, windowController: windowController, diagnostics: diagnostics,
+                        hideWindow: { [weak self] reason in self?.windowController.hide(reason: reason) },
+                        focusInput: { adapter in await adapter.focusInput() },
+                        saveLastConversation: { [weak self] url in self?.settings.lastConversationURL = url },
+                        mediaState: { adapter in await adapter.webMediaState() })
+        tabs.wire(tab)
         updates = UpdateController(diagnostics: diagnostics)
 
         buildMainMenu()
@@ -329,27 +321,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         diagnosticsWindow?.title = L10n.string("window.diagnostics")
     }
 
-    private func urlChanged(_ url: URL?) {
-        if let restorable = NavigationPolicy.restorableConversationURL(url) {
-            settings.lastConversationURL = restorable
-        }
-        // 仅路径变化视为切换页面（忽略 query 变化）
-        let path = url.map { "\($0.host ?? "")\($0.path)" }
-        guard path != tab.lastPath else { return }
-        let previous = tab.lastPath
-        tab.lastPath = path
-        tab.adapter.invalidate()
-        diagnostics.log("nav", "页面变化 \(Redactor.describe(url))")
-        // 记录导航时网页媒体状态，用于验证“切换对话后官方朗读是否停止”（不主动干预）
-        if previous != nil {
-            Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(800))
-                guard let self else { return }
-                self.diagnostics.log("media", "页面变化后 0.8s WebKit 媒体状态=\(await self.tab.adapter.webMediaState())")
-            }
-        }
-    }
-
     // MARK: - 后退、前进
 
     /// 后退、前进的目标页面：这次操作的窗口（key 窗口；没有 key 窗口时是 eventWindow，菜单没有）是聊天窗口时是它的页面，
@@ -375,16 +346,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         guard shows != toolbarState.showsBack else { return }
         toolbarState.showsBack = shows
         diagnostics.log("nav", "顶部返回箭头\(shows ? "显示" : "收起")：\(Redactor.describe(tab.runtime.webView.url))")
-    }
-
-    private func focusInputSoon() {
-        tab.focusTask?.cancel()
-        tab.focusTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(80))
-            guard let self, !Task.isCancelled else { return }
-            let result = await self.tab.adapter.focusInput()
-            self.diagnostics.recordInputFocus(result)
-        }
     }
 
     // MARK: - 网页媒体监视与证据采集
@@ -596,7 +557,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         Task { [weak self] in
             guard let self else { return }
             guard await self.tab.adapter.openNewChatInPage() else { self.tab.runtime.newChat(); return }
-            self.focusInputSoon()
+            self.tabs.focusInputSoon()
         }
     }
     @objc private func reloadPage() { tab.runtime.reload() }
