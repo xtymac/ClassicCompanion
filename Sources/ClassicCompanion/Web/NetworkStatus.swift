@@ -2,7 +2,8 @@ import Network
 
 /// 全应用共用一个网络监视（NWPathMonitor），把每次网络变化转给登记过的网页运行时。
 /// 只负责通知：页面要不要重试，完全由它自己的恢复规则决定（WebRuntime.networkChanged → LoadRecovery）。
-/// 这里从不加载、也不重新加载任何页面。运行时只弱引用，释放了就从名单里去掉。
+/// 这里从不加载、也不重新加载任何页面。运行时只弱引用，释放了就从名单里去掉；
+/// 页面关掉时由 `remove(_:)` 明确去掉，别处还引用着它的运行时也不再收到通知。
 @MainActor
 final class NetworkStatus {
     /// 最近一次知道的网络状态。系统还没报过时是 nil。
@@ -40,14 +41,25 @@ final class NetworkStatus {
         if let online { runtime.networkChanged(online: online) }
     }
 
+    /// 去掉一个运行时：从此不再收到网络变化，不管别处是否还引用着它。只改名单，不通知它、不碰它的页面。
+    /// 去掉两遍、去掉没登记过的都什么也不做。去掉后再登记，按新登记处理（已知状态时补发一次）。
+    func remove(_ runtime: WebRuntime) {
+        runtimes.removeAll { $0.value == nil || $0.value === runtime }
+    }
+
     /// 系统的每次报告都走这里（测试直接调用）：先记下状态，再原样转给每个还在的运行时，不去重、不加别的动作。
     /// 先记状态：转发途中才登记的运行时由补发拿到这次的状态，不在这一轮名单里，不会收到两遍。
+    /// 转发途中被去掉的运行时，这一轮里还没轮到的也不再送。
     func deliver(online: Bool) {
         self.online = online
         runtimes.removeAll { $0.value == nil }
-        for runtime in runtimes.compactMap(\.value) {
+        for runtime in runtimes.compactMap(\.value) where isRegistered(runtime) {
             runtime.networkChanged(online: online)
         }
+    }
+
+    private func isRegistered(_ runtime: WebRuntime) -> Bool {
+        runtimes.contains { $0.value === runtime }
     }
 
     /// 名单里的条数（测试用：确认释放的运行时被去掉、重复登记不加条）。
