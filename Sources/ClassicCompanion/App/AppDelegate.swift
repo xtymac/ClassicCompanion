@@ -152,7 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         listenForEvidenceRequests()
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "debugDriver") {
-            debugDriver = DebugDriver(windowController: windowController, webView: web.webView)
+            debugDriver = DebugDriver(windowController: windowController)
         }
         #endif
 
