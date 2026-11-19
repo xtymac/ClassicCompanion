@@ -48,7 +48,7 @@ final class LaunchWiringTests: XCTestCase {
         let rig = makeRig()
         XCTAssertTrue(rig.tab.page === rig.controller.page)
         XCTAssertTrue(rig.controller.webView === rig.tab.runtime.webView)
-        XCTAssertTrue(rig.tabs.tab === rig.tab)
+        XCTAssertTrue(rig.tabs.selected === rig.tab)
         XCTAssertEqual(rig.tab.id, TabList().selected)
     }
 
@@ -281,7 +281,7 @@ private final class Rig {
         // 解除启动保护后等颜色变化的时限放长：它到点写的日志不在这些测试的时间线里。
         controller.pageColorSettleLimit = 60
         runtime.loadRequest = { [weak self] request in self?.loaded.append(request.url!) }
-        tabs = ChatTabs(tab: tab, windowController: controller, diagnostics: diagnostics,
+        tabs = ChatTabs(list: TabList(), tab: tab, windowController: controller, diagnostics: diagnostics,
                         hideWindow: { [weak self] reason in self?.timeline.append("隐藏窗口：\(reason)") },
                         focusInput: { [weak self] adapter in
                             self?.focused.append(adapter)

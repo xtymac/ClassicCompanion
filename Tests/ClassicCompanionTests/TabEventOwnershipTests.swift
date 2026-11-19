@@ -1,0 +1,570 @@
+import AppKit
+import Combine
+import SwiftUI
+import WebKit
+import XCTest
+import CompanionCore
+@testable import ClassicCompanion
+
+/// 事件属于发出它的标签页（ChatTabs.wire(_:)、urlChanged、focusInputSoon）。两个标签页：
+/// B 是启动时的那个，选中、窗口显示着（窗口用它的网页视图和 page 建）；A 由 ChatTabs.add 加进来、接好线，从不显示。
+/// 核对：
+/// - A 的提交、加载完成、加载失败、提示变化只改 A 自己的页面状态，和它显示着时一样；B 和窗口一点不变。
+/// - A 的地址变化改 A 自己的路径、适配器代号和日志，不记对话地址；0.8 秒后的媒体日志读 A 的适配器。
+/// - 隐藏窗口、聚焦只给选中的标签页；提示里的“重新加载”给按下时选中的标签页。
+/// - 排着的聚焦到点时还要是选中的、还要是最新的请求；标签页拿掉或释放后，排着的任务什么都不做。
+///
+/// 真的 ChatWindowController（不显示窗口）和两个真的 WebRuntime（不看网络，加载请求各自记下来），
+/// 加载、失败、提交、加载完成像 LoadRecoveryWebTests 一样直接调运行时的导航代理。AppDelegate 交进来的几样换成记录。
+/// A 的运行时和适配器自己写的日志（加载、失败、重试）记在 A 自己的 Diagnostics 里：共用的 diagnostics 里只有窗口、
+/// ChatTabs 和 B 的运行时写的，所以“窗口的日志不变”可以整条比。
+/// 选中的标签页和窗口显示着的页面要一致：换选中的只用 selectForTesting（两边一起设，不换网页视图）。
+@MainActor
+final class TabEventOwnershipTests: XCTestCase {
+    private let chat = URL(string: "https://chatgpt.com/c/abc")!
+    private let other = URL(string: "https://chatgpt.com/c/def")!
+
+    private func makeRig(backoffA: [TimeInterval] = [60]) -> TwoTabs {
+        let name = "TabEventOwnershipTests-\(UUID().uuidString)"
+        addTeardownBlock { UserDefaults().removePersistentDomain(forName: name) }
+        let rig = TwoTabs(defaults: UserDefaults(suiteName: name)!, backoffA: backoffA)
+        addTeardownBlock { [controller = rig.controller] in controller.window?.orderOut(nil) }
+        return rig
+    }
+
+    private func pause(_ seconds: Double) async throws {
+        try await Task.sleep(for: .milliseconds(Int(seconds * 1000)))
+    }
+
+    private func waitUntil(_ timeout: Double = 3, _ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline { try await pause(0.02) }
+    }
+
+    /// 窗口、显示着的 B、共用的日志和替身的记录都和 before 一样。
+    private func assertUntouched(_ rig: TwoTabs, _ before: TwoTabs.Snapshot, _ step: String,
+                                 file: StaticString = #filePath, line: UInt = #line) {
+        let now = rig.snapshot()
+        XCTAssertEqual(now.window, before.window, "\(step)：窗口", file: file, line: line)
+        XCTAssertEqual(now.displayed, before.displayed, "\(step)：显示着的 B", file: file, line: line)
+        XCTAssertEqual(now.lines, before.lines, "\(step)：窗口的日志", file: file, line: line)
+        XCTAssertEqual(now.calls, before.calls, "\(step)：隐藏、聚焦、记下地址、读媒体状态", file: file, line: line)
+    }
+
+    // MARK: - 两个标签页
+
+    func testTheSelectedTabIsTheDisplayedOneAndTheAddedTabIsNot() {
+        let rig = makeRig()
+        XCTAssertEqual(rig.tabs.list.tabs, [rig.b.id, rig.a.id])
+        XCTAssertEqual(rig.tabs.tabs.map(\.id), rig.tabs.list.tabs)
+        XCTAssertTrue(rig.tabs.selected === rig.b)
+        XCTAssertTrue(rig.controller.page === rig.tabs.selected.page, "选中的就是显示着的")
+        XCTAssertTrue(rig.controller.webView === rig.b.runtime.webView)
+        XCTAssertFalse(rig.a.page === rig.b.page)
+        XCTAssertFalse(rig.controller.webView === rig.a.runtime.webView, "A 的网页视图不在窗口里")
+        XCTAssertTrue(rig.tabs.isSelected(rig.b))
+        XCTAssertFalse(rig.tabs.isSelected(rig.a))
+    }
+
+    // MARK: 1. A 的加载事件只改 A 的页面
+
+    /// B 的启动画面还在（启动保护中，下面盖着“正在连接”提示），窗口是 key 窗口。A 加载、失败、重新加载、提交、加载完成：
+    /// 每一步 A 的页面状态都和另一个窗口里显示着的标签页（ref.b）收到同样事件时一样；B、窗口、窗口的日志、替身都不变。
+    /// 最后 B 自己加载完成：启动画面照常结束，照常聚焦 B。
+    func testABackgroundTabsLoadEventsChangeOnlyItsOwnPage() async throws {
+        let rig = makeRig()
+        let ref = makeRig()
+        ref.b.runtime.webView.underPageBackgroundColor = TwoTabs.white
+        rig.tabs.windowIsKey = { true }
+        ref.tabs.windowIsKey = { true }
+        rig.controller.beginLaunchScreen()
+        rig.b.runtime.onLoadProblemChange?(.connecting)
+        XCTAssertTrue(rig.controller.isShowingLaunchScreen)
+        XCTAssertTrue(rig.controller.isHoldingPageColor)
+        let before = rig.snapshot()
+        let a = rig.a
+        func step(_ name: String, file: StaticString = #filePath, line: UInt = #line, _ event: (TwoTabs, WebRuntime) -> Void) {
+            event(rig, a.runtime)
+            event(ref, ref.b.runtime)
+            XCTAssertEqual(Fields(a.page), Fields(ref.b.page), "\(name)：A 和显示着时一样", file: file, line: line)
+            assertUntouched(rig, before, name, file: file, line: line)
+        }
+
+        step("加载") { _, runtime in runtime.load(self.chat) }
+        step("第一次加载失败") { rig, runtime in rig.fail(runtime) }
+        XCTAssertEqual(Fields(a.page), Fields(notice: .waiting))
+        step("重新加载") { _, runtime in runtime.reload() }
+        XCTAssertEqual(Fields(a.page), Fields(notice: .connecting))
+        step("提交") { rig, runtime in rig.commit(runtime) }
+        XCTAssertEqual(Fields(a.page), Fields(committed: true, awaiting: true, generation: 1, notice: .connecting, held: true))
+        step("加载完成") { rig, runtime in rig.finish(runtime) }
+        XCTAssertEqual(Fields(a.page), Fields(committed: true, generation: 2, finished: true, finishColor: TwoTabs.rgb(TwoTabs.white)),
+                       "报的是 A 自己的网页视图的颜色")
+        XCTAssertEqual(rig.loadedA, [chat, chat])
+        XCTAssertEqual(rig.loadedB, [])
+        try await pause(0.3)
+        assertUntouched(rig, before, "A 加载完成后 0.3 秒")
+        XCTAssertTrue(rig.focused.isEmpty, "A 加载完成不聚焦")
+
+        rig.commit(rig.b.runtime)
+        rig.finish(rig.b.runtime)
+        XCTAssertFalse(rig.controller.isShowingLaunchScreen, "B 自己的加载完成照常结束启动画面")
+        XCTAssertFalse(rig.controller.isHoldingPageColor)
+        try await waitUntil { !rig.focused.isEmpty }
+        XCTAssertEqual(rig.focused.count, 1)
+        XCTAssertTrue(rig.focused.first === rig.b.adapter)
+    }
+
+    // MARK: 2. A 的地址变化
+
+    /// A 换到对话地址：不记对话地址；A 的路径和适配器代号变，B 的不变。A 第二次换页面后 0.8 秒的媒体日志读 A 的适配器。
+    /// B 换到对话地址照常记下。
+    func testABackgroundTabsURLChangeStaysWithThatTab() async throws {
+        let rig = makeRig()
+        let a = rig.a, b = rig.b
+        a.runtime.onURLChange?(URL(string: "https://chatgpt.com/c/abc?model=x")!)
+        a.runtime.onURLChange?(other)
+        XCTAssertEqual(rig.saved, [], "后台标签页的地址不记")
+        XCTAssertEqual(a.lastPath, "chatgpt.com/c/def")
+        XCTAssertEqual(a.adapter.generation, 2)
+        XCTAssertNil(b.lastPath)
+        XCTAssertEqual(b.adapter.generation, 0)
+
+        b.runtime.onURLChange?(chat)
+        XCTAssertEqual(rig.saved, [chat], "选中的标签页的地址照常记下")
+        XCTAssertEqual(b.lastPath, "chatgpt.com/c/abc")
+        XCTAssertEqual(b.adapter.generation, 1)
+        XCTAssertEqual(a.lastPath, "chatgpt.com/c/def", "B 的不改 A 的")
+        XCTAssertEqual(a.adapter.generation, 2)
+
+        let changes = [
+            "[nav] 页面变化 https://chatgpt.com/c/<id>?<redacted>",
+            "[nav] 页面变化 https://chatgpt.com/c/<id>",
+            "记下对话地址 https://chatgpt.com/c/abc",
+            "[nav] 页面变化 https://chatgpt.com/c/<id>",
+        ]
+        XCTAssertEqual(rig.lines, changes)
+        try await waitUntil { rig.lines.count > changes.count + 1 }
+        try await pause(0.3)
+        XCTAssertEqual(rig.lines, changes + ["读网页媒体状态 A", "[media] 页面变化后 0.8s WebKit 媒体状态=媒体A"],
+                       "只有 A 第二次换页面要记，读的是 A 的适配器")
+        XCTAssertEqual(rig.mediaRead.count, 1)
+        XCTAssertTrue(rig.mediaRead.first === a.adapter)
+    }
+
+    // MARK: 3. Esc
+
+    func testOnlyTheSelectedTabsEscapeHidesTheWindow() {
+        let rig = makeRig()
+        rig.a.runtime.onEscapeRequest?()
+        XCTAssertEqual(rig.hidden, [], "后台标签页的 Esc 不隐藏窗口")
+        rig.b.runtime.onEscapeRequest?()
+        XCTAssertEqual(rig.hidden, ["网页 Esc"])
+        XCTAssertEqual(rig.lines, ["隐藏窗口：网页 Esc"])
+    }
+
+    // MARK: 4. 加载完成时聚焦
+
+    /// 窗口是 key 窗口。A 加载完成：A、B 都不聚焦。B 加载完成：聚焦 B 一次；
+    /// B 的聚焦还排着时 A 加载完成，也不取代它（后台标签页不发聚焦请求）。
+    func testOnlyTheSelectedTabsLoadFocusesAndABackgroundLoadDoesNotCancelIt() async throws {
+        let rig = makeRig()
+        rig.tabs.windowIsKey = { true }
+        rig.a.runtime.onMainFrameLoaded?()
+        try await pause(0.3)
+        XCTAssertTrue(rig.focused.isEmpty)
+
+        rig.b.runtime.onMainFrameLoaded?()
+        rig.a.runtime.onMainFrameLoaded?()
+        try await waitUntil { !rig.focused.isEmpty }
+        try await pause(0.3)
+        XCTAssertEqual(rig.focused.count, 1)
+        XCTAssertTrue(rig.focused.first === rig.b.adapter)
+        XCTAssertEqual(rig.lines.filter { $0.hasPrefix("聚焦输入框") }, ["聚焦输入框 B"])
+    }
+
+    // MARK: 5. 聚焦请求的代号
+
+    /// 更新的请求取代排着的：B 连着请求两次（第二次走窗口级的 focusInputSoon()，取选中的 B），只聚焦一次。
+    func testANewerFocusRequestSupersedesAPendingOne() async throws {
+        let rig = makeRig()
+        rig.tabs.focusInputSoon(for: rig.b)
+        rig.tabs.focusInputSoon()
+        try await waitUntil { !rig.focused.isEmpty }
+        try await pause(0.3)
+        XCTAssertEqual(rig.focused.count, 1)
+        XCTAssertTrue(rig.focused.first === rig.b.adapter)
+    }
+
+    /// 选中 A → B → A。A 先请求聚焦，B 选中时 B 又请求（更新的请求），再选回 A：A 先前那次到点时什么都不做
+    /// （A 又是选中的，但它已被取代）；B 那次到点时 B 不是选中的，也不做。A 不选中时的普通事件照常改 A 自己的状态。
+    /// 之后 A 新的请求照常聚焦 A。
+    func testAFocusRequestSupersededWhileItsTabWasAwayStaysDead() async throws {
+        let rig = makeRig()
+        let a = rig.a, b = rig.b
+        rig.tabs.selectForTesting(a)
+        XCTAssertTrue(rig.controller.page === rig.tabs.selected.page)
+        rig.tabs.focusInputSoon(for: a)
+        rig.tabs.selectForTesting(b)
+        XCTAssertTrue(rig.controller.page === rig.tabs.selected.page)
+        rig.tabs.focusInputSoon(for: b)
+        a.runtime.onURLChange?(chat)
+        XCTAssertEqual(a.lastPath, "chatgpt.com/c/abc", "A 不选中时照常改 A 自己的状态")
+        XCTAssertEqual(a.adapter.generation, 1)
+        XCTAssertEqual(rig.saved, [])
+        rig.tabs.selectForTesting(a)
+        XCTAssertTrue(rig.controller.page === rig.tabs.selected.page)
+        try await pause(0.3)
+        XCTAssertTrue(rig.focused.isEmpty, "A 先前的请求已被取代，B 的请求到点时 B 不是选中的")
+
+        rig.tabs.focusInputSoon(for: a)
+        try await waitUntil { !rig.focused.isEmpty }
+        try await pause(0.2)
+        XCTAssertEqual(rig.focused.count, 1)
+        XCTAssertTrue(rig.focused.first === a.adapter, "A 新的请求照常聚焦 A")
+    }
+
+    /// B 请求聚焦后、到点之前选中了 A（没有新的请求）：到点时 B 不是选中的，不聚焦。
+    func testAPendingFocusForATabNoLongerSelectedDoesNothing() async throws {
+        let rig = makeRig()
+        rig.tabs.focusInputSoon(for: rig.b)
+        rig.tabs.selectForTesting(rig.a)
+        XCTAssertTrue(rig.controller.page === rig.tabs.selected.page)
+        try await pause(0.3)
+        XCTAssertTrue(rig.focused.isEmpty)
+    }
+
+    // MARK: 6. A 失败和重试
+
+    /// A 第一次加载失败、到时自动重试、再手动重新加载：加载都只到 A 的运行时，B 一次都没有；窗口的提示、日志不动。
+    func testABackgroundTabsFailureAndRetryLoadOnlyThatTab() async throws {
+        let rig = makeRig(backoffA: [0.1, 60])
+        let a = rig.a
+        let before = rig.snapshot()
+        a.runtime.load(chat)
+        rig.fail(a.runtime)
+        XCTAssertEqual(a.page.notice, .waiting)
+        try await waitUntil { rig.loadedA.count == 2 }
+        XCTAssertEqual(rig.loadedA, [chat, chat], "自动重试加载 A")
+        XCTAssertEqual(a.page.notice, .connecting)
+        rig.fail(a.runtime)
+        a.runtime.reload()
+        XCTAssertEqual(rig.loadedA, [chat, chat, chat], "手动重新加载 A")
+        XCTAssertEqual(rig.loadedB, [])
+        assertUntouched(rig, before, "A 失败和重试")
+        XCTAssertNil(rig.controller.shownLoadProblem)
+        XCTAssertTrue(rig.diagnosticsA.entries.contains { $0.message.contains("自动重试（定时）第 1 次") })
+    }
+
+    // MARK: 7. 提示里的“重新加载”
+
+    /// A 在 B 之后接线。按提示里的“重新加载”：重新加载的是按下时选中的 B，不是最后接线的 A。选中 A 后再按，就是 A。
+    func testTheNoticesReloadGoesToTheSelectedTabNotTheLastWiredOne() {
+        let rig = makeRig()
+        rig.b.runtime.load(chat)
+        rig.a.runtime.load(other)
+        rig.noticeCover.rootView.model.onReload()
+        XCTAssertEqual(rig.loadedB, [chat, chat])
+        XCTAssertEqual(rig.loadedA, [other])
+
+        rig.tabs.selectForTesting(rig.a)
+        XCTAssertTrue(rig.controller.page === rig.tabs.selected.page)
+        rig.noticeCover.rootView.model.onReload()
+        XCTAssertEqual(rig.loadedA, [other, other], "按下时读选中的")
+        XCTAssertEqual(rig.loadedB, [chat, chat])
+    }
+
+    // MARK: 8. 交错的事件
+
+    /// A、B 的事件交错，每一步之后两个页面逐项核对，窗口的提示一直照 B 的。
+    func testInterleavedEventsOfTwoTabsKeepEachPageApart() {
+        let rig = makeRig()
+        let a = rig.a, b = rig.b
+        var ea = Fields(), eb = Fields()
+        func check(_ step: String, file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertEqual(Fields(a.page), ea, "\(step)：A", file: file, line: line)
+            XCTAssertEqual(Fields(b.page), eb, "\(step)：B", file: file, line: line)
+            XCTAssertEqual(rig.controller.shownLoadProblem, eb.notice == .hidden ? nil : eb.notice, "\(step)：窗口的提示照 B",
+                           file: file, line: line)
+            XCTAssertEqual(rig.noticeCover.rootView.model.status, eb.notice, "\(step)：提示那层照 B", file: file, line: line)
+        }
+
+        b.runtime.load(chat)
+        a.runtime.load(other)
+        check("都开始加载")
+        rig.fail(a.runtime, other)
+        ea.notice = .waiting
+        check("A 失败")
+        rig.fail(b.runtime)
+        eb.notice = .waiting
+        check("B 失败")
+        a.runtime.reload()
+        ea.notice = .connecting
+        check("A 重新加载")
+        rig.commit(b.runtime)
+        eb.committed = true; eb.awaiting = true; eb.generation = 1; eb.held = true
+        check("B 提交：B 的提示留着")
+        rig.commit(a.runtime)
+        ea.committed = true; ea.awaiting = true; ea.generation = 1; ea.held = true
+        check("A 提交：A 的提示留着")
+        rig.finish(a.runtime)
+        ea.awaiting = false; ea.generation = 2; ea.held = false; ea.notice = .hidden; ea.finished = true
+        ea.finishColor = TwoTabs.rgb(TwoTabs.white)
+        check("A 加载完成")
+        XCTAssertNil(rig.controller.loadProblemFadeView, "A 的提示收起不淡出")
+        rig.finish(b.runtime)
+        eb.awaiting = false; eb.generation = 2; eb.held = false; eb.notice = .hidden; eb.finished = true
+        eb.finishColor = TwoTabs.rgb(TwoTabs.dark)
+        check("B 加载完成")
+        XCTAssertEqual(rig.controller.loadProblemFadeView?.rootView.model.status, .waiting, "B 的提示淡出")
+        rig.commit(a.runtime)
+        ea.awaiting = true; ea.generation = 3
+        check("A 又提交")
+        rig.fail(b.runtime)
+        check("B 有页面时失败：提示不变")
+        XCTAssertEqual(rig.loadedA, [other, other])
+        XCTAssertEqual(rig.loadedB, [chat])
+    }
+
+    // MARK: 9. 标签页拿掉、释放之后
+
+    /// A 排着聚焦和 0.8 秒的媒体日志时从这组里拿掉（还没释放）：到点都不做。
+    func testPendingWorkOfARemovedTabDoesNothing() async throws {
+        let rig = makeRig()
+        rig.tabs.windowIsKey = { true }
+        let a = rig.a, b = rig.b
+        rig.tabs.selectForTesting(a)
+        rig.tabs.focusInputSoon(for: a)
+        a.runtime.onURLChange?(chat)
+        a.runtime.onURLChange?(other)
+        rig.tabs.selectForTesting(b)
+        rig.tabs.removeForTesting(a)
+        XCTAssertFalse(rig.tabs.holds(a))
+        XCTAssertEqual(rig.tabs.list.tabs, [b.id])
+        XCTAssertTrue(rig.tabs.selected === b)
+        XCTAssertTrue(rig.controller.page === b.page)
+        try await pause(1.1)
+        XCTAssertTrue(rig.focused.isEmpty)
+        XCTAssertTrue(rig.mediaRead.isEmpty, "拿掉的标签页不再记媒体状态")
+        XCTAssertFalse(rig.lines.contains { $0.hasPrefix("[media]") })
+    }
+
+    /// A 排着聚焦和媒体日志时拿掉并释放：排着的任务不持有它，到点什么都不做、不崩溃。
+    /// A 的运行时还在（WebKit 可能晚到的回调）：它的回调也什么都不做，只有页面状态交给窗口（窗口不显示它，窗口不变）。
+    func testPendingWorkOfAReleasedTabDoesNothing() async throws {
+        let rig = makeRig()
+        rig.tabs.windowIsKey = { true }
+        weak var released: ChatTab?
+        do {
+            let a = rig.a
+            released = a
+            rig.tabs.selectForTesting(a)
+            rig.tabs.focusInputSoon(for: a)
+            a.runtime.onURLChange?(chat)
+            a.runtime.onURLChange?(other)
+            rig.tabs.selectForTesting(rig.b)
+            rig.tabs.removeForTesting(a)
+        }
+        XCTAssertNil(released, "排着的任务和运行时的回调都不持有标签页")
+        let before = rig.snapshot()
+        rig.runtimeA.onURLChange?(chat)
+        rig.runtimeA.onEscapeRequest?()
+        rig.runtimeA.onMainFrameLoaded?()
+        rig.runtimeA.onLoadProblemChange?(.waiting)
+        rig.runtimeA.onMainFrameCommitted?()
+        rig.runtimeA.onLoadFailed?()
+        try await pause(1.1)
+        assertUntouched(rig, before, "A 释放后")
+        XCTAssertTrue(rig.focused.isEmpty)
+        XCTAssertTrue(rig.mediaRead.isEmpty)
+        XCTAssertTrue(rig.hidden.isEmpty)
+    }
+}
+
+/// 一个页面的全部状态，逐项比较。
+private struct Fields: Equatable, CustomStringConvertible {
+    var committed = false
+    var awaiting = false
+    var generation = 0
+    var notice: LoadRecovery.Status = .hidden
+    var held = false
+    var holds = false
+    var colorBefore = "nil"
+    var finished = false
+    var finishColor = "nil"
+
+    init(committed: Bool = false, awaiting: Bool = false, generation: Int = 0, notice: LoadRecovery.Status = .hidden,
+         held: Bool = false, holds: Bool = false, colorBefore: String = "nil", finished: Bool = false, finishColor: String = "nil") {
+        self.committed = committed
+        self.awaiting = awaiting
+        self.generation = generation
+        self.notice = notice
+        self.held = held
+        self.holds = holds
+        self.colorBefore = colorBefore
+        self.finished = finished
+        self.finishColor = finishColor
+    }
+
+    @MainActor init(_ p: PageLoadState) {
+        self.init(committed: p.hasCommittedPage, awaiting: p.awaitingFinish, generation: p.commitGeneration, notice: p.notice,
+                  held: p.noticeAwaitsLoad, holds: p.holdsPageColor, colorBefore: TwoTabs.rgb(p.colorBeforeFirstLoad),
+                  finished: p.hasFinishedFirstLoad, finishColor: TwoTabs.rgb(p.colorAtLastFinish))
+    }
+
+    var description: String {
+        "提交=\(committed) 等加载完成=\(awaiting) 代号=\(generation) 提示=\(notice) 留着=\(held) 启动保护=\(holds) "
+            + "加载完成前的颜色=\(colorBefore) 第一次加载已完成=\(finished) 加载完成时的颜色=\(finishColor)"
+    }
+}
+
+/// 两个标签页、一个窗口和接线。B 是启动时的那个（像 AppDelegate 一样建：列表、标签页、窗口、ChatTabs、wire），
+/// A 之后由 ChatTabs.add 加进来（在 B 之后接线）。AppDelegate 交给 ChatTabs 的几样换成记录，和共用的日志一起按顺序记在 timeline 里。
+/// 这里只弱引用 A：A 由 ChatTabs 持有，拿掉之后能释放。A 的运行时和适配器另外留着（runtimeA），用来送晚到的回调。
+@MainActor
+private final class TwoTabs {
+    static let dark = NSColor(srgbRed: 0x0E / 255.0, green: 0x0E / 255.0, blue: 0x0E / 255.0, alpha: 1)
+    static let white = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
+    static let focusResult = "TabEventOwnershipTests"
+
+    let settings: AppSettings
+    /// 窗口、ChatTabs 和 B 的运行时写的日志。
+    let diagnostics = Diagnostics()
+    /// A 的运行时和适配器自己写的日志。
+    let diagnosticsA = Diagnostics()
+    let appearance: PageAppearance
+    let b: ChatTab
+    let runtimeA: WebRuntime
+    let adapterA: ChatGPTAdapter
+    private weak var addedA: ChatTab?
+    let controller: ChatWindowController
+    private(set) var tabs: ChatTabs!
+    /// 共用的日志（“[类别] 内容”）和替身的调用，按发生的顺序。
+    private var timeline: [String] = []
+    private(set) var loadedA: [URL] = []
+    private(set) var loadedB: [URL] = []
+    private(set) var hidden: [String] = []
+    private(set) var focused: [ChatGPTAdapter] = []
+    private(set) var saved: [URL] = []
+    private(set) var mediaRead: [ChatGPTAdapter] = []
+    private var watch: AnyCancellable?
+
+    init(defaults: UserDefaults, backoffA: [TimeInterval]) {
+        settings = AppSettings(defaults: defaults)
+        appearance = PageAppearance(defaults: defaults)
+        let runtimeB = WebRuntime(diagnostics: diagnostics, settings: settings, recovery: LoadRecovery(backoff: [60]),
+                                  watchesNetwork: false)
+        // B 报深色、A 报白色：看得出加载完成时记的是哪个网页视图的颜色。窗口建好之前设，窗口不会看到变化。
+        runtimeB.webView.underPageBackgroundColor = Self.dark
+        let adapterB = ChatGPTAdapter(webView: runtimeB.webView, diagnostics: diagnostics, settings: settings)
+        let list = TabList()
+        b = ChatTab(id: list.selected, runtime: runtimeB, adapter: adapterB)
+        controller = ChatWindowController(webView: runtimeB.webView, toolbar: EmptyView(), diagnostics: diagnostics,
+                                          appearance: appearance, page: b.page)
+        // 解除启动保护后等颜色变化的时限放长：它到点写的日志不在这些测试的时间线里。
+        controller.pageColorSettleLimit = 60
+        runtimeA = WebRuntime(diagnostics: diagnosticsA, settings: settings, recovery: LoadRecovery(backoff: backoffA),
+                              watchesNetwork: false)
+        runtimeA.webView.underPageBackgroundColor = Self.white
+        adapterA = ChatGPTAdapter(webView: runtimeA.webView, diagnostics: diagnosticsA, settings: settings)
+        runtimeB.loadRequest = { [weak self] request in self?.loadedB.append(request.url!) }
+        runtimeA.loadRequest = { [weak self] request in self?.loadedA.append(request.url!) }
+        tabs = ChatTabs(list: list, tab: b, windowController: controller, diagnostics: diagnostics,
+                        hideWindow: { [weak self] reason in
+                            self?.hidden.append(reason)
+                            self?.timeline.append("隐藏窗口：\(reason)")
+                        },
+                        focusInput: { [weak self] adapter in
+                            self?.focused.append(adapter)
+                            self?.timeline.append("聚焦输入框 \(self?.name(adapter) ?? "?")")
+                            return Self.focusResult
+                        },
+                        saveLastConversation: { [weak self] url in
+                            self?.saved.append(url)
+                            self?.timeline.append("记下对话地址 \(url.absoluteString)")
+                        },
+                        mediaState: { [weak self] adapter in
+                            self?.mediaRead.append(adapter)
+                            let name = self?.name(adapter) ?? "?"
+                            self?.timeline.append("读网页媒体状态 \(name)")
+                            return "媒体\(name)"
+                        })
+        watch = diagnostics.$entries.dropFirst().sink { [weak self] entries in
+            guard let self, let entry = entries.last, !LiveInputLogLines.excludes(entry) else { return }
+            self.timeline.append("[\(entry.category)] \(entry.message)")
+        }
+        tabs.wire(b)
+        addedA = tabs.add(runtime: runtimeA, adapter: adapterA)
+    }
+
+    /// 加进来的 A。拿掉并释放之后不能再用。
+    var a: ChatTab { addedA! }
+
+    private func name(_ adapter: ChatGPTAdapter) -> String {
+        adapter === b.adapter ? "B" : adapter === adapterA ? "A" : "?"
+    }
+
+    // MARK: 运行时的导航代理，和 LoadRecoveryWebTests 一样直接调
+
+    /// 加载 url 失败（-1009）。
+    func fail(_ runtime: WebRuntime, _ url: URL = URL(string: "https://chatgpt.com/c/abc")!) {
+        let error = NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet,
+                            userInfo: [NSURLErrorFailingURLErrorKey: url])
+        runtime.webView(runtime.webView, didFailProvisionalNavigation: nil, withError: error)
+    }
+
+    func commit(_ runtime: WebRuntime) {
+        runtime.webView(runtime.webView, didCommit: nil)
+    }
+
+    func finish(_ runtime: WebRuntime) {
+        runtime.webView(runtime.webView, didFinish: nil)
+    }
+
+    // MARK: 看得见的
+
+    /// 时间线，启动画面结束的毫秒数换成“…”。去掉 B 的运行时加载完成后自己异步写的 [esc]、[render]，它们不归接线管。
+    var lines: [String] {
+        timeline.filter { !$0.hasPrefix("[esc]") && !$0.hasPrefix("[render]") }
+            .map { $0.replacingOccurrences(of: #"（\d+ms）"#, with: "（…ms）", options: .regularExpression) }
+    }
+
+    /// 提示那一层：内容视图里第一个 LoadProblemView（初始化时加的；淡出那层加在它上面，排在后面）。
+    var noticeCover: NSHostingView<LoadProblemView> {
+        controller.window!.contentView!.subviews.compactMap { $0 as? NSHostingView<LoadProblemView> }.first!
+    }
+
+    /// 窗口上看得见的：启动画面和它淡出那层、启动保护、提示（状态、那一层、内容、淡出那层）、颜色，和窗口认作显示着的页面。
+    var window: String {
+        let cover = noticeCover
+        return "启动画面=\(controller.isShowingLaunchScreen) 启动画面淡出=\(Self.identity(controller.launchFadeView)) "
+            + "启动保护=\(controller.isHoldingPageColor) 提示=\(controller.shownLoadProblem.map { "\($0)" } ?? "无") "
+            + "提示那层藏着=\(cover.isHidden) 内容=\(cover.rootView.model.status) "
+            + "提示淡出=\(Self.identity(controller.loadProblemFadeView)) 页面颜色=\(Self.rgb(appearance.background)) "
+            + "顶部外观=\(controller.chromeAppearance?.name.rawValue ?? "nil") 窗口底色=\(Self.rgb(controller.window?.backgroundColor)) "
+            + "显示着=\(controller.page === b.page ? "B" : "不是 B")"
+    }
+
+    struct Snapshot {
+        let window: String
+        let displayed: Fields
+        let lines: [String]
+        let calls: String
+    }
+
+    func snapshot() -> Snapshot {
+        Snapshot(window: window, displayed: Fields(b.page), lines: lines,
+                 calls: "隐藏=\(hidden) 聚焦=\(focused.map(name)) 记下=\(saved) 读媒体=\(mediaRead.map(name))")
+    }
+
+    static func identity(_ view: NSView?) -> String {
+        view.map { "\(ObjectIdentifier($0))" } ?? "无"
+    }
+
+    /// sRGB 分量，三位小数；没有颜色时写 nil。
+    static func rgb(_ color: NSColor?) -> String {
+        guard let color else { return "nil" }
+        guard let c = color.usingColorSpace(.sRGB) else { return color.description }
+        return String(format: "(%.3f, %.3f, %.3f, a %.2f)", c.redComponent, c.greenComponent, c.blueComponent, c.alphaComponent)
+    }
+}

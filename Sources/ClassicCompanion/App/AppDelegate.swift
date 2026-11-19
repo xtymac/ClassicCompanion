@@ -19,11 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let settings = AppSettings()
     private let languages = LanguageController.shared
     private let diagnostics = Diagnostics()
-    /// 标签页列表。现在只有启动时的那一个；它的标识从这里来（TabID 只能由 TabList 发放）。
-    private var tabList = TabList()
     /// 现在唯一的聊天标签页：网页运行时、适配器、页面加载状态，和只属于这一页的 lastPath、focusTask。见 ChatTab。
+    /// 它也在 chatTabs 里，是那里选中的标签页。
     private var tab: ChatTab!
-    /// 这个标签页的运行时回调怎么接到窗口上，和换页面、聚焦输入框。见 ChatTabs。
+    /// 标签页（顺序、选中项和标识的列表 TabList 也在这里）、它们的运行时回调怎么接到窗口上，和换页面、聚焦输入框。见 ChatTabs。
     private var chatTabs: ChatTabs!
     private var network: NetworkStatus!
     private let media = WebMediaMonitor()
@@ -94,6 +93,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let runtime = WebRuntime(diagnostics: diagnostics, settings: settings, watchesNetwork: false)
         network.add(runtime)
         let adapter = ChatGPTAdapter(webView: runtime.webView, diagnostics: diagnostics, settings: settings)
+        // 标签页列表开始时只有启动时的那一个；它的标识从这里来（TabID 只能由 TabList 发放）。列表随后交给 chatTabs。
+        let tabList = TabList()
         tab = ChatTab(id: tabList.selected, runtime: runtime, adapter: adapter)
         // 系统 TTS（SpeechController）已退出正式路径：1.2 版要求使用官方 Read Aloud，不实例化、不回退。
 
@@ -130,9 +131,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             self?.tab.runtime.windowShown(kind)
         }
 
-        // 网页运行时的回调（地址变化、Esc、加载完成、加载失败、提示变化、提交）和提示里的“重新加载”接到窗口上，
-        // 还是在这里、还是这个顺序，内容见 ChatTabs.wire(_:)。
-        chatTabs = ChatTabs(tab: tab, windowController: windowController, diagnostics: diagnostics,
+        // 提示里的“重新加载”和网页运行时的回调（地址变化、Esc、加载完成、加载失败、提示变化、提交）接到窗口上，
+        // 还是在这里，内容见 ChatTabs.init 和 ChatTabs.wire(_:)。
+        chatTabs = ChatTabs(list: tabList, tab: tab, windowController: windowController, diagnostics: diagnostics,
                             hideWindow: { [weak self] reason in self?.windowController.hide(reason: reason) },
                             focusInput: { adapter in await adapter.focusInput() },
                             saveLastConversation: { [weak self] url in self?.settings.lastConversationURL = url },
