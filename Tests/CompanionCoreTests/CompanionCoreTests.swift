@@ -36,6 +36,29 @@ import Testing
         #expect(NavigationPolicy.classify(nil) == .blocked)
     }
 
+    /// 顶部返回箭头用：首页、对话和 GPT 是聊天页面，主站的其他路径、认证页面和其他网站不是。
+    @Test func chatPages() {
+        for url in ["https://chatgpt.com/", "https://chatgpt.com", "https://chatgpt.com/?model=gpt-5",
+                    "https://chatgpt.com/#settings/General", "https://chatgpt.com/?temporary-chat=true",
+                    "https://chatgpt.com/c/abc-123", "https://chatgpt.com/c/abc-123?x=1#y",
+                    "https://chatgpt.com/g/g-abc", "https://chatgpt.com/g/g-abc/c/123", "https://CHATGPT.com/c/1",
+                    "https://chatgpt.com/g/g-p-123-project/project"] {
+            #expect(NavigationPolicy.isChatPage(URL(string: url)), "\(url)")
+        }
+    }
+
+    @Test func notChatPages() {
+        for url in ["https://chatgpt.com/pricing", "https://chatgpt.com/features/voice", "https://chatgpt.com/auth/login",
+                    "https://chatgpt.com/gpts", "https://chatgpt.com/share/abc", "https://chatgpt.com/codex",
+                    "https://chatgpt.com/cat", "https://chatgpt.com/library",
+                    "https://auth.openai.com/log-in", "https://openai.com/chatgpt/pricing/",
+                    "https://accounts.google.com/o/oauth2", "https://cdn.chatgpt.com/c/1", "https://chatgpt.com.evil.io/",
+                    "http://chatgpt.com/", "https://example.com/c/1", "about:blank", "data:text/html,x"] {
+            #expect(!NavigationPolicy.isChatPage(URL(string: url)), "\(url)")
+        }
+        #expect(!NavigationPolicy.isChatPage(nil))
+    }
+
     @Test func restorable() {
         let u = NavigationPolicy.restorableConversationURL(URL(string: "https://chatgpt.com/c/123?model=x#y"))
         #expect(u?.absoluteString == "https://chatgpt.com/c/123")
