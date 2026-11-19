@@ -6,6 +6,49 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Classic Companion</title>
         <item>
+            <title>0.1.0-beta.4</title>
+            <pubDate>Fri, 20 Nov 2026 00:17:42 +0900</pubDate>
+            <sparkle:channel>beta</sparkle:channel>
+            <sparkle:version>20261119.2352</sparkle:version>
+            <sparkle:shortVersionString>0.1.0-beta.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description><![CDATA[<section lang="en">
+<h3>What’s new</h3>
+<ul>
+<li>The new graphite-gray app icon has a small lightning bolt on its chest. Look for it in the Dock or when switching apps with ⌘Tab.</li>
+<li>The top of the window now shows a lightning bolt and “Classic Companion” next to the ✕ button, so the window is easier to tell apart from other chat apps. You can still drag or double-click this area.</li>
+</ul>
+<p>Nothing else changes in how the app works. See the Beta Notes for known issues.</p>
+</section>
+<section lang="zh-Hans">
+<h3>新功能</h3>
+<ul>
+<li>新的应用图标：石墨灰的团子加一个小闪电，在 Dock 和 ⌘Tab 里更容易认出来。</li>
+<li>窗口顶部的 ✕ 按钮旁边现在显示闪电和“Classic Companion”，更容易和别的聊天应用的窗口区分。在标识上仍然可以拖动窗口或双击。</li>
+</ul>
+<p>应用的其他用法没有变化。已知问题见试用版说明。</p>
+</section>
+<section lang="zh-Hant">
+<h3>新功能</h3>
+<ul>
+<li>新的 App 圖像是胸前帶著小閃電的石墨灰糰子。在 Dock 裡或按 ⌘Tab 切換 App 時，都更容易認出它。</li>
+<li>視窗上方的 ✕ 按鈕旁新增了閃電圖像和「Classic Companion」字樣，方便辨認視窗。在這個區域一樣可以拖移視窗或按兩下。</li>
+</ul>
+<p>App 的其他用法沒有變化。已知問題請見試用版說明。</p>
+</section>
+<section lang="ja">
+<h3>新機能</h3>
+<ul>
+<li>アプリアイコンが新しくなりました。胸に小さな稲妻をあしらったグラファイトグレーのキャラクターが、Dock や ⌘Tab でアプリを切り替えるときの目印です。</li>
+<li>ウインドウ上部の ✕ ボタンの横に稲妻マークと「Classic Companion」の名前が入り、ほかのチャットアプリと見分けやすくなりました。この部分でも、これまでどおりドラッグやダブルクリックができます。</li>
+</ul>
+<p>そのほかの使い方に変更はありません。既知の問題は「ベータ版の説明」を参照してください。</p>
+</section>
+]]></description>
+            <enclosure url="https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.4/ClassicCompanion-0.1.0-beta.4-20261119.2352-arm64.zip" length="1529986" type="application/octet-stream" sparkle:edSignature="D3rAz/U8ximLlxFlIFUx9ZfE+60QowLXHlNwMmanWs5yh6z4Z/9ip/saxvambHoTaubuVL9SXPHHQ6tk44A5CA=="/>
+        </item>
+        <item>
             <title>0.1.0-beta.3</title>
             <pubDate>Tue, 17 Nov 2026 20:27:58 +0900</pubDate>
             <sparkle:channel>beta</sparkle:channel>
@@ -114,6 +157,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: 8hIn9Yloaw1ENO3BAV4g2DYH7o+GuoUebMicUExV0UqUscLxqiFGYnEiTS7wkY+uH/HUib6xFmfEE1F+iPksDA==
-length: 10601
+edSignature: ZFARWIDe+T5gGhKgzZRqmd2a1VWCDOks6WzlbxcHe7WvHchpiFM3LYibwZpqTu13SNhObZh3ft9A3y0LcHZ3Aw==
+length: 13568
 -->
