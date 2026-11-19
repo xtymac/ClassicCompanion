@@ -98,7 +98,7 @@ final class PageStateOwnershipTests: XCTestCase {
         controller.window!.contentView!.subviews.compactMap { $0 as? NSHostingView<LoadProblemView> }.first!
     }
 
-    /// 窗口上看得见的一切，加上窗口的日志（类别和内容，按顺序）。
+    /// 窗口上看得见的一切，加上窗口的日志（类别和内容，按顺序；不算跟着真实鼠标、键盘、屏幕写的行，见 LiveInputLogLines）。
     private func windowState() -> [String] {
         let cover = noticeCover
         return [
@@ -112,7 +112,7 @@ final class PageStateOwnershipTests: XCTestCase {
             "顶部外观=\(controller.chromeAppearance?.name.rawValue ?? "nil")",
             "窗口底色=\(Self.rgb(controller.window?.backgroundColor))",
             "用过的颜色=\(shown.map { Self.rgb($0) })",
-        ] + diagnostics.entries.map { "[\($0.category)] \($0.message)" }
+        ] + LiveInputLogLines.compared(diagnostics.entries).map { "[\($0.category)] \($0.message)" }
     }
 
     /// 窗口和显示着的页面 B 都和之前一样。
@@ -780,8 +780,9 @@ final class PageStateOwnershipTests: XCTestCase {
         }
 
         /// 日志的类别和内容，按顺序。启动画面结束那行最后的耗时每次不一样，换成同一个记号。
+        /// 不算跟着真实鼠标、键盘、屏幕写的行（见 LiveInputLogLines）：两个窗口建立的时刻不同，用户按没按着鼠标也可能不同。
         var lines: [String] {
-            diagnostics.entries.map {
+            LiveInputLogLines.compared(diagnostics.entries).map {
                 "[\($0.category)] " + $0.message.replacingOccurrences(of: #"（\d+ms）$"#, with: "（…ms）", options: .regularExpression)
             }
         }
