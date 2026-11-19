@@ -3,7 +3,8 @@ import CompanionCore
 
 /// 一个聊天标签页自己的东西：网页运行时、适配器、页面加载状态，以及原来放在 AppDelegate 上、只属于这一页的两样：
 /// 上次的页面路径（lastPath）和排着的聚焦输入框任务（focusTask）。
-/// 这里只放东西，不做事：怎么建、什么时候改，都还在 AppDelegate 里，和放在那里时一样。
+/// 这里只放东西，不做事：在 AppDelegate 里建；lastPath 和 focusTask 由 ChatTabs 的 urlChanged、focusInputSoon 改，
+/// 和它们原来在 AppDelegate 里时一样。
 /// 现在只有一个（启动时建的那个）。标题和排好版的大小以后再加。
 @MainActor
 final class ChatTab {
