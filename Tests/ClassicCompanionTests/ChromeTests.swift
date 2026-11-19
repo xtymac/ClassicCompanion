@@ -112,6 +112,35 @@ final class ChromeTests: XCTestCase {
         XCTAssertEqual([closes, toggles, newChats], [1, 1, 1])
     }
 
+    /// 返回箭头在关闭按钮右边，只在 showsBack 时出现；点击要到箭头，不能被隐藏的标题栏吃掉，关闭按钮留在原处。
+    func testBackArrowSitsRightOfCloseAndReceivesClicks() throws {
+        let state = ToolbarState()
+        let appearance = PageAppearance(defaults: makeDefaults())
+        var closes = 0, backs = 0
+        let bar = WebBar(onClose: { closes += 1 }, onNewChat: {}, onToggleMode: {}, onDoubleClick: {},
+                         onBack: { backs += 1 }, state: state, appearance: appearance)
+        let controller = ChatWindowController(webView: WKWebView(), toolbar: bar, diagnostics: Diagnostics(), appearance: appearance)
+        defer { controller.window?.orderOut(nil) }
+        state.showsBack = true
+        controller.show(mode: .quick)
+        let window = try XCTUnwrap(controller.window)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        let height = try XCTUnwrap(window.contentView).bounds.height
+        func click(x: CGFloat) {
+            let point = NSPoint(x: x, y: height - WebBar.height / 2)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                window.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        }
+        let button = GlassCircleButton.size
+        click(x: 12 + button + 10 + button / 2)   // ‹
+        XCTAssertEqual([backs, closes], [1, 0])
+        click(x: 12 + button / 2)                 // ✕
+        XCTAssertEqual([backs, closes], [1, 1])
+    }
+
     /// 用户（1501）：“这几个按钮可读性有点差。可以稍微再增加一下它们的背景色，然后加一下 mouse hover 的 effect”。
     /// 1501 的按钮只有系统玻璃，没有底色。现在玻璃上叠一层底色；鼠标移上去时底色更实、边更明显、稍微放大。
     func testButtonsHaveAFillAndRespondToHover() {

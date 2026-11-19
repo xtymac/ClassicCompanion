@@ -2,6 +2,7 @@ import SwiftUI
 import CompanionCore
 
 /// 窗口顶部一条：左边隐藏窗口，右边新建对话和切换小窗 / 完整窗口（按钮布局参考用户给的图，2026-11-08）。
+/// 不是聊天页面、并且能后退时，隐藏按钮右边多一个返回箭头。
 /// 底色和网页一样，看起来是同一块；按钮是圆形玻璃。查找会话（⌘K）和设置（⌘,）在菜单和快捷键里。
 /// 决策 A：不显示播放状态，也不提供朗读控制；朗读只通过官方界面开始和停止。
 struct WebBar: View {
@@ -12,6 +13,8 @@ struct WebBar: View {
     let onDoubleClick: () -> Void
     /// 空白处每次按下：第几下（系统给的 clickCount）、窗口有没有被拖动。写进日志，查双击没反应。
     var onBarPress: (_ clickCount: Int, _ moved: Bool) -> Void = { _, _ in }
+    /// 关闭按钮右边的返回箭头，只在 state.showsBack 时出现。
+    var onBack: () -> Void = {}
     @ObservedObject var state: ToolbarState
     @ObservedObject var appearance: PageAppearance
     /// 关闭按钮右边的闪电。测试和预览里换成指定的图。
@@ -21,8 +24,15 @@ struct WebBar: View {
     var body: some View {
         let hide = L10n.string("bar.hideWindow"), newChat = L10n.string("menu.newChat")
         let toggle = L10n.string(state.quick ? "bar.toFull" : "bar.toQuick")
+        let back = L10n.string("menu.back")
         HStack(spacing: 10) {
             GlassCircleButton(symbol: "xmark", label: hide, help: L10n.format("format.withShortcut", hide, "⌘W"), action: onClose)
+            // 只在不是聊天页面、并且能后退时出现（例如未登录时点进的介绍页）；聊天页面上这一条和以前一样。
+            if state.showsBack {
+                GlassCircleButton(symbol: "chevron.left", label: back,
+                                  help: L10n.format("format.withShortcut", back, HistoryNavigation.shortcutName(.back)),
+                                  action: onBack)
+            }
             BarIdentity(icon: icon)
             Spacer(minLength: 0)
             GlassCircleButton(symbol: "square.and.pencil", label: newChat, help: L10n.format("format.withShortcut", newChat, "⌘N"),
@@ -279,6 +289,8 @@ final class ToolbarState: ObservableObject {
     @Published var quick = true
     /// 小窗和完整窗口切换键，工具条提示用。
     @Published var modeKeyLabel = HotKeyCombo.modeStandard.label
+    /// 关闭按钮右边的返回箭头（见 HistoryNavigation.showsBackButton）。
+    @Published var showsBack = false
 }
 
 /// 启动时网页加载完之前显示。底色用上次记下的页面颜色。图标跟随应用图标资源，换正式图标时不用改这里。

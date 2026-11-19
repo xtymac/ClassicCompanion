@@ -77,6 +77,17 @@ final class HotKeyTests: XCTestCase {
         XCTAssertEqual(rejection(capture(kVK_ANSI_Equal, .command, "=")), "⌘= 用来调整页面大小，请换一个。")
     }
 
+    /// 后退、前进和别的固定键一样在保留表里：录制时说明用途，不当成普通的“常用快捷键”。
+    /// 键名按 ASCII 布局给（JIS 键盘上 [ 在另一个键位），所以这里直接传键名。
+    func testBackAndForwardAreReservedLikeTheOtherFixedKeys() {
+        XCTAssertEqual(rejection(capture(kVK_ANSI_LeftBracket, .command, "[")), "⌘[ 用来返回上一页，请换一个。")
+        XCTAssertEqual(rejection(capture(kVK_ANSI_RightBracket, .command, "]")), "⌘] 用来前往下一页，请换一个。")
+        XCTAssertEqual(HistoryNavigation.shortcutName(.back), "⌘[")
+        XCTAssertEqual(HistoryNavigation.shortcutName(.forward), "⌘]")
+        let withOption = HotKeyCombo(keyCode: UInt32(kVK_ANSI_LeftBracket), carbonModifiers: UInt32(cmdKey | optionKey))
+        XCTAssertEqual(capture(kVK_ANSI_LeftBracket, [.option, .command], "["), .accept(withOption), "只保留纯 ⌘[ ⌘]")
+    }
+
     /// 全局快捷键会把这个组合从所有应用手里拿走。
     func testPlainCommandWithAPrintableKeyIsRejected() {
         XCTAssertEqual(rejection(capture(kVK_ANSI_C, .command, "C")), "⌘C 是常用的快捷键，请换一个。")

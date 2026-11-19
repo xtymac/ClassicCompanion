@@ -17,6 +17,8 @@
 "menu.file" = "文件";
 "menu.newChat" = "新建对话";
 "menu.toggleMode" = "切换小窗 / 完整窗口";
+"menu.back" = "后退";
+"menu.forward" = "前进";
 "menu.reload" = "重新加载";
 "menu.restartAudio" = "重启音频";
 "menu.closeWindow" = "关闭窗口";
@@ -69,6 +71,8 @@
 "purpose.newChat" = "新建对话";
 "purpose.searchChats" = "查找会话";
 "purpose.reload" = "重新加载页面";
+"purpose.goBack" = "返回上一页";
+"purpose.goForward" = "前往下一页";
 "purpose.restorePage" = "恢复页面";
 "purpose.openSettings" = "打开设置";
 "purpose.openDiagnostics" = "打开诊断";

@@ -17,6 +17,8 @@
 "menu.file" = "ファイル";
 "menu.newChat" = "新規チャット";
 "menu.toggleMode" = "クイック / フルウインドウを切り替え";
+"menu.back" = "戻る";
+"menu.forward" = "進む";
 "menu.reload" = "再読み込み";
 "menu.restartAudio" = "オーディオを再起動";
 "menu.closeWindow" = "ウインドウを閉じる";
@@ -69,6 +71,8 @@
 "purpose.newChat" = "新規チャット";
 "purpose.searchChats" = "チャットを検索";
 "purpose.reload" = "ページを再読み込み";
+"purpose.goBack" = "前のページに戻る";
+"purpose.goForward" = "次のページに進む";
 "purpose.restorePage" = "ページを復元";
 "purpose.openSettings" = "設定を開く";
 "purpose.openDiagnostics" = "診断を開く";

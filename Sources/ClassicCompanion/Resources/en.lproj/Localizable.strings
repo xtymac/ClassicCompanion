@@ -17,6 +17,8 @@
 "menu.file" = "File";
 "menu.newChat" = "New Chat";
 "menu.toggleMode" = "Toggle Quick / Full Window";
+"menu.back" = "Back";
+"menu.forward" = "Forward";
 "menu.reload" = "Reload";
 "menu.restartAudio" = "Restart Audio";
 "menu.closeWindow" = "Close Window";
@@ -69,6 +71,8 @@
 "purpose.newChat" = "start a new chat";
 "purpose.searchChats" = "search chats";
 "purpose.reload" = "reload the page";
+"purpose.goBack" = "go back a page";
+"purpose.goForward" = "go forward a page";
 "purpose.restorePage" = "restore the page";
 "purpose.openSettings" = "open Settings";
 "purpose.openDiagnostics" = "open Diagnostics";
