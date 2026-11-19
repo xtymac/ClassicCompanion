@@ -105,14 +105,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     var pageRevealLimit: TimeInterval = 1
     /// 到时限时网页还没提交，启动画面继续显示中。
     private var launchAwaitsPage = false
-    /// 主框架提交过（窗口里有页面）。
-    private var hasCommittedPage = false
-    /// 主框架已提交、还没加载完成。
-    private var awaitingFinish = false
-    /// 提示收到“可以收起”时网页刚提交、还没画出来：留到加载完成再淡出。
-    private var noticeAwaitsLoad = false
-    /// 每次提交和加载完成时加一。提交后的兜底只在代号没变时生效。
-    private var commitGeneration = 0
+    /// 页面加载到哪一步了（提交、加载完成、留着的提示、启动保护的颜色），见 PageLoadState。规则都在这个类里。
+    private(set) var page: PageLoadState
     private var launchStarted = Date()
     private var lastDragLog = Date.distantPast
     /// 窗口已最小化到 Dock。
@@ -155,15 +149,6 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private let bar: NSView
     private var backgroundObservation: NSKeyValueObservation?
     private var pendingBackground: DispatchWorkItem?
-    /// 启动保护：从启动画面出现到网页第一次加载完成，不采用 WebKit 报的页面底色。这段时间顶部一条、启动画面、
-    /// 窗口底色和“无法连接”提示保持启动时的颜色（上次记下的页面颜色，没有就跟随系统），也不保存。
-    /// 2026-11-14 冷启动复现：深色启动画面在网页提交前变浅，加载完成后才变回深色。按日志时间推算，那时报出的浅色
-    /// 还不是 ChatGPT 页面的颜色；这是推断，日志没有记下颜色数值。
-    /// 加载失败和启动画面到时限都不解除：那时窗口里可能还没有页面。之后哪一次加载完成都会解除。
-    private var holdsPageColor = false
-    /// 解除启动保护时 WebKit 报着的颜色。它在加载完成前就有了，可能还是临时颜色：先不采用，等页面颜色变化；
-    /// 到 pageColorSettleLimit 还没变，再按当前颜色采用（页面本来就是这个颜色）。
-    private var colorBeforeFirstLoad: NSColor?
     /// 进入和解除启动保护、换网页视图时加一。排着队的颜色更新只在代号没变时生效，旧回调不会把临时颜色采用或保存。
     private var pageColorGeneration = 0
     /// 解除启动保护后，加载完成前就有的颜色最多等多久。复现里真实颜色在加载完成后约 24–68 ms 报出（按日志时间推算）。
@@ -173,16 +158,18 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 正在淡出的那层（测试用）。
     var launchFadeView: NSHostingView<LaunchScreen>? { launchFade }
     /// 启动保护是否还在（测试和诊断用）。
-    var isHoldingPageColor: Bool { holdsPageColor }
+    var isHoldingPageColor: Bool { page.holdsPageColor }
     /// 顶部一条和启动画面用的外观（测试用）。
     var chromeAppearance: NSAppearance? { bar.appearance }
     /// 小窗和完整窗口切换键，跟随设置。
     var modeKey = HotKeyCombo.modeStandard
 
-    init(webView: WKWebView, toolbar: some View, diagnostics: Diagnostics, appearance: PageAppearance = PageAppearance()) {
+    init(webView: WKWebView, toolbar: some View, diagnostics: Diagnostics, appearance: PageAppearance = PageAppearance(),
+         page: PageLoadState = PageLoadState()) {
         self.webView = webView
         self.diagnostics = diagnostics
         self.appearance = appearance
+        self.page = page
         launchCover = NSHostingView(rootView: LaunchScreen(appearance: appearance))
         let problem = LoadProblemModel()
         loadProblem = problem
@@ -604,12 +591,12 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// “可以收起”在提交时就来了，那时网页还没画出来，收起会露出空白白色（2026-11-15 对照）：
     /// 网页已提交、还没加载完成时先留着（内容停在收起前的状态），加载完成时淡出；提交后 pageRevealLimit 还没加载完成就收起。
     func showLoadProblem(_ status: LoadRecovery.Status) {
-        if status == .hidden, !loadProblemCover.isHidden, awaitingFinish {
-            if !noticeAwaitsLoad { diagnostics.log("nav", "无法连接提示：网页已提交，留到加载完成") }
-            noticeAwaitsLoad = true
+        if status == .hidden, !loadProblemCover.isHidden, page.awaitingFinish {
+            if !page.noticeAwaitsLoad { diagnostics.log("nav", "无法连接提示：网页已提交，留到加载完成") }
+            page.noticeAwaitsLoad = true
             return
         }
-        noticeAwaitsLoad = false
+        page.noticeAwaitsLoad = false
         loadProblem.status = status
         loadProblemCover.isHidden = status == .hidden
     }
@@ -630,7 +617,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 到时限：网页已经提交就照原来结束；还没提交就继续显示，等加载完成、失败、提交后兜底或上限。
     private func launchScreenLimitReached() {
         guard isShowingLaunchScreen else { return }
-        guard !hasCommittedPage else { return endLaunchScreen("超过时限") }
+        guard !page.hasCommittedPage else { return endLaunchScreen("超过时限") }
         launchAwaitsPage = true
         diagnostics.log("launch", "启动画面到时限：网页还没提交，继续显示（等加载完成、失败、提交后 \(Int(pageRevealLimit * 1000))ms，"
                         + "最多到 \(Int(launchScreenCap)) 秒）")
@@ -649,18 +636,18 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 主框架提交时调用（AppDelegate.onMainFrameCommitted，在“提示可以收起”之前）。
     /// 提交后 pageRevealLimit 还没加载完成：到时限后还在的启动画面结束，留着的提示收起。
     func pageDidCommit() {
-        hasCommittedPage = true
-        awaitingFinish = true
-        commitGeneration += 1
-        let generation = commitGeneration
+        page.hasCommittedPage = true
+        page.awaitingFinish = true
+        page.commitGeneration += 1
+        let generation = page.commitGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + pageRevealLimit) { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, self.commitGeneration == generation, self.awaitingFinish else { return }
+                guard let self, self.page.commitGeneration == generation, self.page.awaitingFinish else { return }
                 let waited = "提交后 \(Int(self.pageRevealLimit * 1000))ms 还没加载完成"
                 if self.launchAwaitsPage { self.endLaunchScreen(waited) }
-                if self.noticeAwaitsLoad {
+                if self.page.noticeAwaitsLoad {
                     self.diagnostics.log("nav", "无法连接提示：\(waited)，收起")
-                    self.noticeAwaitsLoad = false
+                    self.page.noticeAwaitsLoad = false
                     self.loadProblem.status = .hidden
                     self.loadProblemCover.isHidden = true
                 }
@@ -721,8 +708,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
 
     /// 进入启动保护。已经排着队的颜色更新作废：取消，并且换代号，万一已经出队也不生效。
     private func holdPageColor() {
-        holdsPageColor = true
-        colorBeforeFirstLoad = nil
+        page.holdsPageColor = true
+        page.colorBeforeFirstLoad = nil
         pageColorGeneration += 1
         pendingBackground?.cancel()
         pendingBackground = nil
@@ -733,25 +720,25 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 解除时 WebKit 报着的颜色不马上采用：它可能还是加载完成前的临时颜色。页面颜色变了再按原来的规则采用；
     /// 一直不变就在 pageColorSettleLimit 后按它采用。
     func pageDidFinishLoading() {
-        awaitingFinish = false
-        commitGeneration += 1
-        if noticeAwaitsLoad {
-            noticeAwaitsLoad = false
+        page.awaitingFinish = false
+        page.commitGeneration += 1
+        if page.noticeAwaitsLoad {
+            page.noticeAwaitsLoad = false
             diagnostics.log("nav", "无法连接提示：加载完成，淡出")
             fadeOutLoadProblem()
         }
-        guard holdsPageColor else { return }
-        holdsPageColor = false
+        guard page.holdsPageColor else { return }
+        page.holdsPageColor = false
         pageColorGeneration += 1
         let generation = pageColorGeneration
         let current = webView.underPageBackgroundColor
-        colorBeforeFirstLoad = current
+        page.colorBeforeFirstLoad = current
         diagnostics.log("appearance", "启动保护解除：加载完成时报的是\(Self.shade(current))，等页面颜色变化再采用")
         // 这次等待属于现在这个网页视图的这次加载：中途换过网页视图时 pageColorGeneration 已经变了，到点不起作用。
         DispatchQueue.main.asyncAfter(deadline: .now() + pageColorSettleLimit) { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, self.pageColorGeneration == generation, self.colorBeforeFirstLoad != nil else { return }
-                self.colorBeforeFirstLoad = nil
+                guard let self, self.pageColorGeneration == generation, self.page.colorBeforeFirstLoad != nil else { return }
+                self.page.colorBeforeFirstLoad = nil
                 self.diagnostics.log("appearance", "加载完成后 \(Int(self.pageColorSettleLimit * 1000))ms 页面颜色没有变，按当前颜色采用")
                 self.pageBackgroundChanged()
             }
@@ -760,7 +747,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func pageBackgroundChanged() {
-        if holdsPageColor {
+        if page.holdsPageColor {
             diagnostics.log("appearance", "启动保护中：页面底色报为\(Self.shade(webView.underPageBackgroundColor))，不采用")
             return
         }
@@ -769,12 +756,12 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         // 这次更新属于报颜色的那个网页视图：换网页视图时取消并换代号，到点时不会去读换上来的网页。
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, self.pageColorGeneration == generation, !self.holdsPageColor else { return }
+                guard let self, self.pageColorGeneration == generation, !self.page.holdsPageColor else { return }
                 let color = self.webView.underPageBackgroundColor
-                if let before = self.colorBeforeFirstLoad {
+                if let before = self.page.colorBeforeFirstLoad {
                     // 还是加载完成前就有的颜色：不采用，也不保存。
                     guard !PageAppearance.sameColor(color, before) else { return }
-                    self.colorBeforeFirstLoad = nil
+                    self.page.colorBeforeFirstLoad = nil
                 }
                 let wasDark = self.appearance.isDark
                 self.appearance.update(color)
@@ -859,8 +846,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 换网页视图的前提（见 replaceWebView）：没有启动画面和启动保护、没有在等加载完成前的颜色、
     /// 不在“已提交、还没加载完成”中、没有显示或留着“无法连接”提示。
     private var pageStateIsSettled: Bool {
-        !isShowingLaunchScreen && !launchAwaitsPage && !holdsPageColor && colorBeforeFirstLoad == nil
-            && !awaitingFinish && !noticeAwaitsLoad && loadProblemCover.isHidden
+        !isShowingLaunchScreen && !launchAwaitsPage && !page.holdsPageColor && page.colorBeforeFirstLoad == nil
+            && !page.awaitingFinish && !page.noticeAwaitsLoad && loadProblemCover.isHidden
     }
 
     /// 网页视图铺满 webContainer 的四条约束。
