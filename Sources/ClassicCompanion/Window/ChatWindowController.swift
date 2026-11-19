@@ -810,8 +810,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         let generation = pageColorGeneration
         p.colorBeforeFirstLoad = reportedColor
         diagnostics.log("appearance", "启动保护解除：加载完成时报的是\(Self.shade(reportedColor))，等页面颜色变化再采用")
-        // 这次等待属于 p 和现在这个网页视图的这次加载：p 已经释放或不再显示、中途换过网页视图（pageColorGeneration 变了），
-        // 到点都不起作用。
+        // 这次颜色等待属于 p 和窗口此刻的颜色代号：到点时 p 已经释放或不再显示，或者窗口的颜色代号（pageColorGeneration）变了
+        // （显示着的页面进入或解除启动保护、换网页视图），都不起作用。
+        // 故意不跟 p 的加载代号（commitGeneration）绑在一起：加载完成后不久又提交（例如重定向）不能取消这次颜色等待。
         DispatchQueue.main.asyncAfter(deadline: .now() + pageColorSettleLimit) { [weak self, weak p] in
             MainActor.assumeIsolated {
                 guard let self, let p, p === self.page, self.pageColorGeneration == generation,

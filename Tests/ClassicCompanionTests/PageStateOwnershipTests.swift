@@ -677,6 +677,96 @@ final class PageStateOwnershipTests: XCTestCase {
         XCTAssertEqual(count("加载完成后 500ms 页面颜色没有变，按当前颜色采用"), 1)
     }
 
+    /// 换到 B 期间，窗口的颜色代号怎么变（都是真实代码里会让它变的做法）。
+    private enum Supersede: String, CaseIterable {
+        /// 显示着 B 时换成另一个网页视图，换回 A 之前再换回 A 的网页视图（以后切换标签页会这样换），每次换代号加一。
+        case swapView = "换网页视图"
+        /// 显示着的 B 开始启动画面（进入启动保护，代号加一），B 加载完成（解除启动保护，代号加一）。
+        case holdAndRelease = "B 进入、解除启动保护"
+    }
+
+    /// 窗口显示着 a：换到 B，按 how 让窗口的颜色代号变，再换回 a。都是同步做的，150ms 的颜色更新还没到点。
+    private func switchToBAndBack(from a: PageLoadState, superseding how: Supersede) {
+        controller.setDisplayedPageForTesting(b)
+        switch how {
+        case .swapView:
+            let other = WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+            other.underPageBackgroundColor = blankDark
+            controller.replaceWebView(with: other)
+            controller.replaceWebView(with: web)
+        case .holdAndRelease:
+            controller.beginLaunchScreen()
+            controller.endLaunchScreen("网页已加载", for: b)
+            controller.pageDidFinishLoading(b, reportedColor: web.underPageBackgroundColor)
+        }
+        controller.setDisplayedPageForTesting(a)
+    }
+
+    /// A 的颜色等待（加载完成后到时限按当前颜色采用）和 A 排着的 150ms 颜色更新属于排下它们时窗口的那一段颜色。
+    /// 换到 B 期间那一段被取代（窗口的颜色代号变了，做法见 Supersede），再换回 A：到点时 A 又是显示着的页面，
+    /// 但两个回调都不起作用——不采用、不保存，A 等待前记下的颜色也还记着。
+    /// 对照：那一段没被取代、只是换走又换回来时照常采用；A 换回来后自己又开始一段时前一段的等待不起作用：
+    /// 都见 testTheColourSettleWaitFollowsItsOwnPageAndGeneration。
+    func testAColourCallbackFromASupersededEpisodeStaysDeadAfterSwitchingBack() async throws {
+        for how in Supersede.allCases {
+            make()
+            controller.pageColorSettleLimit = 0.3
+            let a = PageLoadState()
+            controller.setDisplayedPageForTesting(a)
+            controller.beginLaunchScreen()
+            web.underPageBackgroundColor = white
+            controller.endLaunchScreen("网页已加载", for: a)
+            controller.pageDidFinishLoading(a, reportedColor: web.underPageBackgroundColor)
+            XCTAssertTrue(PageAppearance.sameColor(a.colorBeforeFirstLoad, white), "\(how.rawValue)：A 在等颜色变化")
+            switchToBAndBack(from: a, superseding: how)
+            XCTAssertTrue(controller.page === a)
+            // A 的等待在 0.3 秒到点；起作用的话再过 150ms 采用。
+            try await pause(0.7)
+            XCTAssertTrue(shown.isEmpty, "\(how.rawValue)：A 前一段的等待不采用")
+            XCTAssertTrue(PageAppearance.sameColor(appearance.background, savedDark), "\(how.rawValue)")
+            XCTAssertEqual(count("页面颜色没有变"), 0, "\(how.rawValue)：等待到点不做事")
+            XCTAssertTrue(PageAppearance.sameColor(a.colorBeforeFirstLoad, white), "\(how.rawValue)：A 记下的颜色没有被这次等待清掉")
+
+            make()
+            let a2 = PageLoadState()
+            controller.setDisplayedPageForTesting(a2)
+            web.underPageBackgroundColor = white
+            switchToBAndBack(from: a2, superseding: how)
+            XCTAssertTrue(controller.page === a2)
+            try await pause(0.5)
+            XCTAssertTrue(shown.isEmpty, "\(how.rawValue)：A 前一段排着的更新不采用")
+            XCTAssertTrue(PageAppearance.sameColor(appearance.background, savedDark), "\(how.rawValue)")
+            XCTAssertEqual(count("页面底色："), 0, "\(how.rawValue)")
+        }
+    }
+
+    /// 排着的 150ms 颜色更新只对排下它的页面起作用（窗口的颜色代号一直没变，只有“是不是这个页面”分得开）：
+    /// - A 报的颜色还在队里时换到 B，到点时显示着的是 B：不采用。
+    /// - 换到 B 又马上换回 A，还是那一段：照常采用。
+    func testAQueuedColourUpdateOnlyActsForThePageThatQueuedIt() async throws {
+        make()
+        var a = PageLoadState()
+        controller.setDisplayedPageForTesting(a)
+        web.underPageBackgroundColor = white
+        controller.setDisplayedPageForTesting(b)
+        try await pause(0.5)
+        XCTAssertTrue(shown.isEmpty, "到点时 A 不显示：不采用")
+        XCTAssertTrue(PageAppearance.sameColor(appearance.background, savedDark))
+        XCTAssertEqual(controller.chromeAppearance?.name, .darkAqua)
+        XCTAssertEqual(count("页面底色："), 0)
+
+        make()
+        a = PageLoadState()
+        controller.setDisplayedPageForTesting(a)
+        web.underPageBackgroundColor = white
+        controller.setDisplayedPageForTesting(b)
+        controller.setDisplayedPageForTesting(a)
+        try await waitUntil { appearance.isDark == false }
+        XCTAssertEqual(appearance.isDark, false, "换走又马上换回来，还是那一段：照常采用")
+        XCTAssertEqual(shown.count, 1)
+        XCTAssertEqual(count("页面底色：浅色"), 1)
+    }
+
     /// 启动画面的时限和上限，启动的页面是 A。
     /// - 换到 B 再换回来，还是这一次启动画面：时限、上限照常起作用。
     /// - 换到 B 时到点：A 不显示，不动启动画面。

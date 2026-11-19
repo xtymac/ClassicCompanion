@@ -239,6 +239,76 @@ final class LaunchColourTests: XCTestCase {
         XCTAssertEqual(controller.chromeAppearance?.name, .aqua)
     }
 
+    // MARK: - 又提交、又加载完成不作废颜色等待
+
+    /// 解除启动保护后在等颜色变化（到时限按当前颜色采用）。时限内同一个页面又提交（例如重定向），或者又提交、又加载完成：
+    /// 这次颜色等待不取消、不重新开始，到时限照常按当前颜色采用，只变一次。它只看页面是谁和窗口的颜色代号，不看页面的加载代号。
+    /// 又加载完成只改页面自己的加载状态（不再等加载完成、加载代号加一、记下这次报的颜色）：启动保护已经解除，
+    /// 所以不动窗口的颜色代号，也不重新记加载完成前的颜色、不重新计时——时限仍从第一次加载完成算起。
+    func testACommitAfterTheFirstFinishDoesNotCancelTheColourWait() async throws {
+        for finishesAgain in [false, true] {
+            let label = finishesAgain ? "又提交、又加载完成" : "又提交"
+            make(saved: savedDark)
+            controller.pageColorSettleLimit = 0.6
+            let page = controller.page
+            controller.beginLaunchScreen()
+            web.underPageBackgroundColor = white
+            controller.endLaunchScreen("网页已加载")
+            controller.pageDidFinishLoading()
+            let loadGeneration = page.commitGeneration
+            try await pause(0.25)
+            controller.pageDidCommit()
+            XCTAssertTrue(page.awaitingFinish)
+            if finishesAgain {
+                try await pause(0.05)
+                controller.pageDidFinishLoading()
+                XCTAssertFalse(page.awaitingFinish)
+                XCTAssertTrue(PageAppearance.sameColor(page.colorAtLastFinish, white))
+            }
+            XCTAssertGreaterThan(page.commitGeneration, loadGeneration, "\(label)：页面的加载代号变了")
+            // 等待还没到点（不然这个测试什么都没验证）：加载完成前的颜色还记着，还是第一次加载完成时的。
+            XCTAssertTrue(PageAppearance.sameColor(page.colorBeforeFirstLoad, white), "\(label)：还在等")
+            try assertStillDark("\(label)：时限之前")
+
+            try await waitUntil { appearance.isDark == false }
+            XCTAssertEqual(appearance.isDark, false, "\(label)：到时限照常按当前颜色采用")
+            XCTAssertNil(page.colorBeforeFirstLoad)
+            XCTAssertTrue(PageAppearance.sameColor(savedColor, white), "\(label)：照常保存")
+            XCTAssertEqual(shown.count, 1, "\(label)：深色到浅色只变一次")
+            let released = diagnostics.entries.filter { $0.message.hasPrefix("启动保护解除") }
+            let settled = diagnostics.entries.filter { $0.message == "加载完成后 600ms 页面颜色没有变，按当前颜色采用" }
+            XCTAssertEqual(released.count, 1, "\(label)：又加载完成不再解除启动保护")
+            XCTAssertEqual(settled.count, 1, "\(label)：等待到点一次")
+            if let start = released.first?.date, let end = settled.first?.date {
+                // 从第一次加载完成算起约 0.6 秒；从又提交（约 0.25 秒）或又加载完成（约 0.3 秒）重新计时的话至少 0.85 秒。
+                let waited = end.timeIntervalSince(start)
+                XCTAssertGreaterThanOrEqual(waited, 0.6, "\(label)：不早于时限")
+                XCTAssertLessThan(waited, 0.8, "\(label)：时限从第一次加载完成算起，不重新计时（\(waited)s）")
+            }
+        }
+    }
+
+    /// 页面报的颜色还在 150ms 的队里时同一个页面又提交，或者又提交、又加载完成：这次颜色更新照常生效，只变一次。
+    /// 它同样只看页面是谁和窗口的颜色代号，不看页面的加载代号。
+    func testACommitInsideTheQueuedColourUpdateDoesNotDropIt() async throws {
+        for finishesAgain in [false, true] {
+            let label = finishesAgain ? "又提交、又加载完成" : "又提交"
+            make(saved: savedDark, reported: blankDark)
+            let page = controller.page
+            let loadGeneration = page.commitGeneration
+            web.underPageBackgroundColor = white
+            controller.pageDidCommit()
+            if finishesAgain { controller.pageDidFinishLoading() }
+            XCTAssertGreaterThan(page.commitGeneration, loadGeneration, "\(label)：页面的加载代号变了")
+            XCTAssertTrue(shown.isEmpty, "\(label)：还在队里")
+            try await waitUntil { appearance.isDark == false }
+            XCTAssertEqual(appearance.isDark, false, "\(label)：排着队的更新照常采用")
+            XCTAssertEqual(controller.chromeAppearance?.name, .aqua)
+            XCTAssertEqual(shown.count, 1, "\(label)：只变一次")
+            XCTAssertEqual(diagnostics.entries.filter { $0.message == "页面底色：浅色" }.count, 1)
+        }
+    }
+
     // MARK: - 淡出那层
 
     /// 淡出途中顶部一条已经换成网页颜色，淡出那层的底色和文字、图标仍是启动画面结束那一刻的，两者一致。
