@@ -117,6 +117,111 @@ final class NetworkStatusTests: XCTestCase {
         XCTAssertEqual(kept.netLog, ["网络不可用"])
     }
 
+    /// 明确去掉：运行时还被引用着（页面关了但别处还拿着它；这里测试自己一直强引用着），也不再收到变化；另一个照常收到。
+    /// 被去掉的是在等重试的页面：网络恢复时它不重试，提示照旧。
+    func testRemovedRuntimeThatIsStillAliveGetsNoFurtherUpdates() {
+        let network = NetworkStatus(startsMonitor: false)
+        let removed = makeRuntime(), kept = makeRuntime()
+        failFirstLoad(removed.web)
+        failFirstLoad(kept.web)
+        network.add(removed.web)
+        network.add(kept.web)
+        network.deliver(online: false)
+        XCTAssertEqual(removed.netLog, ["网络不可用"])
+
+        network.remove(removed.web)
+        XCTAssertEqual(network.registeredCount, 1)
+        network.deliver(online: true)
+        network.deliver(online: false)
+        XCTAssertEqual(removed.netLog, ["网络不可用"], "去掉以后什么都收不到")
+        XCTAssertEqual(removed.loads.urls, [], "去掉以后网络恢复也不重试")
+        XCTAssertEqual(removed.web.loadProblem, .waiting)
+        XCTAssertEqual(kept.netLog, ["网络不可用", "网络可用", "网络不可用"])
+        XCTAssertEqual(kept.loads.urls, [chat])
+    }
+
+    /// 转发途中被去掉：这一轮里还没轮到的也不再送。前一个运行时收到“在线”就重试，重试时去掉后一个。
+    func testRuntimeRemovedDuringADeliveryDoesNotGetThatUpdate() {
+        let network = NetworkStatus(startsMonitor: false)
+        let first = makeRuntime(), second = makeRuntime()
+        failFirstLoad(first.web)
+        first.web.loadRequest = { [loads = first.loads, secondWeb = second.web] request in
+            loads.urls.append(request.url!)
+            network.remove(secondWeb)
+        }
+        network.add(first.web)
+        network.add(second.web)
+        network.deliver(online: false)
+        network.deliver(online: true)
+        XCTAssertEqual(first.loads.urls, [chat])
+        XCTAssertEqual(first.netLog, ["网络不可用", "网络可用"])
+        XCTAssertEqual(second.netLog, ["网络不可用"])
+        XCTAssertEqual(network.registeredCount, 1)
+    }
+
+    /// 边界：`remove` 只改名单，不碰运行时自己排好的重试。首次加载失败（在线）时运行时已经排了定时重试，
+    /// 去掉以后定时器照样到点、照样发加载请求。关闭页面时除了 `remove`，还要让运行时停掉自己的定时重试
+    /// （WebRuntime 现在没有这样的公开入口），否则关掉的页面还会重试。
+    func testRemovingDoesNotCancelARetryTheRuntimeHasAlreadyArmed() {
+        let network = NetworkStatus(startsMonitor: false)
+        let r = makeRuntime(backoff: [0.05])
+        network.add(r.web)
+        network.deliver(online: true)
+        failFirstLoad(r.web)
+        XCTAssertEqual(r.web.loadProblem, .waiting)
+        network.remove(r.web)
+        spin(0.3)
+        XCTAssertEqual(r.loads.urls, [chat], "排好的定时重试不归名单管：去掉后照样重试")
+        XCTAssertEqual(r.web.loadProblem, .connecting)
+    }
+
+    /// 去掉两遍、去掉没登记过的、在空名单上去掉：都什么也不做，不崩溃，别的登记不受影响。
+    func testRemovingTwiceOrRemovingAnUnregisteredRuntimeIsHarmless() {
+        let network = NetworkStatus(startsMonitor: false)
+        let stranger = makeRuntime()
+        network.remove(stranger.web)
+        XCTAssertEqual(network.registeredCount, 0)
+
+        let registered = makeRuntime()
+        network.add(registered.web)
+        network.remove(stranger.web)
+        XCTAssertEqual(network.registeredCount, 1, "去掉没登记过的：名单不变")
+        network.deliver(online: false)
+        XCTAssertEqual(registered.netLog, ["网络不可用"])
+        XCTAssertEqual(stranger.netLog, [])
+
+        network.remove(registered.web)
+        network.remove(registered.web)
+        XCTAssertEqual(network.registeredCount, 0)
+        network.deliver(online: true)
+        XCTAssertEqual(registered.netLog, ["网络不可用"])
+        XCTAssertEqual(stranger.netLog, [])
+    }
+
+    /// 去掉后再登记：按新登记处理，补发一次当前状态（期间错过的变化由这一次补上）；之后的变化照常送到，每次一遍。
+    /// 在等重试的页面靠这次补发知道网络已恢复，重试一次。
+    func testReAddingAfterRemovalReplaysTheCurrentStatusOnce() {
+        let network = NetworkStatus(startsMonitor: false)
+        let r = makeRuntime()
+        failFirstLoad(r.web)
+        network.add(r.web)
+        network.deliver(online: false)
+        network.remove(r.web)
+        network.deliver(online: true)
+        XCTAssertEqual(r.netLog, ["网络不可用"])
+        XCTAssertEqual(r.loads.urls, [])
+
+        network.add(r.web)
+        XCTAssertEqual(network.registeredCount, 1)
+        XCTAssertEqual(r.netLog, ["网络不可用", "网络可用"])
+        XCTAssertEqual(r.loads.urls, [chat], "补发的“在线”是从断网恢复：重试一次")
+        network.add(r.web)
+        XCTAssertEqual(network.registeredCount, 1)
+        XCTAssertEqual(r.loads.urls, [chat], "重复登记不再补发")
+        network.deliver(online: false)
+        XCTAssertEqual(r.netLog, ["网络不可用", "网络可用", "网络不可用"])
+    }
+
     /// 已知在线之后登记：补发一次“在线”，它自己不引起加载。
     /// 当作断网的运行时由这一次补发变成在线（只记一行）；它没有失败的加载，所以不加载。
     /// 首次加载已失败、在等定时重试的运行时：补发的“在线”不是“从断网恢复”，不提前重试，提示照旧。
