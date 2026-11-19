@@ -105,7 +105,15 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     var pageRevealLimit: TimeInterval = 1
     /// 到时限时网页还没提交，启动画面继续显示中。
     private var launchAwaitsPage = false
-    /// 页面加载到哪一步了（提交、加载完成、“无法连接”提示的状态和留着的提示、启动保护的颜色），见 PageLoadState。规则都在这个类里。
+    /// 启动画面属于哪个页面：beginLaunchScreen 时显示着的那个。只有这个页面的加载完成、加载失败和提交后兜底能结束它，
+    /// 时限和上限也只对它起作用（见 showsLaunchScreen(for:)）。不持有页面。
+    private weak var launchPage: PageLoadState?
+    /// 每次 beginLaunchScreen 加一。时限和上限只在启动画面还是排下它们的那一次时起作用。
+    private var launchGeneration = 0
+    /// 窗口里显示着的页面加载到哪一步了（提交、加载完成、“无法连接”提示的状态和留着的提示、启动保护的颜色），见 PageLoadState。
+    /// 规则都在这个类里。事件带着它属于的页面进来（pageDidCommit(_:)、pageDidFinishLoading(_:reportedColor:)、
+    /// showLoadProblem(_:for:)、endLaunchScreen(_:for:)）：先改那个页面自己的状态，只有它就是这里的 page 时才动窗口
+    /// （提示那层、淡出、启动画面、颜色、写窗口的日志）。不带页面的旧入口就是对 page 调用。
     private(set) var page: PageLoadState
     private var launchStarted = Date()
     private var lastDragLog = Date.distantPast
@@ -132,7 +140,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 只在启动时、网页加载完之前盖着，免得先露出一片空白。不是隐私遮罩，网页从不被挡住。
     private let launchCover: NSHostingView<LaunchScreen>
     /// 加载失败、窗口里没有页面时盖在网页上的“无法连接”提示。有页面时从不显示。
-    /// 这一层和它的内容（loadProblem）都只照 page.notice 改（applyNotice），别处不直接改。
+    /// 这一层和它的内容（loadProblem）都只照显示着的页面的 notice 改（applyNotice(_:)），别处不直接改。
     private let loadProblemCover: NSHostingView<LoadProblemView>
     private let loadProblem: LoadProblemModel
     /// 提示里的“重新加载”。
@@ -173,7 +181,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         self.page = page
         launchCover = NSHostingView(rootView: LaunchScreen(appearance: appearance))
         let problem = LoadProblemModel()
-        // 提示从页面的状态开始（默认 .hidden，和这里原来的初值一样），之后只经 applyNotice() 改。
+        // 提示从页面的状态开始（默认 .hidden，和这里原来的初值一样），之后只经 applyNotice(_:) 改。
         problem.status = page.notice
         loadProblem = problem
         loadProblemCover = NSHostingView(rootView: LoadProblemView(model: problem, appearance: appearance))
@@ -590,78 +598,120 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// 跟着 WebRuntime.loadProblem 变。
+    /// 跟着 WebRuntime.loadProblem 变（显示着的页面）。
+    func showLoadProblem(_ status: LoadRecovery.Status) {
+        showLoadProblem(status, for: page)
+    }
+
+    /// 页面 p 的“无法连接”状态变了。
     /// “可以收起”在提交时就来了，那时网页还没画出来，收起会露出空白白色（2026-11-15 对照）：
     /// 网页已提交、还没加载完成时先留着（内容停在收起前的状态），加载完成时淡出；提交后 pageRevealLimit 还没加载完成就收起。
-    func showLoadProblem(_ status: LoadRecovery.Status) {
-        if status == .hidden, page.notice != .hidden, page.awaitingFinish {
-            if !page.noticeAwaitsLoad { diagnostics.log("nav", "无法连接提示：网页已提交，留到加载完成") }
-            page.noticeAwaitsLoad = true
+    /// p 的状态总是照这条规则改；日志和窗口的提示只在 p 是显示着的页面时动。不显示的页面的提示状态变了，窗口上什么都不变。
+    func showLoadProblem(_ status: LoadRecovery.Status, for p: PageLoadState) {
+        if status == .hidden, p.notice != .hidden, p.awaitingFinish {
+            if p === page, !p.noticeAwaitsLoad { diagnostics.log("nav", "无法连接提示：网页已提交，留到加载完成") }
+            p.noticeAwaitsLoad = true
             return
         }
-        page.noticeAwaitsLoad = false
-        page.notice = status
-        applyNotice()
+        p.noticeAwaitsLoad = false
+        p.notice = status
+        if p === page { applyNotice(p) }
     }
 
-    /// 把页面的提示状态投到窗口的提示上：先改提示内容，再改那一层显不显示（和原来各处的顺序一样）。
-    /// 每次改 page.notice 之后都调用；只写这两样，不记日志、不碰淡出那层和别的状态。
-    private func applyNotice() {
-        loadProblem.status = page.notice
-        loadProblemCover.isHidden = page.notice == .hidden
+    /// 把页面 p 的提示状态投到窗口的提示上：先改提示内容，再改那一层显不显示（和原来各处的顺序一样）。
+    /// 只对显示着的页面调用（调用的地方先判断 p === page），每次改了它的 notice 之后都调用；
+    /// 只写这两样，不记日志、不碰淡出那层和别的状态。
+    private func applyNotice(_ p: PageLoadState) {
+        loadProblem.status = p.notice
+        loadProblemCover.isHidden = p.notice == .hidden
     }
 
+    /// 启动画面属于这时显示着的页面（launchPage）。时限和上限是窗口的，但只对这个页面、这一次启动画面起作用：
+    /// 到点时页面已经释放、或之后又开始过一次启动画面（launchGeneration 变了），都不做事。
     func beginLaunchScreen() {
+        let p = page
+        launchPage = p
+        launchGeneration += 1
+        let generation = launchGeneration
         launchCover.isHidden = false
         launchStarted = Date()
         launchAwaitsPage = false
-        holdPageColor()
-        DispatchQueue.main.asyncAfter(deadline: .now() + launchScreenLimit) { [weak self] in
-            MainActor.assumeIsolated { self?.launchScreenLimitReached() }
+        holdPageColor(p)
+        DispatchQueue.main.asyncAfter(deadline: .now() + launchScreenLimit) { [weak self, weak p] in
+            MainActor.assumeIsolated {
+                guard let self, let p, self.launchGeneration == generation else { return }
+                self.launchScreenLimitReached(for: p)
+            }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + launchScreenCap) { [weak self] in
-            MainActor.assumeIsolated { self?.endLaunchScreen("超过上限") }
+        DispatchQueue.main.asyncAfter(deadline: .now() + launchScreenCap) { [weak self, weak p] in
+            MainActor.assumeIsolated {
+                guard let self, let p, self.launchGeneration == generation else { return }
+                self.endLaunchScreen("超过上限", for: p)
+            }
         }
     }
 
-    /// 到时限：网页已经提交就照原来结束；还没提交就继续显示，等加载完成、失败、提交后兜底或上限。
-    private func launchScreenLimitReached() {
-        guard isShowingLaunchScreen else { return }
-        guard !page.hasCommittedPage else { return endLaunchScreen("超过时限") }
+    /// 启动画面显示着、属于页面 p，并且 p 是显示着的页面。结束启动画面和到时限后继续显示都先看它：
+    /// 别的页面（不是启动的那个、或者不显示）的事件和回调不动启动画面。
+    private func showsLaunchScreen(for p: PageLoadState) -> Bool {
+        isShowingLaunchScreen && launchPage === p && p === page
+    }
+
+    /// 到时限：启动的页面已经提交就照原来结束；还没提交就继续显示，等加载完成、失败、提交后兜底或上限。
+    private func launchScreenLimitReached(for p: PageLoadState) {
+        guard showsLaunchScreen(for: p) else { return }
+        guard !p.hasCommittedPage else { return endLaunchScreen("超过时限", for: p) }
         launchAwaitsPage = true
         diagnostics.log("launch", "启动画面到时限：网页还没提交，继续显示（等加载完成、失败、提交后 \(Int(pageRevealLimit * 1000))ms，"
                         + "最多到 \(Int(launchScreenCap)) 秒）")
     }
 
-    /// 网页加载完、加载失败、到时限（已提交）、提交后兜底或到上限时调用。之后不再出现。
-    /// 启动保护不在这里解除，见 pageDidFinishLoading()。
+    /// 显示着的页面加载完、加载失败时调用（AppDelegate）。
     func endLaunchScreen(_ outcome: String) {
-        guard isShowingLaunchScreen else { return }
+        endLaunchScreen(outcome, for: page)
+    }
+
+    /// 页面 p 加载完、加载失败、到时限（已提交）、提交后兜底或到上限时调用。之后不再出现。
+    /// 只在启动画面属于 p、p 也显示着时结束；别的页面调用时什么都不做。
+    /// 启动保护不在这里解除，见 pageDidFinishLoading(_:reportedColor:)。
+    func endLaunchScreen(_ outcome: String, for p: PageLoadState) {
+        guard showsLaunchScreen(for: p) else { return }
         diagnostics.log("launch", "启动画面结束：\(outcome)（\(Int(Date().timeIntervalSince(launchStarted) * 1000))ms）")
         launchAwaitsPage = false
         launchCover.isHidden = true
         fadeOutLaunchScreen()
     }
 
-    /// 主框架提交时调用（AppDelegate.onMainFrameCommitted，在“提示可以收起”之前）。
-    /// 提交后 pageRevealLimit 还没加载完成：到时限后还在的启动画面结束，留着的提示收起。
+    /// 显示着的页面的主框架提交时调用（AppDelegate.onMainFrameCommitted，在“提示可以收起”之前）。
     func pageDidCommit() {
-        page.hasCommittedPage = true
-        page.awaitingFinish = true
-        page.commitGeneration += 1
-        let generation = page.commitGeneration
-        DispatchQueue.main.asyncAfter(deadline: .now() + pageRevealLimit) { [weak self] in
+        pageDidCommit(page)
+    }
+
+    /// 页面 p 的主框架提交了。提交后 pageRevealLimit 还没加载完成：到时限后还在的启动画面结束，留着的提示收起。
+    /// 兜底属于 p 的这次提交：到点时 p 已经释放、或又提交、加载完成过（代号变了），都不做事；到点时不去看显示着的是哪个页面。
+    func pageDidCommit(_ p: PageLoadState) {
+        p.hasCommittedPage = true
+        p.awaitingFinish = true
+        p.commitGeneration += 1
+        let generation = p.commitGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + pageRevealLimit) { [weak self, weak p] in
             MainActor.assumeIsolated {
-                guard let self, self.page.commitGeneration == generation, self.page.awaitingFinish else { return }
-                let waited = "提交后 \(Int(self.pageRevealLimit * 1000))ms 还没加载完成"
-                if self.launchAwaitsPage { self.endLaunchScreen(waited) }
-                if self.page.noticeAwaitsLoad {
-                    self.diagnostics.log("nav", "无法连接提示：\(waited)，收起")
-                    self.page.noticeAwaitsLoad = false
-                    self.page.notice = .hidden
-                    self.applyNotice()
-                }
+                guard let self, let p, p.commitGeneration == generation, p.awaitingFinish else { return }
+                self.pageRevealLimitReached(for: p)
             }
+        }
+    }
+
+    /// 页面 p 提交后 pageRevealLimit 还没加载完成。启动画面只在属于 p、p 显示着时结束；
+    /// p 留着的提示总是在 p 的状态里收起，窗口的提示和日志只在 p 显示着时动。
+    private func pageRevealLimitReached(for p: PageLoadState) {
+        let waited = "提交后 \(Int(pageRevealLimit * 1000))ms 还没加载完成"
+        if launchAwaitsPage { endLaunchScreen(waited, for: p) }
+        if p.noticeAwaitsLoad {
+            if p === page { diagnostics.log("nav", "无法连接提示：\(waited)，收起") }
+            p.noticeAwaitsLoad = false
+            p.notice = .hidden
+            if p === page { applyNotice(p) }
         }
     }
 
@@ -679,11 +729,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         fadeAway(fade)
     }
 
-    /// 加载完成时收起留着的提示：和启动画面一样盖一层同样的提示淡出，内容、底色和外观固定在这一刻。
-    private func fadeOutLoadProblem() {
-        let shown = page.notice
-        page.notice = .hidden
-        applyNotice()
+    /// 加载完成时收起留着的提示：和启动画面一样盖一层同样的提示淡出，内容（收起前的状态 shown）、底色和外观固定在这一刻。
+    /// 显示着的页面的提示状态和提示那层已经收起（调用的地方先做），这里只加淡出那层。
+    private func fadeOutLoadProblem(showing shown: LoadRecovery.Status) {
         guard let container = loadProblemCover.superview else { return }
         let look = loadProblemCover.effectiveAppearance
         let frozen = LoadProblemModel()
@@ -716,62 +764,84 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// 进入启动保护。已经排着队的颜色更新作废：取消，并且换代号，万一已经出队也不生效。
-    private func holdPageColor() {
-        page.holdsPageColor = true
-        page.colorBeforeFirstLoad = nil
+    /// 页面 p 进入启动保护（p 自己的状态）。p 显示着时窗口的颜色也停下来：已经排着队的颜色更新作废——取消，并且换代号，
+    /// 万一已经出队也不生效。
+    private func holdPageColor(_ p: PageLoadState) {
+        p.holdsPageColor = true
+        p.colorBeforeFirstLoad = nil
+        guard p === page else { return }
         pageColorGeneration += 1
         pendingBackground?.cancel()
         pendingBackground = nil
         diagnostics.log("appearance", "启动保护：网页加载完成前不跟随页面底色（保持\(Self.shade(appearance.background))）")
     }
 
-    /// 网页加载完成时调用（AppDelegate.onMainFrameLoaded，每次都调用，只有启动保护还在时起作用）。
-    /// 解除时 WebKit 报着的颜色不马上采用：它可能还是加载完成前的临时颜色。页面颜色变了再按原来的规则采用；
-    /// 一直不变就在 pageColorSettleLimit 后按它采用。
+    /// 显示着的页面加载完成时调用（AppDelegate.onMainFrameLoaded，每次都调用）。报的颜色是显示着的网页视图此刻报的。
     func pageDidFinishLoading() {
-        page.awaitingFinish = false
-        page.commitGeneration += 1
-        if page.noticeAwaitsLoad {
-            page.noticeAwaitsLoad = false
-            diagnostics.log("nav", "无法连接提示：加载完成，淡出")
-            fadeOutLoadProblem()
-        }
-        guard page.holdsPageColor else { return }
-        page.holdsPageColor = false
-        pageColorGeneration += 1
-        let generation = pageColorGeneration
-        let current = webView.underPageBackgroundColor
-        page.colorBeforeFirstLoad = current
-        diagnostics.log("appearance", "启动保护解除：加载完成时报的是\(Self.shade(current))，等页面颜色变化再采用")
-        // 这次等待属于现在这个网页视图的这次加载：中途换过网页视图时 pageColorGeneration 已经变了，到点不起作用。
-        DispatchQueue.main.asyncAfter(deadline: .now() + pageColorSettleLimit) { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, self.pageColorGeneration == generation, self.page.colorBeforeFirstLoad != nil else { return }
-                self.page.colorBeforeFirstLoad = nil
-                self.diagnostics.log("appearance", "加载完成后 \(Int(self.pageColorSettleLimit * 1000))ms 页面颜色没有变，按当前颜色采用")
-                self.pageBackgroundChanged()
-            }
-        }
-        pageBackgroundChanged()
+        pageDidFinishLoading(page, reportedColor: webView.underPageBackgroundColor)
     }
 
-    private func pageBackgroundChanged() {
-        if page.holdsPageColor {
+    /// 页面 p 加载完成。reportedColor：p 的网页视图此刻报的底色（窗口只观察显示着的网页视图，所以由调用方带进来）。
+    /// p 自己的状态总是改：不再等加载完成、代号加一、记下第一次加载已完成和这次报的颜色（hasFinishedFirstLoad、colorAtLastFinish）、
+    /// 留着的提示收起、启动保护解除。窗口只在 p 显示着时动：提示淡出、写日志、颜色代号、等颜色变化。
+    /// 启动保护只有还在时起作用。解除时报的颜色不马上采用：它可能还是加载完成前的临时颜色。页面颜色变了再按原来的规则采用；
+    /// 一直不变就在 pageColorSettleLimit 后按它采用。
+    /// 不显示的页面解除启动保护时只改它自己的状态：不换窗口的颜色代号、不取消排着队的颜色更新、不影响显示着的页面的等待；
+    /// 它报的颜色只记在 colorAtLastFinish，切换到它时能不能采用留到下一阶段。
+    func pageDidFinishLoading(_ p: PageLoadState, reportedColor: NSColor?) {
+        p.awaitingFinish = false
+        p.commitGeneration += 1
+        p.hasFinishedFirstLoad = true
+        p.colorAtLastFinish = reportedColor
+        if p.noticeAwaitsLoad {
+            p.noticeAwaitsLoad = false
+            if p === page { diagnostics.log("nav", "无法连接提示：加载完成，淡出") }
+            let shown = p.notice
+            p.notice = .hidden
+            if p === page {
+                applyNotice(p)
+                fadeOutLoadProblem(showing: shown)
+            }
+        }
+        guard p.holdsPageColor else { return }
+        p.holdsPageColor = false
+        guard p === page else { return }
+        pageColorGeneration += 1
+        let generation = pageColorGeneration
+        p.colorBeforeFirstLoad = reportedColor
+        diagnostics.log("appearance", "启动保护解除：加载完成时报的是\(Self.shade(reportedColor))，等页面颜色变化再采用")
+        // 这次等待属于 p 和现在这个网页视图的这次加载：p 已经释放或不再显示、中途换过网页视图（pageColorGeneration 变了），
+        // 到点都不起作用。
+        DispatchQueue.main.asyncAfter(deadline: .now() + pageColorSettleLimit) { [weak self, weak p] in
+            MainActor.assumeIsolated {
+                guard let self, let p, p === self.page, self.pageColorGeneration == generation,
+                      p.colorBeforeFirstLoad != nil else { return }
+                p.colorBeforeFirstLoad = nil
+                self.diagnostics.log("appearance", "加载完成后 \(Int(self.pageColorSettleLimit * 1000))ms 页面颜色没有变，按当前颜色采用")
+                self.pageBackgroundChanged(for: p)
+            }
+        }
+        pageBackgroundChanged(for: p)
+    }
+
+    /// 显示着的页面 p 的底色可能变了（网页视图报了新颜色，或者上面的等待到点）。只对显示着的页面起作用。
+    private func pageBackgroundChanged(for p: PageLoadState) {
+        guard p === page else { return }
+        if p.holdsPageColor {
             diagnostics.log("appearance", "启动保护中：页面底色报为\(Self.shade(webView.underPageBackgroundColor))，不采用")
             return
         }
         pendingBackground?.cancel()
         let generation = pageColorGeneration
-        // 这次更新属于报颜色的那个网页视图：换网页视图时取消并换代号，到点时不会去读换上来的网页。
-        let work = DispatchWorkItem { [weak self] in
+        // 这次更新属于 p 和报颜色的那个网页视图：p 已经释放或不再显示、换网页视图时取消并换代号，到点时不会去读换上来的网页。
+        let work = DispatchWorkItem { [weak self, weak p] in
             MainActor.assumeIsolated {
-                guard let self, self.pageColorGeneration == generation, !self.page.holdsPageColor else { return }
+                guard let self, let p, p === self.page, self.pageColorGeneration == generation, !p.holdsPageColor else { return }
                 let color = self.webView.underPageBackgroundColor
-                if let before = self.page.colorBeforeFirstLoad {
+                if let before = p.colorBeforeFirstLoad {
                     // 还是加载完成前就有的颜色：不采用，也不保存。
                     guard !PageAppearance.sameColor(color, before) else { return }
-                    self.page.colorBeforeFirstLoad = nil
+                    p.colorBeforeFirstLoad = nil
                 }
                 let wasDark = self.appearance.isDark
                 self.appearance.update(color)
@@ -819,7 +889,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 晚到的快照、排版完成和时限回调因为 layoutChange 已经不是它们那次而不起作用。
     ///
     /// 页面加载状态（hasCommittedPage、awaitingFinish、commitGeneration、noticeAwaitsLoad、launchAwaitsPage、
-    /// holdsPageColor、colorBeforeFirstLoad 和“无法连接”提示的状态 notice）在阶段 2 之前还是窗口一份。这里不保存、不恢复、不重设，
+    /// holdsPageColor、colorBeforeFirstLoad、hasFinishedFirstLoad、colorAtLastFinish 和“无法连接”提示的状态 notice）
+    /// 在阶段 2 之前还是窗口一份（显示着的 page 不跟着换）。这里不保存、不恢复、不重设，
     /// 换过之后它们就当作新网页视图的。所以前提是换的时候这些状态都已经停下来（pageStateIsSettled）；
     /// 没停下来时记一行日志，调试版断言。
     /// 只动排着队的页面颜色更新：取消，并把 pageColorGeneration 加一（和进入启动保护同一个办法），
@@ -860,6 +931,15 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
             && !page.awaitingFinish && !page.noticeAwaitsLoad && page.notice == .hidden
     }
 
+    #if DEBUG
+    /// 只给测试用（调试版才有）：把窗口当作显示着的页面换成 p，别的什么都不做——不投 p 的提示、不动启动画面和颜色、
+    /// 不换网页视图、不换颜色代号、不写日志。这不是切换页面的规则（“显示这个页面的状态”的入口留到下一阶段），
+    /// 只用来验证：换走再换回来以后，排着的回调仍只按排下它的那一次的代号起作用。
+    func setDisplayedPageForTesting(_ p: PageLoadState) {
+        page = p
+    }
+    #endif
+
     /// 网页视图铺满 webContainer 的四条约束。
     private static func fill(_ view: NSView, in place: NSView) -> [NSLayoutConstraint] {
         [view.topAnchor.constraint(equalTo: place.topAnchor),
@@ -870,11 +950,14 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
 
     /// 页面换底色（ChatGPT 切换浅色、深色）时跟着变。导航刚开始时 WebKit 会短暂报出默认白色，
     /// 稳定 150ms 再采用，免得每次加载都闪一下浅色。启动时另有启动保护，见 holdsPageColor。
-    /// 只观察当前显示的网页视图：先停掉之前的观察。
+    /// 只观察当前显示的网页视图：先停掉之前的观察。所以报颜色的就是显示着的页面（page）。
     private func observePageBackground(of view: WKWebView) {
         backgroundObservation?.invalidate()
         backgroundObservation = view.observe(\.underPageBackgroundColor) { [weak self] _, _ in
-            MainActor.assumeIsolated { self?.pageBackgroundChanged() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.pageBackgroundChanged(for: self.page)
+            }
         }
     }
 
