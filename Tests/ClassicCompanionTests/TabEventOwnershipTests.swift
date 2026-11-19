@@ -13,6 +13,10 @@ import CompanionCore
 /// - A 的地址变化改 A 自己的路径、适配器代号和日志，不记对话地址；0.8 秒后的媒体日志读 A 的适配器。
 /// - 隐藏窗口、聚焦只给选中的标签页；提示里的“重新加载”给按下时选中的标签页。
 /// - 排着的聚焦到点时还要是选中的、还要是最新的请求；标签页拿掉或释放后，排着的任务什么都不做。
+/// - 对选中的标签页做的操作（10–16）在开始时绑定那个标签页：新对话、窗口显示后提前重试、排版变化前后的阅读位置、
+///   每秒的媒体状态、证据采集和媒体实验，中途换了选中的也不跟着换，那个标签页拿掉了就不做；
+///   网络变化送到这组里的每个标签页，拿掉的不再收到；设置每个标签页都改。
+///   新对话的页面入口、阅读位置、证据采集的步骤要真实页面，交进来的替身记下对哪个标签页做。
 ///
 /// 真的 ChatWindowController（不显示窗口）和两个真的 WebRuntime（不看网络，加载请求各自记下来），
 /// 加载、失败、提交、加载完成像 LoadRecoveryWebTests 一样直接调运行时的导航代理。AppDelegate 交进来的几样换成记录。
@@ -379,6 +383,457 @@ final class TabEventOwnershipTests: XCTestCase {
         XCTAssertTrue(rig.mediaRead.isEmpty)
         XCTAssertTrue(rig.hidden.isEmpty)
     }
+
+    // MARK: - 对选中的标签页做的操作：开始时绑定那个标签页，之后不再读“现在选中的”
+
+    // MARK: 10. 新对话
+
+    /// B 选中时按新对话，马上（新对话的任务还没开始）就选中了 A：页面里的入口问的是 B 的适配器；没点到，整页加载给 B。
+    /// A 一次都没有，谁都不聚焦。
+    func testNewChatIsBoundToTheTabSelectedWhenPressed() async throws {
+        let rig = makeRig()
+        rig.tabs.newChat()
+        rig.tabs.selectForTesting(rig.a)
+        try await waitUntil { !rig.loadedB.isEmpty }
+        try await pause(0.3)
+        XCTAssertEqual(rig.newChatAsked.map(rig.name), ["B"])
+        XCTAssertEqual(rig.loadedB, [WebRuntime.homeURL])
+        XCTAssertEqual(rig.loadedA, [])
+        XCTAssertTrue(rig.focused.isEmpty)
+    }
+
+    /// 页面里的入口还在等的时候选中了 A。没点到：整页加载给 B（它不选中也加载，是它自己的页面），A 不加载、不聚焦。
+    func testNewChatsFollowUpLoadGoesToItsOwnTabAfterTheSelectionMoved() async throws {
+        let rig = makeRig()
+        rig.newChatDelay = 0.15
+        rig.tabs.newChat()
+        try await waitUntil { !rig.newChatAsked.isEmpty }
+        rig.tabs.selectForTesting(rig.a)
+        try await waitUntil { !rig.loadedB.isEmpty }
+        try await pause(0.3)
+        XCTAssertEqual(rig.loadedB, [WebRuntime.homeURL])
+        XCTAssertEqual(rig.loadedA, [])
+        XCTAssertTrue(rig.focused.isEmpty)
+        XCTAssertEqual(rig.lines.filter { !$0.hasPrefix("[nav] 加载") }, ["页面里新对话 B"])
+    }
+
+    /// 页面里点到了：等的时候选中了 A。聚焦请求给 B，到点时 B 不是选中的，不聚焦；A 也不聚焦。谁都不加载。
+    /// 对照：不换选中的，同样的新对话聚焦 B。
+    func testNewChatInPageFocusesOnlyItsOwnTab() async throws {
+        let rig = makeRig()
+        rig.newChatInPage = true
+        rig.newChatDelay = 0.15
+        rig.tabs.newChat()
+        try await waitUntil { !rig.newChatAsked.isEmpty }
+        rig.tabs.selectForTesting(rig.a)
+        try await pause(0.45)
+        XCTAssertTrue(rig.focused.isEmpty, "B 不是选中的了，A 不是这次新对话的")
+        XCTAssertEqual(rig.loadedA, [])
+        XCTAssertEqual(rig.loadedB, [])
+
+        let control = makeRig()
+        control.newChatInPage = true
+        control.newChatDelay = 0.15
+        control.tabs.newChat()
+        try await waitUntil { !control.focused.isEmpty }
+        XCTAssertEqual(control.focused.map(control.name), ["B"])
+    }
+
+    /// 页面里的入口还在等的时候 B 被拿掉（先选中 A）：之后什么都不做，不加载、不聚焦，不崩溃。
+    func testNewChatForATabRemovedMeanwhileDoesNothing() async throws {
+        let rig = makeRig()
+        rig.newChatDelay = 0.15
+        rig.tabs.newChat()
+        try await waitUntil { !rig.newChatAsked.isEmpty }
+        rig.tabs.selectForTesting(rig.a)
+        rig.tabs.removeForTesting(rig.b)
+        try await pause(0.45)
+        XCTAssertEqual(rig.loadedB, [])
+        XCTAssertEqual(rig.loadedA, [])
+        XCTAssertTrue(rig.focused.isEmpty)
+    }
+
+    // MARK: 11. 窗口显示后提前重试
+
+    /// A、B 第一次加载都失败了，窗口里没有页面，都在等自动重试。窗口显示（唤醒）：只有选中的 B 提前重试，A 不发请求；
+    /// 切模式不算（和以前一样）。选中 A 后再唤醒：这回只有 A。
+    func testWindowShownRetriesOnlyTheSelectedTab() {
+        let rig = makeRig()
+        rig.b.runtime.load(chat)
+        rig.fail(rig.b.runtime)
+        rig.a.runtime.load(other)
+        rig.fail(rig.a.runtime, other)
+        XCTAssertEqual(rig.b.page.notice, .waiting)
+        XCTAssertEqual(rig.a.page.notice, .waiting)
+
+        rig.controller.onDidShow?(.wake)
+        XCTAssertEqual(rig.loadedB, [chat, chat], "选中的 B 提前重试")
+        XCTAssertEqual(rig.loadedA, [other], "A 不显示，不提前重试")
+        rig.controller.onDidShow?(.modeSwitch)
+        XCTAssertEqual(rig.loadedA, [other])
+
+        rig.tabs.selectForTesting(rig.a)
+        rig.controller.onDidShow?(.wake)
+        XCTAssertEqual(rig.loadedA, [other, other])
+        XCTAssertEqual(rig.loadedB, [chat, chat])
+    }
+
+    /// 窗口显示后聚焦这一刻选中的标签页（和提前重试是同一个）。
+    func testWindowShownFocusesTheTabSelectedAtThatMoment() async throws {
+        let rig = makeRig()
+        rig.tabs.selectForTesting(rig.a)
+        rig.controller.onDidShow?(.activate)
+        try await waitUntil { !rig.focused.isEmpty }
+        try await pause(0.2)
+        XCTAssertEqual(rig.focused.map(rig.name), ["A"])
+    }
+
+    // MARK: 12. 网络状态
+
+    /// 共用的网络状态。B 由 ChatTabs.init 登记，A 由 add 登记；C 是断网之后才加进来的：加进来时补发“断网”。
+    /// C 第一次加载失败，断网期间不发请求；网络恢复时 C 照它自己的规则重试，B 已经加载好、A 从没加载，都不加载。
+    /// C 拿掉以后（又在等重试）什么都收不到：再断网、恢复，C 不重试、不记日志；A、B 照常收到。
+    func testEveryHeldTabHearsTheNetworkAndARemovedOneStopsHearingIt() throws {
+        let rig = makeRig()
+        rig.b.runtime.load(chat)
+        rig.commit(rig.b.runtime)
+        rig.finish(rig.b.runtime)
+        rig.network.deliver(online: false)
+        XCTAssertEqual(rig.netLog(rig.diagnostics), ["网络不可用"], "B 登记了")
+        XCTAssertEqual(rig.netLog(rig.diagnosticsA), ["网络不可用"], "A 登记了")
+
+        let diagnosticsC = Diagnostics()
+        let runtimeC = WebRuntime(diagnostics: diagnosticsC, settings: rig.settings,
+                                  recovery: LoadRecovery(backoff: [60, 60]), watchesNetwork: false)
+        let loadsC = URLList()
+        runtimeC.loadRequest = { request in loadsC.urls.append(request.url!) }
+        let adapterC = ChatGPTAdapter(webView: runtimeC.webView, diagnostics: diagnosticsC, settings: rig.settings)
+        let c = try XCTUnwrap(rig.tabs.add(runtime: runtimeC, adapter: adapterC))
+        XCTAssertEqual(rig.netLog(diagnosticsC), ["网络不可用"], "加进来时补发")
+        runtimeC.load(chat)
+        rig.fail(runtimeC)
+        XCTAssertEqual(loadsC.urls, [chat], "断网期间不发请求")
+        XCTAssertEqual(c.page.notice, .waiting)
+
+        rig.network.deliver(online: true)
+        XCTAssertEqual(loadsC.urls, [chat, chat], "C 在等网络恢复：重试一次")
+        XCTAssertEqual(c.page.notice, .connecting)
+        XCTAssertEqual(rig.loadedB, [chat], "B 已加载好，不重新加载")
+        XCTAssertEqual(rig.loadedA, [], "A 没失败过，不加载")
+        rig.fail(runtimeC)
+        XCTAssertEqual(c.page.notice, .waiting)
+
+        rig.tabs.removeForTesting(c)
+        rig.network.deliver(online: false)
+        rig.network.deliver(online: true)
+        XCTAssertEqual(rig.netLog(diagnosticsC), ["网络不可用", "网络可用"], "拿掉以后什么都收不到")
+        XCTAssertEqual(loadsC.urls, [chat, chat], "拿掉以后网络恢复也不重试")
+        XCTAssertEqual(rig.netLog(rig.diagnostics), ["网络不可用", "网络可用", "网络不可用", "网络可用"])
+        XCTAssertEqual(rig.netLog(rig.diagnosticsA), ["网络不可用", "网络可用", "网络不可用", "网络可用"])
+        XCTAssertEqual(rig.network.registeredCount, 2)
+    }
+
+    // MARK: 13. 排版变化前后的阅读位置
+
+    /// 记下和放回都交给记下时选中的 B。
+    func testTheReadingPositionIsRestoredToTheTabThatHeldIt() {
+        let rig = makeRig()
+        let calls = rig.recordReadingPosition()
+        rig.controller.onWillChangeLayout?()
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 B", "放回 B"])
+    }
+
+    /// B 记下之后选中了 A：放回给 B，A 什么都不收到。
+    func testARestoreAfterTheSelectionMovedGoesToTheTabThatHeld() {
+        let rig = makeRig()
+        let calls = rig.recordReadingPosition()
+        rig.controller.onWillChangeLayout?()
+        rig.tabs.selectForTesting(rig.a)
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 B", "放回 B"])
+    }
+
+    /// B 记下之后选中了 A，B 在后台换了页面：放回作废，谁都不放回（不把旧对话的位置放到别的对话上）。
+    /// 只是 query 变了不算换页面，照常放回。
+    func testARestoreForABackgroundTabThatNavigatedIsDiscarded() {
+        let rig = makeRig()
+        rig.b.runtime.onURLChange?(chat)
+        let calls = rig.recordReadingPosition()
+        rig.controller.onWillChangeLayout?()
+        rig.tabs.selectForTesting(rig.a)
+        rig.b.runtime.onURLChange?(other)
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 B"])
+
+        rig.tabs.selectForTesting(rig.b)
+        rig.controller.onWillChangeLayout?()
+        rig.tabs.selectForTesting(rig.a)
+        rig.b.runtime.onURLChange?(URL(string: "https://chatgpt.com/c/def?model=x")!)
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 B", "记下 B", "放回 B"])
+    }
+
+    /// B 记下之后、换回 B 之前，B 换到别的对话又换回原来的对话：路径一样，但换过页面，放回作废（看的是导航代号，不只看路径）。
+    func testARestoreForABackgroundTabThatNavigatedAwayAndBackIsDiscarded() {
+        let rig = makeRig()
+        rig.b.runtime.onURLChange?(chat)
+        let calls = rig.recordReadingPosition()
+        rig.controller.onWillChangeLayout?()
+        rig.tabs.selectForTesting(rig.a)
+        rig.b.runtime.onURLChange?(other)
+        rig.b.runtime.onURLChange?(chat)
+        XCTAssertEqual(rig.b.lastPath, "chatgpt.com/c/abc")
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 B"])
+    }
+
+    /// B 记下之后选中了 A、B 被拿掉：放回作废，不崩溃。
+    func testARestoreForARemovedTabIsDiscarded() {
+        let rig = makeRig()
+        let calls = rig.recordReadingPosition()
+        rig.controller.onWillChangeLayout?()
+        rig.tabs.selectForTesting(rig.a)
+        rig.tabs.removeForTesting(rig.b)
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 B"])
+    }
+
+    /// 定下来的行为（和一个标签页时一样）：B 记下之后自己换了页面、仍是选中的，照原来放回给 B。
+    /// 新对话拿到对话地址（/ → /c/…）时还是同一个对话；换到别的对话时网页里的脚本自己不放回已经不在页面上的内容。
+    func testARestoreForTheStillSelectedTabIsSentEvenIfItNavigated() {
+        let rig = makeRig()
+        rig.b.runtime.onURLChange?(WebRuntime.homeURL)
+        let calls = rig.recordReadingPosition()
+        rig.controller.onWillChangeLayout?()
+        rig.b.runtime.onURLChange?(chat)
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 B", "放回 B"])
+    }
+
+    /// 套着的两次排版变化（拖边途中按切换键）：记下、记下、放回、放回，后进先出。中途选中了 A：
+    /// 后记下的那次（A 的）放回给 A，先记下的那次（B 的）放回给 B。都在同一个标签页上时，四次都给它（一个标签页时就是原来的）。
+    func testNestedLayoutChangesPairLastInFirstOut() {
+        let rig = makeRig()
+        let calls = rig.recordReadingPosition()
+        rig.controller.onWillChangeLayout?()
+        rig.controller.onWillChangeLayout?()
+        rig.controller.onDidChangeLayout?()
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 B", "记下 B", "放回 B", "放回 B"])
+
+        calls.list = []
+        rig.controller.onWillChangeLayout?()
+        rig.tabs.selectForTesting(rig.a)
+        rig.controller.onWillChangeLayout?()
+        rig.controller.onDidChangeLayout?()
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 B", "记下 A", "放回 A", "放回 B"])
+    }
+
+    // MARK: 14. 设置：每个标签页都改
+
+    /// 页面缩放、网页无障碍、网页增强脚本、弹窗标题：两个标签页的网页视图都改，A 不显示也一样。
+    func testSettingsReachEveryTab() {
+        let rig = makeRig()
+        let a = rig.a, b = rig.b
+        rig.tabs.setPageZoom(1.25)
+        XCTAssertEqual(b.runtime.webView.pageZoom, 1.25)
+        XCTAssertEqual(a.runtime.webView.pageZoom, 1.25)
+
+        rig.tabs.setPageAccessibilityAllowed(true)
+        XCTAssertFalse(b.runtime.webView.blockAccessibility)
+        XCTAssertFalse(a.runtime.webView.blockAccessibility)
+        rig.tabs.setPageAccessibilityAllowed(false)
+        XCTAssertTrue(b.runtime.webView.blockAccessibility)
+        XCTAssertTrue(a.runtime.webView.blockAccessibility)
+
+        let scripts = { (tab: ChatTab) in tab.runtime.webView.configuration.userContentController.userScripts.count }
+        XCTAssertEqual(scripts(b), 2)
+        XCTAssertEqual(scripts(a), 2)
+        rig.settings.webEnhancements = false
+        rig.tabs.applyEnhancementScripts()
+        XCTAssertEqual(scripts(b), 0)
+        XCTAssertEqual(scripts(a), 0)
+        rig.settings.webEnhancements = true
+        rig.tabs.applyEnhancementScripts()
+        XCTAssertEqual(scripts(b), 2)
+        XCTAssertEqual(scripts(a), 2)
+
+        let popups = [b, a].map { tab -> NSWindow in
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled],
+                                  backing: .buffered, defer: true)
+            window.isReleasedWhenClosed = false
+            window.title = "旧标题"
+            tab.runtime.adoptPopupForTesting(window)
+            return window
+        }
+        rig.tabs.retitlePopups()
+        XCTAssertEqual(popups.map(\.title), [L10n.string("window.popup"), L10n.string("window.popup")])
+        XCTAssertNotEqual(L10n.string("window.popup"), "旧标题")
+    }
+
+    // MARK: 15. 每秒的媒体状态
+
+    /// 读哪个标签页在调用这一刻定下：调用之后马上（读的任务还没开始）选中了 A，读的还是 B。
+    /// 这时选中的是 A：再读一次，读的时候选中了 B，读完显示和日志都是 A 读到的。下一次读 B。
+    func testEachMediaTickReadsTheTabSelectedWhenItFired() async throws {
+        let rig = makeRig()
+        rig.tabs.mediaTick()
+        rig.tabs.selectForTesting(rig.a)
+        try await waitUntil { rig.lines.contains { $0.hasPrefix("[media]") } }
+        XCTAssertEqual(rig.mediaRead.map(rig.name), ["B"])
+        XCTAssertEqual(rig.diagnostics.webMediaState, "媒体B")
+
+        rig.mediaDelay = 0.15
+        rig.tabs.mediaTick()
+        try await waitUntil { rig.mediaRead.count == 2 }
+        rig.tabs.selectForTesting(rig.b)
+        try await waitUntil { rig.lines.filter { $0.hasPrefix("[media]") }.count == 2 }
+        XCTAssertEqual(rig.diagnostics.webMediaState, "媒体A", "读的时候换了选中的：还是 A 的")
+
+        rig.mediaDelay = 0
+        rig.tabs.mediaTick()
+        try await waitUntil { rig.lines.filter { $0.hasPrefix("[media]") }.count == 3 }
+        XCTAssertEqual(rig.mediaRead.map(rig.name), ["B", "A", "B"])
+        XCTAssertEqual(rig.lines.filter { $0.hasPrefix("[media]") }, [
+            "[media] WebKit 媒体状态 none → 媒体B（窗口可见=false）",
+            "[media] WebKit 媒体状态 媒体B → 媒体A（窗口可见=false）",
+            "[media] WebKit 媒体状态 媒体A → 媒体B（窗口可见=false）",
+        ])
+    }
+
+    /// 读的时候 B 被拿掉（先选中 A）：读完不显示、不写日志、不改记下的状态。下一次读选中的 A，照常从原来的状态记。
+    func testAMediaTickForATabRemovedDuringTheReadIsDropped() async throws {
+        let rig = makeRig()
+        let shown = rig.diagnostics.webMediaState
+        rig.mediaDelay = 0.15
+        rig.tabs.mediaTick()
+        try await waitUntil { !rig.mediaRead.isEmpty }
+        rig.tabs.selectForTesting(rig.a)
+        rig.tabs.removeForTesting(rig.b)
+        try await pause(0.3)
+        XCTAssertEqual(rig.diagnostics.webMediaState, shown)
+        XCTAssertFalse(rig.lines.contains { $0.hasPrefix("[media]") })
+
+        rig.mediaDelay = 0
+        rig.tabs.mediaTick()
+        try await waitUntil { rig.lines.contains { $0.hasPrefix("[media]") } }
+        XCTAssertEqual(rig.lines.filter { $0.hasPrefix("[media]") }, ["[media] WebKit 媒体状态 none → 媒体A（窗口可见=false）"])
+    }
+
+    // MARK: 16. 证据采集、媒体实验
+
+    /// 在步骤这一层核对（真的步骤要真实页面）：每一步都交给开始时选中的 B；第一步里选中了 A，剩下的步骤还是 B 的。
+    /// 采集证据和几种媒体实验都一样（每次开始时选中的是哪个，就一路是哪个）。
+    func testEvidenceAndExperimentsStayOnTheTabTheyStartedOn() async {
+        let rig = makeRig()
+        let steps = EvidenceSteps()
+        rig.tabs.evidenceTarget = { [weak rig] tab in EvidenceSpy(name: rig?.name(tab.adapter) ?? "?", steps: steps) }
+        steps.onFirstStep = { [weak rig] in rig.map { $0.tabs.selectForTesting($0.a) } }
+        await rig.tabs.collectEvidence(measure: true)
+        XCTAssertEqual(steps.list, ["B probe", "B readAloudEvidence", "B measureMedia"])
+        XCTAssertEqual(rig.diagnostics.readAloudEvidence, "证据 B")
+        XCTAssertEqual(rig.diagnostics.mediaMeasurement, "测量 B")
+
+        for (kind, expected) in [(ExperimentKind.suspendAll, ["A suspend true", "A webMediaState"]),
+                                 (.pauseAll, ["B pauseAll", "B webMediaState"]),
+                                 (.setRate(1.5), ["A setRate 1.5"]),
+                                 (.measure, ["B measureMedia"])] {
+            steps.list = []
+            let other = rig.tabs.isSelected(rig.a) ? rig.b : rig.a
+            steps.onFirstStep = { [weak rig] in rig?.tabs.selectForTesting(other) }
+            await rig.tabs.runExperiment(kind)
+            XCTAssertEqual(steps.list, expected, "\(kind)")
+        }
+        XCTAssertEqual(rig.diagnostics.experiments.map { String($0.drop { $0 != " " }.dropFirst()) }, [
+            "WebKit setAllMediaPlaybackSuspended(true) → 状态 媒体 A",
+            "WebKit pauseAllMediaPlayback → 状态 媒体 B",
+            "DOM playbackRate=1.5：速率 A",
+            "测量：测量 B",
+        ])
+    }
+
+    /// 第一步里开始时的那个标签页被拿掉（先选中别的）：剩下的步骤都不做，已经写进诊断的不动。
+    func testEvidenceStopsWhenItsTabIsRemoved() async {
+        let rig = makeRig()
+        let steps = EvidenceSteps()
+        rig.tabs.evidenceTarget = { [weak rig] tab in EvidenceSpy(name: rig?.name(tab.adapter) ?? "?", steps: steps) }
+        rig.tabs.selectForTesting(rig.a)
+        steps.onFirstStep = { [weak rig] in
+            guard let rig else { return }
+            rig.tabs.selectForTesting(rig.b)
+            rig.tabs.removeForTesting(rig.a)
+        }
+        await rig.tabs.collectEvidence(measure: true)
+        XCTAssertEqual(steps.list, ["A probe"])
+        XCTAssertEqual(rig.diagnostics.readAloudEvidence, Diagnostics.notCollected)
+        XCTAssertEqual(rig.diagnostics.mediaMeasurement, Diagnostics.notMeasured)
+    }
+
+    /// 正式运行时交给标签页自己的适配器：B 的网页里没有页面，采集的结果是“不是聊天页面”（这几步不跑网页脚本）。
+    func testEvidenceUsesTheTabsOwnAdapterByDefault() async {
+        let rig = makeRig()
+        await rig.tabs.collectEvidence(measure: true)
+        XCTAssertTrue(rig.diagnostics.readAloudEvidence.contains("not-chat-page"), rig.diagnostics.readAloudEvidence)
+        XCTAssertEqual(rig.diagnostics.mediaMeasurement, "not-chat-page")
+    }
+}
+
+/// 证据采集、媒体实验的步骤记录（按发生的顺序）。第一步时调用一次 onFirstStep（测试在那里换选中的、拿掉标签页）。
+@MainActor
+private final class EvidenceSteps {
+    var list: [String] = []
+    var onFirstStep: (() -> Void)?
+
+    func record(_ step: String) async {
+        list.append(step)
+        if let first = onFirstStep {
+            onFirstStep = nil
+            first()
+        }
+        // 真的让出去一下：后面的步骤在这之后才继续。
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+/// 一个标签页的证据采集、媒体实验替身：每一步记下“标签页 步骤”，返回带标签页名字的结果。
+@MainActor
+private struct EvidenceSpy: EvidenceTarget {
+    let name: String
+    let steps: EvidenceSteps
+
+    func probe() async { await steps.record("\(name) probe") }
+    func readAloudEvidence() async -> String {
+        await steps.record("\(name) readAloudEvidence")
+        return "证据 \(name)"
+    }
+    func measureMedia() async -> String {
+        await steps.record("\(name) measureMedia")
+        return "测量 \(name)"
+    }
+    func webMediaState() async -> String {
+        await steps.record("\(name) webMediaState")
+        return "媒体 \(name)"
+    }
+    func experimentSetRate(_ rate: Double) async -> String {
+        await steps.record("\(name) setRate \(rate)")
+        return "速率 \(name)"
+    }
+    func setAllMediaPlaybackSuspended(_ suspended: Bool) async { await steps.record("\(name) suspend \(suspended)") }
+    func pauseAllMediaPlayback() async { await steps.record("\(name) pauseAll") }
+}
+
+/// 记下、放回阅读位置的记录。
+@MainActor
+private final class ReadingPositionCalls {
+    var list: [String] = []
+}
+
+/// 一个运行时发出的加载请求。
+@MainActor
+private final class URLList {
+    var urls: [URL] = []
 }
 
 /// 一个页面的全部状态，逐项比较。
@@ -447,6 +902,14 @@ private final class TwoTabs {
     private(set) var focused: [ChatGPTAdapter] = []
     private(set) var saved: [URL] = []
     private(set) var mediaRead: [ChatGPTAdapter] = []
+    /// 读网页媒体状态的替身等多久再返回（0：马上返回）。等的时候测试可以换选中的、拿掉标签页。
+    var mediaDelay: Double = 0
+    /// 共用的网络状态，不看真实网络：状态由测试 deliver(online:) 送进来。B 由 ChatTabs.init 登记，A 由 add 登记。
+    let network = NetworkStatus(startsMonitor: false)
+    /// 页面里的新对话入口：问过哪个标签页的适配器、点到了没有（替身的返回值）、等多久再返回。
+    private(set) var newChatAsked: [ChatGPTAdapter] = []
+    var newChatInPage = false
+    var newChatDelay: Double = 0
     private var watch: AnyCancellable?
 
     init(defaults: UserDefaults, backoffA: [TimeInterval]) {
@@ -470,6 +933,7 @@ private final class TwoTabs {
         runtimeB.loadRequest = { [weak self] request in self?.loadedB.append(request.url!) }
         runtimeA.loadRequest = { [weak self] request in self?.loadedA.append(request.url!) }
         tabs = ChatTabs(list: list, tab: b, windowController: controller, diagnostics: diagnostics,
+                        network: network,
                         hideWindow: { [weak self] reason in
                             self?.hidden.append(reason)
                             self?.timeline.append("隐藏窗口：\(reason)")
@@ -487,7 +951,14 @@ private final class TwoTabs {
                             self?.mediaRead.append(adapter)
                             let name = self?.name(adapter) ?? "?"
                             self?.timeline.append("读网页媒体状态 \(name)")
+                            if let delay = self?.mediaDelay, delay > 0 { try? await Task.sleep(for: .milliseconds(Int(delay * 1000))) }
                             return "媒体\(name)"
+                        },
+                        openNewChat: { [weak self] adapter in
+                            self?.newChatAsked.append(adapter)
+                            self?.timeline.append("页面里新对话 \(self?.name(adapter) ?? "?")")
+                            if let delay = self?.newChatDelay, delay > 0 { try? await Task.sleep(for: .milliseconds(Int(delay * 1000))) }
+                            return self?.newChatInPage ?? false
                         })
         watch = diagnostics.$entries.dropFirst().sink { [weak self] entries in
             guard let self, let entry = entries.last, !LiveInputLogLines.excludes(entry) else { return }
@@ -500,8 +971,25 @@ private final class TwoTabs {
     /// 加进来的 A。拿掉并释放之后不能再用。
     var a: ChatTab { addedA! }
 
-    private func name(_ adapter: ChatGPTAdapter) -> String {
+    func name(_ adapter: ChatGPTAdapter) -> String {
         adapter === b.adapter ? "B" : adapter === adapterA ? "A" : "?"
+    }
+
+    func name(_ runtime: WebRuntime) -> String {
+        runtime === b.runtime ? "B" : runtime === runtimeA ? "A" : "?"
+    }
+
+    /// 把记下、放回阅读位置换成记录（“记下 B”“放回 A”），返回记录。
+    func recordReadingPosition() -> ReadingPositionCalls {
+        let calls = ReadingPositionCalls()
+        tabs.holdReadingPosition = { [weak self] runtime in calls.list.append("记下 \(self?.name(runtime) ?? "?")") }
+        tabs.restoreReadingPosition = { [weak self] runtime in calls.list.append("放回 \(self?.name(runtime) ?? "?")") }
+        return calls
+    }
+
+    /// 运行时记在 diagnostics 里的网络日志（“网络可用”“网络不可用”）。
+    func netLog(_ diagnostics: Diagnostics) -> [String] {
+        diagnostics.entries.filter { $0.category == "net" }.map(\.message)
     }
 
     // MARK: 运行时的导航代理，和 LoadRecoveryWebTests 一样直接调

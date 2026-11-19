@@ -245,6 +245,91 @@ final class LaunchWiringTests: XCTestCase {
             "[nav] 加载 https://chatgpt.com/c/<id>",
         ])
     }
+
+    // MARK: 8. 对选中的（就是这一个）标签页做的操作，原来写在 AppDelegate 里
+
+    /// ⌘R 和提示里的“重新加载”一样，交给这个标签页的运行时。
+    func testReloadingTheSelectedTabReloadsThisTab() {
+        let rig = makeRig()
+        rig.tab.runtime.load(chat)
+        rig.tabs.reloadSelectedTab()
+        XCTAssertEqual(rig.loaded, [chat, chat])
+    }
+
+    /// 新对话：先问页面里的入口；没点到就整页加载新对话页，不聚焦。点到了不加载，80ms 后聚焦一次。
+    func testNewChatLoadsTheHomePageOrFocusesAfterAnInPageSwitch() async throws {
+        let rig = makeRig()
+        rig.tabs.newChat()
+        try await waitUntil { !rig.loaded.isEmpty }
+        try await pause(0.2)
+        XCTAssertEqual(rig.loaded, [WebRuntime.homeURL])
+        XCTAssertEqual(rig.lines, ["页面里新对话", "[nav] 加载 https://chatgpt.com/"])
+        XCTAssertTrue(rig.focused.isEmpty)
+
+        rig.timeline = []
+        rig.newChatInPage = true
+        rig.tabs.newChat()
+        try await waitUntil { !rig.focused.isEmpty }
+        XCTAssertEqual(rig.lines, ["页面里新对话", "聚焦输入框"])
+        XCTAssertEqual(rig.loaded, [WebRuntime.homeURL])
+        XCTAssertTrue(rig.focused.first === rig.tab.adapter)
+    }
+
+    /// 窗口显示后：先请求聚焦，再让运行时按显示方式提前重试。第一次加载失败、在等自动重试时，切模式不提前重试，唤醒提前重试一次。
+    /// 两次请求聚焦，只聚焦最新的一次。
+    func testWindowShownRequestsFocusThenRetriesEarly() async throws {
+        let rig = makeRig()
+        rig.tab.runtime.load(chat)
+        failLoad(rig)
+        rig.timeline = []
+        rig.controller.onDidShow?(.modeSwitch)
+        XCTAssertEqual(rig.loaded, [chat])
+        rig.controller.onDidShow?(.wake)
+        XCTAssertEqual(rig.loaded, [chat, chat])
+        try await waitUntil { !rig.focused.isEmpty }
+        try await pause(0.2)
+        XCTAssertEqual(rig.focused.count, 1)
+        XCTAssertEqual(rig.lines, [
+            "[nav] 自动重试（窗口显示）第 1 次",
+            "[nav] 加载 https://chatgpt.com/c/<id>",
+            "[nav] 无法连接提示：connecting",
+            "聚焦输入框",
+        ])
+    }
+
+    /// 排版变化前后：记下、放回都给这个标签页，次数和顺序照窗口的回调，套着的也一样；中间换了页面也照样放回。
+    func testLayoutChangesHoldAndRestoreOnThisTab() {
+        let rig = makeRig()
+        rig.tabs.holdReadingPosition = { [weak rig] runtime in
+            rig?.timeline.append(runtime === rig?.tab.runtime ? "记下阅读位置" : "记下别的")
+        }
+        rig.tabs.restoreReadingPosition = { [weak rig] runtime in
+            rig?.timeline.append(runtime === rig?.tab.runtime ? "放回阅读位置" : "放回别的")
+        }
+        rig.controller.onWillChangeLayout?()
+        rig.controller.onDidChangeLayout?()
+        rig.controller.onWillChangeLayout?()
+        rig.controller.onWillChangeLayout?()
+        rig.tab.runtime.onURLChange?(chat)
+        rig.controller.onDidChangeLayout?()
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(rig.lines, [
+            "记下阅读位置", "放回阅读位置", "记下阅读位置", "记下阅读位置",
+            "记下对话地址 https://chatgpt.com/c/abc", "[nav] 页面变化 https://chatgpt.com/c/<id>",
+            "放回阅读位置", "放回阅读位置",
+        ])
+    }
+
+    /// 每秒的媒体状态：读这个标签页的适配器，显示读到的；和上次一样不写日志。
+    func testTheMediaTickReadsThisTabAndLogsOnlyChanges() async throws {
+        let rig = makeRig()
+        rig.tabs.mediaTick()
+        try await waitUntil { !rig.mediaRead.isEmpty }
+        try await pause(0.1)
+        XCTAssertTrue(rig.mediaRead.first === rig.tab.adapter)
+        XCTAssertEqual(rig.diagnostics.webMediaState, "none")
+        XCTAssertEqual(rig.lines, ["读网页媒体状态"])
+    }
 }
 
 /// 一个标签页、一个窗口和接线。AppDelegate 交给 ChatTabs 的几样换成记录，和日志一起按顺序记在 timeline 里。
@@ -266,6 +351,10 @@ private final class Rig {
     private(set) var mediaRead: [ChatGPTAdapter] = []
     /// 每次写“页面变化”日志时适配器的代号。
     private(set) var generationAtPageChange: [Int] = []
+    /// 共用的网络状态，不看真实网络。
+    let network = NetworkStatus(startsMonitor: false)
+    /// 页面里的新对话入口点到了没有（替身的返回值）。
+    var newChatInPage = false
     private var watch: AnyCancellable?
 
     init(defaults: UserDefaults) {
@@ -282,6 +371,7 @@ private final class Rig {
         controller.pageColorSettleLimit = 60
         runtime.loadRequest = { [weak self] request in self?.loaded.append(request.url!) }
         tabs = ChatTabs(list: TabList(), tab: tab, windowController: controller, diagnostics: diagnostics,
+                        network: network,
                         hideWindow: { [weak self] reason in self?.timeline.append("隐藏窗口：\(reason)") },
                         focusInput: { [weak self] adapter in
                             self?.focused.append(adapter)
@@ -296,6 +386,10 @@ private final class Rig {
                             self?.mediaRead.append(adapter)
                             self?.timeline.append("读网页媒体状态")
                             return "none"
+                        },
+                        openNewChat: { [weak self] _ in
+                            self?.timeline.append("页面里新对话")
+                            return self?.newChatInPage ?? false
                         })
         // 跟着真实鼠标、键盘、屏幕写的行不进时间线（见 LiveInputLogLines）。
         watch = diagnostics.$entries.dropFirst().sink { [weak self] entries in

@@ -600,6 +600,14 @@ extension WebRuntime: WKUIDelegate {
         popupWindows.forEach { $0.title = L10n.string("window.popup") }
     }
 
+    #if DEBUG
+    /// 只给测试用（调试版才有）：把一个不显示的窗口当作这个运行时开着的弹窗记下。
+    /// 真的弹窗要网页来开，开的时候还会显示在屏幕上，测试不能那样做。
+    func adoptPopupForTesting(_ window: NSWindow) {
+        popupWindows.append(window)
+    }
+    #endif
+
     func webViewDidClose(_ webView: WKWebView) {
         if let idx = popupWindows.firstIndex(where: { $0.contentView === webView }) {
             popupWindows[idx].close()

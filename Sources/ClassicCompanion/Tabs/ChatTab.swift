@@ -19,7 +19,8 @@ final class ChatTab {
     /// 排着的聚焦输入框任务。再次请求聚焦时先取消它。
     var focusTask: Task<Void, Never>?
 
-    /// 运行时和适配器由调用方建好再交进来：建立顺序（网络状态 → 运行时 → 登记 → 适配器）留在调用方，和以前一样。
+    /// 运行时和适配器由调用方建好再交进来：建立顺序（网络状态 → 运行时 → 适配器）留在调用方。
+    /// 运行时登记到网络状态由 ChatTabs 做（启动时的那个在 ChatTabs.init，之后的在 add）。
     init(id: TabID, runtime: WebRuntime, adapter: ChatGPTAdapter, page: PageLoadState = PageLoadState()) {
         self.id = id
         self.runtime = runtime
