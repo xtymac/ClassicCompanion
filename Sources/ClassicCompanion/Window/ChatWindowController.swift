@@ -105,7 +105,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     var pageRevealLimit: TimeInterval = 1
     /// 到时限时网页还没提交，启动画面继续显示中。
     private var launchAwaitsPage = false
-    /// 页面加载到哪一步了（提交、加载完成、留着的提示、启动保护的颜色），见 PageLoadState。规则都在这个类里。
+    /// 页面加载到哪一步了（提交、加载完成、“无法连接”提示的状态和留着的提示、启动保护的颜色），见 PageLoadState。规则都在这个类里。
     private(set) var page: PageLoadState
     private var launchStarted = Date()
     private var lastDragLog = Date.distantPast
@@ -132,6 +132,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 只在启动时、网页加载完之前盖着，免得先露出一片空白。不是隐私遮罩，网页从不被挡住。
     private let launchCover: NSHostingView<LaunchScreen>
     /// 加载失败、窗口里没有页面时盖在网页上的“无法连接”提示。有页面时从不显示。
+    /// 这一层和它的内容（loadProblem）都只照 page.notice 改（applyNotice），别处不直接改。
     private let loadProblemCover: NSHostingView<LoadProblemView>
     private let loadProblem: LoadProblemModel
     /// 提示里的“重新加载”。
@@ -140,7 +141,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         set { loadProblem.onReload = newValue ?? {} }
     }
     /// 正在显示的提示（测试和诊断用），没显示是 nil。
-    var shownLoadProblem: LoadRecovery.Status? { loadProblemCover.isHidden ? nil : loadProblem.status }
+    var shownLoadProblem: LoadRecovery.Status? { page.notice == .hidden ? nil : page.notice }
     /// 提示收起后正在淡出的那层，淡出完就没了（测试用）。
     private weak var loadProblemFade: NSHostingView<LoadProblemView>?
     var loadProblemFadeView: NSHostingView<LoadProblemView>? { loadProblemFade }
@@ -172,6 +173,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         self.page = page
         launchCover = NSHostingView(rootView: LaunchScreen(appearance: appearance))
         let problem = LoadProblemModel()
+        // 提示从页面的状态开始（默认 .hidden，和这里原来的初值一样），之后只经 applyNotice() 改。
+        problem.status = page.notice
         loadProblem = problem
         loadProblemCover = NSHostingView(rootView: LoadProblemView(model: problem, appearance: appearance))
         // 不让 SwiftUI 的尺寸变成约束：长文字挤窄后折成很多行，最小高度会把窗口撑到 858 以上（藏着也一样，1159 窗口测试）。
@@ -206,7 +209,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         container.addSubview(webContainer)
         // 提示在网页之上、启动画面之下：启动画面结束后才露出来。
         loadProblemCover.translatesAutoresizingMaskIntoConstraints = false
-        loadProblemCover.isHidden = true
+        loadProblemCover.isHidden = page.notice == .hidden
         container.addSubview(loadProblemCover)
         launchCover.translatesAutoresizingMaskIntoConstraints = false
         launchCover.isHidden = true
@@ -591,14 +594,21 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// “可以收起”在提交时就来了，那时网页还没画出来，收起会露出空白白色（2026-11-15 对照）：
     /// 网页已提交、还没加载完成时先留着（内容停在收起前的状态），加载完成时淡出；提交后 pageRevealLimit 还没加载完成就收起。
     func showLoadProblem(_ status: LoadRecovery.Status) {
-        if status == .hidden, !loadProblemCover.isHidden, page.awaitingFinish {
+        if status == .hidden, page.notice != .hidden, page.awaitingFinish {
             if !page.noticeAwaitsLoad { diagnostics.log("nav", "无法连接提示：网页已提交，留到加载完成") }
             page.noticeAwaitsLoad = true
             return
         }
         page.noticeAwaitsLoad = false
-        loadProblem.status = status
-        loadProblemCover.isHidden = status == .hidden
+        page.notice = status
+        applyNotice()
+    }
+
+    /// 把页面的提示状态投到窗口的提示上：先改提示内容，再改那一层显不显示（和原来各处的顺序一样）。
+    /// 每次改 page.notice 之后都调用；只写这两样，不记日志、不碰淡出那层和别的状态。
+    private func applyNotice() {
+        loadProblem.status = page.notice
+        loadProblemCover.isHidden = page.notice == .hidden
     }
 
     func beginLaunchScreen() {
@@ -648,8 +658,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
                 if self.page.noticeAwaitsLoad {
                     self.diagnostics.log("nav", "无法连接提示：\(waited)，收起")
                     self.page.noticeAwaitsLoad = false
-                    self.loadProblem.status = .hidden
-                    self.loadProblemCover.isHidden = true
+                    self.page.notice = .hidden
+                    self.applyNotice()
                 }
             }
         }
@@ -671,9 +681,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
 
     /// 加载完成时收起留着的提示：和启动画面一样盖一层同样的提示淡出，内容、底色和外观固定在这一刻。
     private func fadeOutLoadProblem() {
-        let shown = loadProblem.status
-        loadProblem.status = .hidden
-        loadProblemCover.isHidden = true
+        let shown = page.notice
+        page.notice = .hidden
+        applyNotice()
         guard let container = loadProblemCover.superview else { return }
         let look = loadProblemCover.effectiveAppearance
         let frozen = LoadProblemModel()
@@ -809,7 +819,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 晚到的快照、排版完成和时限回调因为 layoutChange 已经不是它们那次而不起作用。
     ///
     /// 页面加载状态（hasCommittedPage、awaitingFinish、commitGeneration、noticeAwaitsLoad、launchAwaitsPage、
-    /// holdsPageColor、colorBeforeFirstLoad 和“无法连接”提示）在阶段 2 之前还是窗口一份。这里不保存、不恢复、不重设，
+    /// holdsPageColor、colorBeforeFirstLoad 和“无法连接”提示的状态 notice）在阶段 2 之前还是窗口一份。这里不保存、不恢复、不重设，
     /// 换过之后它们就当作新网页视图的。所以前提是换的时候这些状态都已经停下来（pageStateIsSettled）；
     /// 没停下来时记一行日志，调试版断言。
     /// 只动排着队的页面颜色更新：取消，并把 pageColorGeneration 加一（和进入启动保护同一个办法），
@@ -847,7 +857,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 不在“已提交、还没加载完成”中、没有显示或留着“无法连接”提示。
     private var pageStateIsSettled: Bool {
         !isShowingLaunchScreen && !launchAwaitsPage && !page.holdsPageColor && page.colorBeforeFirstLoad == nil
-            && !page.awaitingFinish && !page.noticeAwaitsLoad && loadProblemCover.isHidden
+            && !page.awaitingFinish && !page.noticeAwaitsLoad && page.notice == .hidden
     }
 
     /// 网页视图铺满 webContainer 的四条约束。

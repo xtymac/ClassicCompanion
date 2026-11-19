@@ -1,4 +1,5 @@
 import AppKit
+import CompanionCore
 
 /// 一个页面加载到哪一步了。这里只放状态：什么时候改、怎么用，规则都还在 ChatWindowController 里。
 /// 现在窗口只有一份（ChatWindowController.page），换网页视图时不跟着换。
@@ -8,6 +9,11 @@ final class PageLoadState {
     var hasCommittedPage = false
     /// 主框架已提交、还没加载完成。
     var awaitingFinish = false
+    /// “无法连接”提示正在显示的状态，.hidden 是没显示。窗口的提示（内容和那一层显不显示）只照它投出来，
+    /// 见 ChatWindowController.applyNotice()。
+    /// 留到加载完成时（noticeAwaitsLoad）：WebRuntime 已经说可以收起，这里仍是收起前的状态，提示照样显示。
+    /// 淡出时：这里已是 .hidden、提示那层已藏起，盖在上面淡出的是另一层（窗口的动画，不算页面状态）。
+    var notice: LoadRecovery.Status = .hidden
     /// 提示收到“可以收起”时网页刚提交、还没画出来：留到加载完成再淡出。
     var noticeAwaitsLoad = false
     /// 每次提交和加载完成时加一。提交后的兜底只在代号没变时生效。
