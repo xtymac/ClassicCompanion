@@ -21,6 +21,7 @@ import CompanionCore
 /// 后台的事从不改前台。设置（网页增强、页面缩放、网页无障碍、弹窗标题）每个标签页都改。
 /// 每个标签页的运行时在这组里时都登记在共用的网络状态上（NetworkStatus 只通知，重试与否由各页自己的恢复规则决定），
 /// 离开这组时去掉（tabLeft(_:)）。
+/// 这里写的某个标签页的日志（页面变化、媒体状态、实验）带那个标签页的标签（TabLog，见 log(_:_:_:)）；窗口的日志不带。
 /// 选中的标签页和窗口显示着的页面要一致：应用里只有一个标签页，建窗口时传的就是它的 page；测试用 selectForTesting 两边一起设。
 ///
 /// 要用到的 AppDelegate 的东西由 AppDelegate 交进来（正式运行时的做法写在各项旁边），测试换成记录。
@@ -121,17 +122,30 @@ final class ChatTabs {
         tabs.contains { $0 === tab }
     }
 
-    /// 加一个标签页：放在最右，不选中，接好线，登记到网络状态。运行时和适配器由调用方建好交进来，标识从 list 来。
-    /// 已到上限时返回 nil，什么都不加。应用里现在没有地方调用（还没有新增标签页的入口），测试用它加一个从不显示的标签页。
-    func add(runtime: WebRuntime, adapter: ChatGPTAdapter) -> ChatTab? {
+    /// 加一个标签页：放在最右，不选中，接好线，登记到网络状态。标识从 list 来，先发标识再由 make 用它建标签页
+    /// （正式运行是 ChatTab.make：运行时和适配器建的时候就知道自己的标识，日志从第一行起带标签）。
+    /// 已到上限时返回 nil，什么都不加，也不调用 make。应用里现在没有地方调用（还没有新增标签页的入口），
+    /// 测试用它加一个从不显示的标签页。
+    func add(_ make: (TabID) -> ChatTab) -> ChatTab? {
         guard case .added(let id) = list.append(select: false) else { return nil }
-        let tab = ChatTab(id: id, runtime: runtime, adapter: adapter)
+        let tab = make(id)
+        precondition(tab.id == id, "新标签页要用这次发的标识")
         tabs.append(tab)
         wire(tab)
         // 接好线再登记：已经知道网络状态时马上补发给它（断网时加进来的页面也等得到“网络恢复”），
         // 补发引起的变化照常到它自己的页面状态。
-        network.add(runtime)
+        network.add(tab.runtime)
         return tab
+    }
+
+    /// 测试用：运行时和适配器已经建好（日志不带标签），加成一个标签页。别的和 add(_:) 一样。
+    func add(runtime: WebRuntime, adapter: ChatGPTAdapter) -> ChatTab? {
+        add { ChatTab(id: $0, runtime: runtime, adapter: adapter) }
+    }
+
+    /// 写标签页 tab 的事：写进这组的诊断（和原来一样），行末带 tab 的标签（它的运行时带标签时，见 ChatTab.logTag）。
+    private func log(_ tab: ChatTab, _ category: String, _ message: String) {
+        TabLog(diagnostics: diagnostics, tab: tab.logTag)(category, message)
     }
 
     /// 标签页离开这组时：从共用的网络状态上去掉，之后的网络变化不再送给它。现在只有测试的 removeForTesting(_:) 调用。
@@ -140,7 +154,7 @@ final class ChatTabs {
         network.remove(tab.runtime)
     }
 
-    /// 把标签页 tab 的网页运行时的回调接到窗口上。启动时 AppDelegate 在原来接这些的地方调用，add(runtime:adapter:) 也调用。
+    /// 把标签页 tab 的网页运行时的回调接到窗口上。启动时 AppDelegate 在原来接这些的地方调用，add(_:) 也调用。
     /// 每个闭包都绑定这个 tab（weak：闭包挂在 tab 的运行时上，强引用会成环），事件按它处理。
     /// page 和 webView 是 tab 的常量（let），接线时取和回调时取是同一个对象；闭包持有它们不成环（它们不持有运行时）。
     func wire(_ tab: ChatTab) {
@@ -180,8 +194,8 @@ final class ChatTabs {
         selected.runtime.reload()
     }
 
-    /// 标签页 tab 的地址变了。路径、适配器、“页面变化”日志和 0.8 秒后的媒体日志都是这个标签页的，不管选没选中；
-    /// 记下可恢复的对话地址跟着选中的标签页，只有它是选中的才记。
+    /// 标签页 tab 的地址变了。路径、适配器、“页面变化”日志和 0.8 秒后的媒体日志都是这个标签页的，不管选没选中
+    /// （两行日志都带它的标签）；记下可恢复的对话地址跟着选中的标签页，只有它是选中的才记。
     private func urlChanged(_ url: URL?, for tab: ChatTab) {
         if isSelected(tab), let restorable = NavigationPolicy.restorableConversationURL(url) {
             saveLastConversation(restorable)
@@ -192,14 +206,14 @@ final class ChatTabs {
         let previous = tab.lastPath
         tab.lastPath = path
         tab.adapter.invalidate()
-        diagnostics.log("nav", "页面变化 \(Redactor.describe(url))")
+        log(tab, "nav", "页面变化 \(Redactor.describe(url))")
         // 记录导航时网页媒体状态，用于验证“切换对话后官方朗读是否停止”（不主动干预）。
         // 读的是这个标签页的适配器；到点时它已经释放或不在这组标签页里就不记。
         if previous != nil {
             Task { [weak self, weak tab] in
                 try? await Task.sleep(for: .milliseconds(800))
                 guard let self, let tab, self.holds(tab) else { return }
-                self.diagnostics.log("media", "页面变化后 0.8s WebKit 媒体状态=\(await self.mediaState(tab.adapter))")
+                self.log(tab, "media", "页面变化后 0.8s WebKit 媒体状态=\(await self.mediaState(tab.adapter))")
             }
         }
     }
@@ -259,7 +273,7 @@ final class ChatTabs {
             guard self.holds(tab) else { return }
             self.diagnostics.webMediaState = state
             if state != self.media.state {
-                self.diagnostics.log("media", "WebKit 媒体状态 \(self.media.state) → \(state)（窗口可见=\(self.windowController.window?.isVisible ?? false)）")
+                self.log(tab, "media", "WebKit 媒体状态 \(self.media.state) → \(state)（窗口可见=\(self.windowController.window?.isVisible ?? false)）")
                 self.media.state = state
             }
         }
@@ -272,10 +286,13 @@ final class ChatTabs {
         await PageEvidence.collect(from: evidenceTarget(tab), measure: measure, into: diagnostics) { self.holds(tab) }
     }
 
-    /// 媒体实验（诊断窗口）：和采集证据一样，对开始这一刻选中的标签页做。写报告文件由调用方在这之后做。
+    /// 媒体实验（诊断窗口）：和采集证据一样，对开始这一刻选中的标签页做；日志里的实验行带它的标签。
+    /// 写报告文件由调用方在这之后做。
     func runExperiment(_ kind: ExperimentKind) async {
         let tab = selected
-        await PageEvidence.runExperiment(kind, on: evidenceTarget(tab), diagnostics: diagnostics) { self.holds(tab) }
+        await PageEvidence.runExperiment(kind, on: evidenceTarget(tab), diagnostics: diagnostics, tab: tab.logTag) {
+            self.holds(tab)
+        }
     }
 
     // MARK: - 排版变化前后的阅读位置

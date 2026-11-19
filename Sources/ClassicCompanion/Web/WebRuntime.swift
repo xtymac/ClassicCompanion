@@ -11,6 +11,9 @@ final class WebRuntime: NSObject {
 
     let webView: CompanionWebView
     private let diagnostics: Diagnostics
+    /// 这个运行时写的日志都经过它：建的时候给了标签页的标识，每行末尾就带上那个标签页的标签（见 TabLog）。
+    /// 弹窗的导航也由这个运行时处理，写的行带的是打开弹窗的那个标签页的标签。
+    let log: TabLog
     private let settings: AppSettings
     private var observations: [NSKeyValueObservation] = []
     private var popupWindows: [NSWindow] = []
@@ -47,9 +50,13 @@ final class WebRuntime: NSObject {
     /// 消息桥白名单
     private static let allowedMessageTypes: Set<String> = ["escape"]
 
+    /// tab：这个运行时属于哪个标签页，日志带上它的标签。正式运行由 ChatTab.make 传；不传（nil）就不带，
+    /// 测试里单独建的运行时就是这样。
     init(diagnostics: Diagnostics, settings: AppSettings,
-         recovery: LoadRecovery = LoadRecovery(), watchesNetwork: Bool = true) {
+         recovery: LoadRecovery = LoadRecovery(), watchesNetwork: Bool = true, tab: TabID? = nil) {
         self.diagnostics = diagnostics
+        let log = TabLog(diagnostics: diagnostics, tab: tab)
+        self.log = log
         self.settings = settings
         self.recovery = recovery
 
@@ -61,10 +68,10 @@ final class WebRuntime: NSObject {
         config.mediaTypesRequiringUserActionForPlayback = []
         let companionWebView = CompanionWebView(frame: .zero, configuration: config)
         companionWebView.blockAccessibility = !settings.allowPageAccessibility
-        companionWebView.onAccessibilityRequest = { [diagnostics] request, allowed in
-            diagnostics.log("ax", "首次收到无障碍请求 \(request) 放行=\(allowed)")
+        companionWebView.onAccessibilityRequest = { [log] request, allowed in
+            log("ax", "首次收到无障碍请求 \(request) 放行=\(allowed)")
         }
-        diagnostics.log("ax", "允许其他应用读取网页内容=\(settings.allowPageAccessibility) VoiceOver=\(NSWorkspace.shared.isVoiceOverEnabled)")
+        log("ax", "允许其他应用读取网页内容=\(settings.allowPageAccessibility) VoiceOver=\(NSWorkspace.shared.isVoiceOverEnabled)")
         webView = companionWebView
         super.init()
         loadRequest = { [weak self] request in _ = self?.webView.load(request) }
@@ -83,7 +90,7 @@ final class WebRuntime: NSObject {
         #else
         webView.isInspectable = false
         #endif
-        diagnostics.log("web", "网页检查器：\(webView.isInspectable ? "开" : "关")")
+        log("web", "网页检查器：\(webView.isInspectable ? "开" : "关")")
         // 不设 underPageBackgroundColor：设了就固定住，WebKit 不再报出页面底色，顶部一条的浅深色就跟不上 ChatGPT（0044 实测）。
         // 它也不是切换时那块空白的来源（2309 排查：改成红色，空白不变）。
 
@@ -141,18 +148,18 @@ final class WebRuntime: NSObject {
         webView.evaluateJavaScript(AdapterScripts.quickHideUserScript + "\n!!document.getElementById('cc-quick-hide')",
                                    in: nil, in: .defaultClient) { [weak self] result in
             MainActor.assumeIsolated {
-                if case .success(let value) = result { self?.diagnostics.log("esc", "小窗藏按钮样式就位=\((value as? Bool) == true)") }
+                if case .success(let value) = result { self?.log("esc", "小窗藏按钮样式就位=\((value as? Bool) == true)") }
             }
         }
         webView.evaluateJavaScript(AdapterScripts.escapeUserScript + "\ntypeof window.__ccRemoveEscape", in: nil, in: .defaultClient) { [weak self] result in
             MainActor.assumeIsolated {
                 switch result {
                 case .success(let value):
-                    self?.diagnostics.log("esc", "Esc 脚本就位=\((value as? String) == "function")")
+                    self?.log("esc", "Esc 脚本就位=\((value as? String) == "function")")
                 case .failure(let error):
                     let e = error as NSError
                     let message = (e.userInfo["WKJavaScriptExceptionMessage"] as? String).map { String($0.prefix(120)) } ?? "-"
-                    self?.diagnostics.log("esc", "Esc 脚本注入失败 \(e.domain)#\(e.code) \(message)")
+                    self?.log("esc", "Esc 脚本注入失败 \(e.domain)#\(e.code) \(message)")
                 }
             }
         }
@@ -163,7 +170,7 @@ final class WebRuntime: NSObject {
         holdReadingPosition()
         webView.pageZoom = zoom
         restoreReadingPosition()
-        diagnostics.log("zoom", "页面缩放 \(Int(zoom * 100))%")
+        log("zoom", "页面缩放 \(Int(zoom * 100))%")
     }
 
     /// 排版变化前记下正在读的内容，变化后放回原处。
@@ -180,11 +187,11 @@ final class WebRuntime: NSObject {
     func prepareLayout(size: NSSize, done: @escaping @MainActor () -> Void) {
         let width = Self.cssWidth(points: size.width, zoom: webView.pageZoom)
         let started = Date()
-        webView.callAsyncJavaScript(AdapterScripts.layoutReadyScript, arguments: ["width": width], in: nil, in: .defaultClient) { [diagnostics] result in
+        webView.callAsyncJavaScript(AdapterScripts.layoutReadyScript, arguments: ["width": width], in: nil, in: .defaultClient) { [log] result in
             // 共计减去三段，是脚本开始之前的等待（网页忙或消息排队）。
             if case .success(let value) = result, let steps = value as? [String: Any] {
                 let ms = { (key: String) in (steps[key] as? NSNumber)?.intValue ?? -1 }
-                diagnostics.log("window", "网页排版分段：共 \(Int(Date().timeIntervalSince(started) * 1000))ms 到宽度 \(ms("match"))ms "
+                log("window", "网页排版分段：共 \(Int(Date().timeIntervalSince(started) * 1000))ms 到宽度 \(ms("match"))ms "
                                 + "排版 \(ms("layout"))ms 放回 \(ms("restore"))ms 可滚动高度 \(ms("height"))")
             }
             done()
@@ -205,11 +212,11 @@ final class WebRuntime: NSObject {
 
     func setPageAccessibilityAllowed(_ allowed: Bool) {
         webView.blockAccessibility = !allowed
-        diagnostics.log("ax", "允许其他应用读取网页内容=\(allowed)")
+        log("ax", "允许其他应用读取网页内容=\(allowed)")
     }
 
     func load(_ url: URL) {
-        diagnostics.log("nav", "加载 \(Redactor.describe(url))")
+        log("nav", "加载 \(Redactor.describe(url))")
         if LoadRecovery.isRetryable(url) { lastRequestedURL = url }
         loadRequest(URLRequest(url: url))
     }
@@ -267,13 +274,13 @@ final class WebRuntime: NSObject {
         if let url = recovery.manualReload() {
             retryTimer?.cancel()
             retryTimer = nil
-            diagnostics.log("nav", "重新加载失败的地址")
+            log("nav", "重新加载失败的地址")
             load(url)
             publishLoadProblem()
             return
         }
         if !pageCommitted, let url = lastRequestedURL {
-            diagnostics.log("nav", "还没有页面，重新加载请求的地址")
+            log("nav", "还没有页面，重新加载请求的地址")
             load(url)
             return
         }
@@ -290,7 +297,7 @@ final class WebRuntime: NSObject {
 
     /// 只有从断网变成在线才触发重试；断网期间不发请求。
     func networkChanged(online: Bool) {
-        if online != recovery.online { diagnostics.log("net", online ? "网络可用" : "网络不可用") }
+        if online != recovery.online { log("net", online ? "网络可用" : "网络不可用") }
         handle(recovery.networkChanged(online: online), trigger: "网络恢复")
     }
 
@@ -317,7 +324,7 @@ final class WebRuntime: NSObject {
         case .retry(let url):
             retryTimer?.cancel()
             retryTimer = nil
-            diagnostics.log("nav", "自动重试（\(trigger)）第 \(recovery.autoRetries) 次")
+            log("nav", "自动重试（\(trigger)）第 \(recovery.autoRetries) 次")
             load(url)
         case .schedule(let delay):
             retryTimer?.cancel()
@@ -326,7 +333,7 @@ final class WebRuntime: NSObject {
             }
             retryTimer = work
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
-            diagnostics.log("nav", "\(String(format: "%g", delay)) 秒后自动重试")
+            log("nav", "\(String(format: "%g", delay)) 秒后自动重试")
         }
         publishLoadProblem()
     }
@@ -344,12 +351,12 @@ final class WebRuntime: NSObject {
         let status = recovery.status
         guard status != loadProblem else { return }
         loadProblem = status
-        diagnostics.log("nav", "无法连接提示：\(status)")
+        log("nav", "无法连接提示：\(status)")
         onLoadProblemChange?(status)
     }
 
     private func openExternally(_ url: URL) {
-        diagnostics.log("nav", "外部链接交给默认浏览器：\(Redactor.describe(url))")
+        log("nav", "外部链接交给默认浏览器：\(Redactor.describe(url))")
         NSWorkspace.shared.open(url)
     }
 }
@@ -414,14 +421,14 @@ extension WebRuntime: WKNavigationDelegate {
                 return (.cancel, preferences)
             }
             if webView === self.webView, kind == .auth {
-                diagnostics.log("nav", "认证跳转：\(Redactor.describe(url))")
+                log("nav", "认证跳转：\(Redactor.describe(url))")
             }
             return (.allow, preferences)
         case .external:
             if let url { openExternally(url) }
             return (.cancel, preferences)
         case .blocked:
-            diagnostics.log("nav", "已阻止导航：\(Redactor.describe(url))")
+            log("nav", "已阻止导航：\(Redactor.describe(url))")
             return (.cancel, preferences)
         }
     }
@@ -460,7 +467,7 @@ extension WebRuntime: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        diagnostics.log("nav", "加载完成 \(Redactor.describe(webView.url))")
+        log("nav", "加载完成 \(Redactor.describe(webView.url))")
         guard webView === self.webView else { return }
         pageArrived()
         ensureEscapeScript()
@@ -474,7 +481,7 @@ extension WebRuntime: WKNavigationDelegate {
                 self.webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { result in
                     MainActor.assumeIsolated {
                         let summary = (try? result.get()) as? String ?? "error"
-                        self.diagnostics.log("render", "自检 frame=\(Int(size.width))x\(Int(size.height)) \(summary)")
+                        self.log("render", "自检 frame=\(Int(size.width))x\(Int(size.height)) \(summary)")
                     }
                 }
             }
@@ -499,7 +506,7 @@ extension WebRuntime: WKNavigationDelegate {
             }
             return
         }
-        diagnostics.log("nav", "加载失败 \(ns.domain)#\(ns.code) @ \(Redactor.describe(webView.url))")
+        log("nav", "加载失败 \(ns.domain)#\(ns.code) @ \(Redactor.describe(webView.url))")
         guard webView === self.webView else { return }
         // 还没提交过页面就是空白窗口（首次加载失败时 webView.url 也是 nil）；提交过的页面失败后仍留在窗口里。
         let hasPage = pageCommitted
@@ -511,7 +518,7 @@ extension WebRuntime: WKNavigationDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        diagnostics.log("web", "网页内容进程终止，重新加载")
+        log("web", "网页内容进程终止，重新加载")
         if webView === self.webView { reload() } else { webView.reload() }
     }
 }
@@ -530,17 +537,17 @@ extension WebRuntime: WKDownloadDelegate {
             dest = dir.appendingPathComponent("\(base) \(i)" + (ext.isEmpty ? "" : ".\(ext)"))
             i += 1
         }
-        diagnostics.log("download", "开始下载（文件名已省略）")
+        log("download", "开始下载（文件名已省略）")
         return dest
     }
 
     func downloadDidFinish(_ download: WKDownload) {
-        diagnostics.log("download", "下载完成")
+        log("download", "下载完成")
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         let ns = error as NSError
-        diagnostics.log("download", "下载失败 \(ns.domain)#\(ns.code)")
+        log("download", "下载失败 \(ns.domain)#\(ns.code)")
     }
 }
 
@@ -563,7 +570,7 @@ extension WebRuntime: WKUIDelegate {
         }
         if kind == .blocked { return nil }
         // 认证等弹窗：使用 WebKit 提供的 configuration 以保留 window.opener 关系
-        diagnostics.log("nav", "打开弹窗：\(Redactor.describe(url))")
+        log("nav", "打开弹窗：\(Redactor.describe(url))")
         let popup = WKWebView(frame: NSRect(x: 0, y: 0, width: 520, height: 680), configuration: configuration)
         popup.navigationDelegate = self
         popup.uiDelegate = self
@@ -649,7 +656,7 @@ extension WebRuntime: WKUIDelegate {
     func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin,
                  initiatedBy frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
         // Phase 0 不开启麦克风/摄像头（实时 Voice Chat 属于 P1）
-        diagnostics.log("media", "已拒绝媒体采集请求（Phase 0 不启用）")
+        log("media", "已拒绝媒体采集请求（Phase 0 不启用）")
         return .deny
     }
 }
@@ -666,7 +673,7 @@ extension WebRuntime: WKScriptMessageHandler {
               body.count == 1,
               let type = body["type"] as? String,
               Self.allowedMessageTypes.contains(type) else {
-            diagnostics.log("bridge", "已拒绝不符合约束的消息")
+            log("bridge", "已拒绝不符合约束的消息")
             return
         }
         switch type {
