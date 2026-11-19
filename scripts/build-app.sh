@@ -15,7 +15,7 @@ SIGNING_MODE="${CC_SIGNING_MODE:-$( [[ "$CONFIG" == release ]] && echo developer
 if [[ "$SIGNING_MODE" == developer-id ]]; then signing_preflight; fi
 EXECUTABLE="ClassicCompanion"
 BUNDLE_ID="local.classiccompanion.ClassicCompanion"   # 不要改：登录数据按它存放
-VERSION="0.1.0-beta.3"   # beta.3 候选（2026-11-14）：唤醒时窗口模式。beta.2（20261113.1719）是第一个带应用内更新的版本
+VERSION="0.1.0-beta.4"   # beta.4 候选（2026-11-19）：石墨灰小闪电图标、窗口顶部的闪电和应用名。beta.3（20261117.1150）：唤醒时窗口模式。beta.2（20261113.1719）是第一个带应用内更新的版本
 MIN_MACOS="15.0"
 BUILD_STAMP="$(date +%Y%m%d.%H%M)"
 OUT_DIR="build/$BUILD_STAMP"
