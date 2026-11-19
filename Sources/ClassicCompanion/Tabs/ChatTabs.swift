@@ -1,19 +1,28 @@
 import Foundation
 import CompanionCore
 
-/// 标签页和窗口之间的接线：把标签页的网页运行时的回调接到窗口上（wire(_:)），加上换页面（urlChanged）和聚焦输入框
-/// （focusInputSoon）。原来都写在 AppDelegate 里，原样搬过来：同样的闭包、同样的内容、同样的顺序。
-/// 搬出来是为了能在不建 AppDelegate、不开应用的测试里核对这些顺序（LaunchWiringTests）：冷启动看起来对不对就靠它们。
+/// 标签页和窗口之间的接线：把每个标签页的网页运行时的回调接到窗口上（wire(_:)），加上换页面（urlChanged）和聚焦输入框
+/// （focusInputSoon）。原来都写在 AppDelegate 里，搬过来是为了能在不建 AppDelegate、不开应用的测试里核对这些顺序
+/// （LaunchWiringTests、TabEventOwnershipTests）：冷启动看起来对不对就靠它们。
 ///
-/// 现在只有一个标签页（tab）。带页面的窗口入口传的是这个标签页自己的 page：只有一个标签页时它就是窗口的 page
-/// （同一个对象，AppDelegate 建窗口时传的就是它），所以和原来不带页面的入口效果一样。
-/// 不判断标签页选没选中，不建、不选第二个标签页。
+/// 这里有一组标签页（tabs，按从左到右）和选中的那个（selected）。顺序、选中项和标识都由 list（TabList）决定。
+/// 应用里现在仍只有启动时的那一个，它就是选中的、窗口显示着的。还没有标签栏，也没有切换的入口
+/// （换网页视图、把页面状态投到窗口、采用颜色都留到下一阶段）。
+///
+/// 规则：事件属于发出它的标签页，接线时就绑定那个标签页，处理时明确传着它，不在中途拿“现在选中的”来代替。
+/// - 标签页自己的状态（页面加载状态、lastPath、适配器的代号、它自己的日志）不管选没选中都照常改。
+/// - 窗口和全应用的事（隐藏窗口、聚焦输入框、记下可恢复的对话地址）只在它是选中的标签页时做。
+///   页面加载状态的窗口部分由 ChatWindowController 判断（只有显示着的页面动窗口），这里不重复判断。
+/// - 排着的任务（80ms 后聚焦、0.8 秒后记媒体状态）带着排下它的标签页（weak），到点时它不再是对的对象就不做。
+/// 选中的标签页和窗口显示着的页面要一致：应用里只有一个标签页，建窗口时传的就是它的 page；测试用 selectForTesting 两边一起设。
 ///
 /// 要用到的 AppDelegate 的东西由 AppDelegate 交进来（正式运行时的做法写在各项旁边），测试换成记录。
 @MainActor
 final class ChatTabs {
-    /// 现在唯一的标签页。
-    let tab: ChatTab
+    /// 顺序、选中项、上限，和标识的来源（TabID 只能由 TabList 发放）。tabs 和它一一对应、顺序相同。
+    private(set) var list: TabList
+    /// 从左到右，和 list.tabs 一样的顺序。
+    private(set) var tabs: [ChatTab]
     private let windowController: ChatWindowController
     private let diagnostics: Diagnostics
     /// 隐藏窗口，参数是写进日志的原因。AppDelegate：windowController.hide(reason:)。
@@ -27,13 +36,21 @@ final class ChatTabs {
     /// 窗口是不是 key 窗口（加载完成时据此决定要不要聚焦）。就是 windowController.isKey；
     /// 只有测试换它：测试不显示窗口，窗口不会成为 key 窗口。
     var windowIsKey: @MainActor () -> Bool
+    /// 聚焦请求的代号，每次 focusInputSoon(for:) 加一（不管是哪个标签页的）。窗口里只有一个键盘焦点，
+    /// 最新的请求说了算：排着的聚焦到点时代号变了就不做，哪怕它的标签页又被选中了（选中 A → B → A）。
+    private var focusGeneration = 0
 
-    init(tab: ChatTab, windowController: ChatWindowController, diagnostics: Diagnostics,
+    /// list：启动时的列表，只有 tab 一个、并且选中它（tab 的标识就是从它来的）。
+    /// 窗口在这之前已经用 tab 的网页视图和 page 建好：所以选中的标签页和窗口显示着的页面一开始就一致。
+    /// 提示里的“重新加载”是窗口的，在这里接一次（见 reloadSelectedTab()），wire(_:) 不再改它。
+    init(list: TabList, tab: ChatTab, windowController: ChatWindowController, diagnostics: Diagnostics,
          hideWindow: @escaping @MainActor (String) -> Void,
          focusInput: @escaping @MainActor (ChatGPTAdapter) async -> String,
          saveLastConversation: @escaping @MainActor (URL) -> Void,
          mediaState: @escaping @MainActor (ChatGPTAdapter) async -> String) {
-        self.tab = tab
+        precondition(list.tabs == [tab.id] && list.selected == tab.id, "启动时只有这一个标签页，并且选中它")
+        self.list = list
+        tabs = [tab]
         self.windowController = windowController
         self.diagnostics = diagnostics
         self.hideWindow = hideWindow
@@ -41,22 +58,59 @@ final class ChatTabs {
         self.saveLastConversation = saveLastConversation
         self.mediaState = mediaState
         windowIsKey = { windowController.isKey }
+        windowController.onReloadRequest = { [weak self] in self?.reloadSelectedTab() }
     }
 
-    /// 把标签页 tab 的网页运行时的回调接到窗口上，再接窗口提示里的“重新加载”。AppDelegate 在启动时原来接这些的地方调用。
-    /// page 和 webView 是 tab 的常量（let），接线时取和回调时取是同一个对象。闭包挂在运行时上，持有它们不成环（它们不持有运行时）。
+    /// 选中的标签页。
+    var selected: ChatTab {
+        guard let tab = tabs.first(where: { $0.id == list.selected }) else { preconditionFailure("选中项不在标签页里") }
+        return tab
+    }
+
+    /// tab 是不是选中的那个（按对象比，不只比标识）。
+    func isSelected(_ tab: ChatTab) -> Bool {
+        selected === tab
+    }
+
+    /// tab 还在这组标签页里。
+    func holds(_ tab: ChatTab) -> Bool {
+        tabs.contains { $0 === tab }
+    }
+
+    /// 加一个标签页：放在最右，不选中，接好线。运行时和适配器由调用方建好交进来（建立顺序留在调用方），标识从 list 来。
+    /// 已到上限时返回 nil，什么都不加。应用里现在没有地方调用（还没有新增标签页的入口），测试用它加一个从不显示的标签页。
+    func add(runtime: WebRuntime, adapter: ChatGPTAdapter) -> ChatTab? {
+        guard case .added(let id) = list.append(select: false) else { return nil }
+        let tab = ChatTab(id: id, runtime: runtime, adapter: adapter)
+        tabs.append(tab)
+        wire(tab)
+        return tab
+    }
+
+    /// 把标签页 tab 的网页运行时的回调接到窗口上。启动时 AppDelegate 在原来接这些的地方调用，add(runtime:adapter:) 也调用。
+    /// 每个闭包都绑定这个 tab（weak：闭包挂在 tab 的运行时上，强引用会成环），事件按它处理。
+    /// page 和 webView 是 tab 的常量（let），接线时取和回调时取是同一个对象；闭包持有它们不成环（它们不持有运行时）。
     func wire(_ tab: ChatTab) {
         let page = tab.page, webView = tab.runtime.webView
-        tab.runtime.onURLChange = { [weak self] url in self?.urlChanged(url) }
-        tab.runtime.onEscapeRequest = { [weak self] in self?.hideWindow("网页 Esc") }
-        // 页面加载完成时结束启动画面；若窗口在前台，再尝试聚焦一次（唤醒时页面可能尚未就绪）
-        tab.runtime.onMainFrameLoaded = { [weak self] in
+        tab.runtime.onURLChange = { [weak self, weak tab] url in
+            guard let self, let tab else { return }
+            self.urlChanged(url, for: tab)
+        }
+        // 隐藏窗口是窗口的事：只有选中的标签页的 Esc 才隐藏。
+        tab.runtime.onEscapeRequest = { [weak self, weak tab] in
+            guard let self, let tab, self.isSelected(tab) else { return }
+            self.hideWindow("网页 Esc")
+        }
+        // 页面加载完成时结束启动画面；若窗口在前台，再尝试聚焦一次（唤醒时页面可能尚未就绪）。
+        // 结束启动画面和加载完成都带着这个标签页的页面交给窗口：窗口只在它显示着时动（规则在 ChatWindowController 里）。
+        // 聚焦只给选中的标签页。
+        tab.runtime.onMainFrameLoaded = { [weak self, weak tab] in
             guard let self else { return }
             self.windowController.endLaunchScreen("网页已加载", for: page)
             // 网页第一次加载完成才恢复跟随页面底色；加载失败、启动画面到时限都不恢复，等之后哪次加载完成。
-            // 报的颜色是这个标签页的网页视图此刻报的；只有一个标签页时它就是窗口显示着的网页视图（原来入口读的那个）。
+            // 报的颜色是这个标签页的网页视图此刻报的（不显示的标签页只记在它的页面状态里）。
             self.windowController.pageDidFinishLoading(page, reportedColor: webView.underPageBackgroundColor)
-            if self.windowIsKey() { self.focusInputSoon() }
+            if let tab, self.isSelected(tab), self.windowIsKey() { self.focusInputSoon(for: tab) }
         }
         // 加载失败时结束启动画面。WebKit 不显示错误页：首次加载失败时窗口里没有页面，
         // 由 WebRuntime 自动重试（退避、限次、断网不发请求），窗口盖“无法连接”提示，⌘R 和提示里的按钮显式加载失败的地址
@@ -65,11 +119,18 @@ final class ChatTabs {
         tab.runtime.onLoadProblemChange = { [weak self] status in self?.windowController.showLoadProblem(status, for: page) }
         // 提交时先告诉窗口：到时限后还在的启动画面和留着的提示要等加载完成（或提交后 1 秒）再撤。
         tab.runtime.onMainFrameCommitted = { [weak self] in self?.windowController.pageDidCommit(page) }
-        windowController.onReloadRequest = { [weak self] in self?.tab.runtime.reload() }
     }
 
-    private func urlChanged(_ url: URL?) {
-        if let restorable = NavigationPolicy.restorableConversationURL(url) {
+    /// 提示里的“重新加载”（窗口的按钮）：按下时选中的标签页重新加载。提示显示的是窗口显示着的页面的状态，
+    /// 那就是选中的标签页。
+    private func reloadSelectedTab() {
+        selected.runtime.reload()
+    }
+
+    /// 标签页 tab 的地址变了。路径、适配器、“页面变化”日志和 0.8 秒后的媒体日志都是这个标签页的，不管选没选中；
+    /// 记下可恢复的对话地址跟着选中的标签页，只有它是选中的才记。
+    private func urlChanged(_ url: URL?, for tab: ChatTab) {
+        if isSelected(tab), let restorable = NavigationPolicy.restorableConversationURL(url) {
             saveLastConversation(restorable)
         }
         // 仅路径变化视为切换页面（忽略 query 变化）
@@ -79,23 +140,52 @@ final class ChatTabs {
         tab.lastPath = path
         tab.adapter.invalidate()
         diagnostics.log("nav", "页面变化 \(Redactor.describe(url))")
-        // 记录导航时网页媒体状态，用于验证“切换对话后官方朗读是否停止”（不主动干预）
+        // 记录导航时网页媒体状态，用于验证“切换对话后官方朗读是否停止”（不主动干预）。
+        // 读的是这个标签页的适配器；到点时它已经释放或不在这组标签页里就不记。
         if previous != nil {
-            Task { [weak self] in
+            Task { [weak self, weak tab] in
                 try? await Task.sleep(for: .milliseconds(800))
-                guard let self else { return }
-                self.diagnostics.log("media", "页面变化后 0.8s WebKit 媒体状态=\(await self.mediaState(self.tab.adapter))")
+                guard let self, let tab, self.holds(tab) else { return }
+                self.diagnostics.log("media", "页面变化后 0.8s WebKit 媒体状态=\(await self.mediaState(tab.adapter))")
             }
         }
     }
 
+    /// 聚焦选中的标签页的输入框：窗口级的请求（窗口显示、新对话），选中的标签页在调用这一刻读。
     func focusInputSoon() {
+        focusInputSoon(for: selected)
+    }
+
+    /// 80ms 后聚焦 tab 的输入框。先取消 tab 排着的那次。
+    /// 到点时只有 tab 还是选中的、并且这还是最新的一次聚焦请求（代号没变）才聚焦；tab 已经释放也不做。
+    func focusInputSoon(for tab: ChatTab) {
         tab.focusTask?.cancel()
-        tab.focusTask = Task { [weak self] in
+        focusGeneration += 1
+        let generation = focusGeneration
+        tab.focusTask = Task { [weak self, weak tab] in
             try? await Task.sleep(for: .milliseconds(80))
-            guard let self, !Task.isCancelled else { return }
-            let result = await self.focusInput(self.tab.adapter)
+            guard let self, let tab, !Task.isCancelled, self.isSelected(tab), self.focusGeneration == generation else { return }
+            let result = await self.focusInput(tab.adapter)
             self.diagnostics.recordInputFocus(result)
         }
     }
+
+    #if DEBUG
+    /// 只给测试用（调试版才有）：把 tab 记作选中的，并让窗口把 tab 的页面当作显示着的，两边保持一致。
+    /// 别的都不做：不换网页视图（不调用 replaceWebView）、不把页面状态投到窗口、不采用颜色、不聚焦、不写日志。
+    /// 真正切换标签页的入口留到下一阶段。
+    func selectForTesting(_ tab: ChatTab) {
+        precondition(holds(tab), "只能选这组里的标签页")
+        _ = list.select(tab.id)
+        windowController.setDisplayedPageForTesting(tab.page)
+    }
+
+    /// 只给测试用：把不选中的 tab 从这组里拿掉（列表里也关掉，不记最近关闭），别的都不做：
+    /// 不停它的加载、不拆它的回调、不取消它排着的任务。用来验证排着的任务到点时不再对它起作用。关闭标签页的收尾留到以后。
+    func removeForTesting(_ tab: ChatTab) {
+        precondition(holds(tab) && !isSelected(tab), "只拿掉这组里不选中的标签页")
+        _ = list.close(tab.id, url: nil)
+        tabs.removeAll { $0 === tab }
+    }
+    #endif
 }
