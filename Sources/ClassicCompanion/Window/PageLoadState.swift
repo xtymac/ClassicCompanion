@@ -36,4 +36,7 @@ final class PageLoadState {
     /// 每个页面加载完成时都记，和 hasFinishedFirstLoad 一起写。窗口只观察显示着的网页视图，不显示的页面的颜色只有这一份记录。
     /// 只记不用：切换到这个页面时能不能采用、怎么采用，留到下一阶段。
     var colorAtLastFinish: NSColor?
+    /// 这个页面已经关闭（关闭标签页）。只由 ChatWindowController.pageClosed(_:) 设，不会改回。
+    /// 关了以后它的事件和它排着的回调都不起作用：上面这些状态停在关闭那一刻，窗口也不因它而变（规则在 ChatWindowController 里）。
+    var isClosed = false
 }

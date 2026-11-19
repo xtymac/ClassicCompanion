@@ -17,7 +17,7 @@ final class ChatTab {
     let page: PageLoadState
     /// 上次的页面路径（主机加路径，不含 query）。只有路径变了才算换了页面。
     var lastPath: String?
-    /// 排着的聚焦输入框任务。再次请求聚焦时先取消它。
+    /// 排着的聚焦输入框任务。再次请求聚焦时先取消它；关闭标签页时也取消（ChatTabs.close(_:)）。
     var focusTask: Task<Void, Never>?
 
     /// 这个标签页的日志带的标签：就是它的运行时的（正式运行时是 id；测试里单独建的运行时不带，是 nil）。

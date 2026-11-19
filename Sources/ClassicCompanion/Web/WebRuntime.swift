@@ -46,6 +46,10 @@ final class WebRuntime: NSObject {
     private var pageCommitted = false
     /// 最后一次由应用发出的主框架地址（只记允许重试的 https 地址）。窗口还空着时 ⌘R 重新加载它。
     private var lastRequestedURL: URL?
+    /// 已经关闭（close()）。之后不再发起任何加载、不再排重试，网页的导航事件和弹窗请求都不理，回调已经断开。不会改回。
+    private(set) var isClosed = false
+    /// 排着一次定时自动重试（测试和诊断用）。
+    var hasScheduledRetry: Bool { retryTimer != nil }
 
     /// 消息桥白名单
     private static let allowedMessageTypes: Set<String> = ["escape"]
@@ -215,7 +219,9 @@ final class WebRuntime: NSObject {
         log("ax", "允许其他应用读取网页内容=\(allowed)")
     }
 
+    /// 应用发出主框架加载都经过这里（自动重试、网络恢复、窗口显示后、⌘R 有失败地址时、新对话）。关闭以后什么都不发。
     func load(_ url: URL) {
+        guard !isClosed else { return }
         log("nav", "加载 \(Redactor.describe(url))")
         if LoadRecovery.isRetryable(url) { lastRequestedURL = url }
         loadRequest(URLRequest(url: url))
@@ -269,8 +275,9 @@ final class WebRuntime: NSObject {
 
     /// ⌘R、窗口里的“重新加载”、网页内容进程终止后都走这里。
     /// 窗口里没有页面时 reload() 不会重新请求（2026-11-11 实测），所以显式 load：有失败地址就加载它；
-    /// 首次加载还没完成或被取消时，重新加载最后请求的地址。
+    /// 首次加载还没完成或被取消时，重新加载最后请求的地址。关闭以后什么都不做（它也会直接 webView.reload()，不只经过 load）。
     func reload() {
+        guard !isClosed else { return }
         if let url = recovery.manualReload() {
             retryTimer?.cancel()
             retryTimer = nil
@@ -295,8 +302,10 @@ final class WebRuntime: NSObject {
         handle(recovery.windowShown(), trigger: "窗口显示")
     }
 
-    /// 只有从断网变成在线才触发重试；断网期间不发请求。
+    /// 只有从断网变成在线才触发重试；断网期间不发请求。关闭以后不理（不记日志、不重试）：
+    /// 正式运行时关闭时也从共用的网络状态上去掉了（ChatTabs.close），这里是运行时自己的规则。
     func networkChanged(online: Bool) {
+        guard !isClosed else { return }
         if online != recovery.online { log("net", online ? "网络可用" : "网络不可用") }
         handle(recovery.networkChanged(online: online), trigger: "网络恢复")
     }
@@ -317,7 +326,9 @@ final class WebRuntime: NSObject {
     }
 
     /// 同一时间最多一个定时器：排新的或马上重试时，先取消旧的。
+    /// 关闭以后不重试、不排定时器、不改提示（窗口显示后、定时器、加载失败和取消都经过这里）。
     private func handle(_ action: LoadRecovery.Action, trigger: String) {
+        guard !isClosed else { return }
         switch action {
         case .none:
             break
@@ -359,6 +370,42 @@ final class WebRuntime: NSObject {
         log("nav", "外部链接交给默认浏览器：\(Redactor.describe(url))")
         NSWorkspace.shared.open(url)
     }
+
+    // MARK: - 关闭
+
+    /// 关闭这个页面（关闭标签页时由 ChatTabs.close(_:) 调用；应用里现在还没有关闭标签页的入口）。
+    /// 先进入关闭态，之后这个运行时自己不再发起任何加载：定时重试、网络变化、窗口显示后、内容进程终止后的重新加载、
+    /// ⌘R、新对话都不加载（load、reload、handle 都先看它），网页的导航事件（提交、加载完成、失败、取消）也不再改恢复状态、
+    /// 不再转给窗口、不再排计时。所以下面停止加载引起的取消（-999）不会再排一次重试。
+    /// 然后：取消排着的重试；停止加载；断开六个回调（接线的闭包持有页面状态，断开后不再驱动它）；
+    /// 停掉地址观察和消息桥；关掉这个页面开的弹窗。
+    /// 关闭以后网页自己发起的导航、新窗口、提示框、确认框、文件选择也都按取消处理（见各代理方法）。
+    /// 关两遍：第二遍什么都不做。
+    /// 不做的：从共用的网络状态上去掉（登记是 ChatTabs 做的，去掉也由它做）；从窗口拿掉网页视图（窗口只显示选中的标签页，
+    /// 关的不是选中的）；取消进行中的网页脚本（新对话、证据采集、媒体状态由 ChatTabs 在 holds 检查处停下，见 ChatTabs.close(_:)）。
+    func close() {
+        guard !isClosed else { return }
+        isClosed = true
+        let hadRetry = retryTimer != nil
+        retryTimer?.cancel()
+        retryTimer = nil
+        webView.stopLoading()
+        onURLChange = nil
+        onMainFrameLoaded = nil
+        onMainFrameCommitted = nil
+        onLoadFailed = nil
+        onEscapeRequest = nil
+        onLoadProblemChange = nil
+        observations.forEach { $0.invalidate() }
+        observations = []
+        pathMonitor?.cancel()
+        pathMonitor = nil
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "cc", contentWorld: .defaultClient)
+        let popups = popupWindows
+        popupWindows = []
+        popups.forEach { $0.close() }
+        log("web", "关闭网页：停止加载\(hadRetry ? "，取消排着的自动重试" : "")\(popups.isEmpty ? "" : "，关掉 \(popups.count) 个弹窗")")
+    }
 }
 
 // MARK: - 后退、前进
@@ -397,9 +444,11 @@ extension WebRuntime: HistoryPage {
 
 // MARK: - 导航策略
 
+/// 关闭以后（isClosed）：网页自己发起的导航、下载一律取消，导航事件一律不理（不改状态、不写日志、不转给窗口）。
 extension WebRuntime: WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  preferences: WKWebpagePreferences) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
+        guard !isClosed else { return (.cancel, preferences) }
         if navigationAction.shouldPerformDownload { return (.download, preferences) }
         // 子框架（例如 Cloudflare 验证 iframe）由网页自行管理
         guard let frame = navigationAction.targetFrame, frame.isMainFrame else { return (.allow, preferences) }
@@ -434,7 +483,8 @@ extension WebRuntime: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
-        navigationResponse.canShowMIMEType ? .allow : .download
+        guard !isClosed else { return .cancel }
+        return navigationResponse.canShowMIMEType ? .allow : .download
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
@@ -453,7 +503,7 @@ extension WebRuntime: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        guard webView === self.webView else { return }
+        guard !isClosed, webView === self.webView else { return }
         recovery.navigationStarted()
         publishLoadProblem()
     }
@@ -461,21 +511,22 @@ extension WebRuntime: WKNavigationDelegate {
     /// 页面一提交就取消重试、记下有页面，并告诉窗口“提示可以收起”。窗口先收到提交，
     /// 会把提示留到加载完成再淡出（2026-11-15：提交时网页还没画出来，立刻收起会露出空白白色）。
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        guard webView === self.webView else { return }
+        guard !isClosed, webView === self.webView else { return }
         onMainFrameCommitted?()
         pageArrived()
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard !isClosed else { return }
         log("nav", "加载完成 \(Redactor.describe(webView.url))")
         guard webView === self.webView else { return }
         pageArrived()
         ensureEscapeScript()
         onMainFrameLoaded?()
-        // 无正文的渲染自检：只取数量
+        // 无正文的渲染自检：只取数量。到点时已经关闭就不做。
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, !self.isClosed else { return }
                 let size = self.webView.frame.size
                 let js = "JSON.stringify({rs: document.readyState, els: document.getElementsByTagName('*').length, vis: document.visibilityState})"
                 self.webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { result in
@@ -497,6 +548,7 @@ extension WebRuntime: WKNavigationDelegate {
     }
 
     private func logNavError(_ error: Error, webView: WKWebView) {
+        guard !isClosed else { return }
         let ns = error as NSError
         // NSURLErrorCancelled（-999）与 WebKit 框架中断（102）是正常的导航取消，不算加载故障。
         if ns.code == NSURLErrorCancelled || (ns.domain == "WebKitErrorDomain" && ns.code == 102) {
@@ -518,6 +570,7 @@ extension WebRuntime: WKNavigationDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard !isClosed else { return }
         log("web", "网页内容进程终止，重新加载")
         if webView === self.webView { reload() } else { webView.reload() }
     }
@@ -553,9 +606,12 @@ extension WebRuntime: WKDownloadDelegate {
 
 // MARK: - UI 代理：新窗口、文件选择、JS 对话框、媒体权限
 
+/// 关闭以后（isClosed）：不开新窗口，提示框、确认框、文件选择都按取消处理（不显示）。
+/// 不显示的标签页的这些请求等它被选中再显示，是以后切换标签页的事；这里只管关闭以后。
 extension WebRuntime: WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard !isClosed else { return nil }
         let url = navigationAction.request.url
         // 内嵌图片（data:）：WebKit 不肯把 data: 地址当顶层页面打开，交给它只会得到空白弹窗。
         if let image = ImageDataURL.decode(url) {
@@ -624,6 +680,7 @@ extension WebRuntime: WKUIDelegate {
 
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
                  initiatedByFrame frame: WKFrameInfo) async -> [URL]? {
+        guard !isClosed else { return nil }
         // 仅响应网页上的用户操作；不会自动上传任何文件
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
@@ -635,6 +692,7 @@ extension WebRuntime: WKUIDelegate {
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo) async {
+        guard !isClosed else { return }
         let alert = NSAlert()
         alert.messageText = frame.securityOrigin.host
         alert.informativeText = message
@@ -645,6 +703,7 @@ extension WebRuntime: WKUIDelegate {
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo) async -> Bool {
+        guard !isClosed else { return false }
         let alert = NSAlert()
         alert.messageText = frame.securityOrigin.host
         alert.informativeText = message
