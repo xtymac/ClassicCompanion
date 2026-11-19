@@ -77,6 +77,11 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private var screenObserver: Any?
     private var activationObserver: Any?
     private var closeKeyMonitor: Any?
+    private var historyMouseMonitor: Any?
+
+    /// 后退、前进的目标页面（⌘[ ⌘] 和鼠标侧键用）。每次按键或按下侧键时调用一次，之后只对返回的页面操作；
+    /// 以后有标签页时返回这一刻选中的那一页。见 HistoryNavigation。
+    var historyPage: (() -> (any HistoryPage)?)?
 
     /// 窗口显示后调用（用于聚焦官方输入框；加载恢复按显示方式决定是否提前重试）
     var onDidShow: ((Diagnostics.ShowKind) -> Void)?
@@ -267,6 +272,12 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
             let close = Self.isCloseShortcut(event), escape = Self.isPlainEscape(event)
             let pressed = HotKeyCombo(keyCode: UInt32(event.keyCode), carbonModifiers: HotKeyCombo.carbonModifiers(from: event.modifierFlags))
             let mode = MainActor.assumeIsolated { self?.modeKey == pressed }
+            // ⌘[ ⌘] 和 ⌘W、切换键一样在原生层处理：输入框有焦点时网页也拦不住。用户设的切换键和它相同时只当切换键。
+            let keyCode = event.keyCode, characters = event.charactersIgnoringModifiers, modifiers = event.modifierFlags
+            let isRepeat = event.isARepeat
+            let history = MainActor.assumeIsolated {
+                self?.historyShortcut(keyCode: keyCode, characters: characters, flags: modifiers)
+            }
             // Phase 0 诊断：记录到达本应用的 ⌘⇧ / ⌃⌘ 组合（只有键码与该键字符，不含输入内容），用于判断快捷键是否被其他应用占用。
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             if flags.contains(.command), flags.contains(.shift) || flags.contains(.control) {
@@ -280,7 +291,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
                 let number = event.windowNumber
                 MainActor.assumeIsolated { self?.logEscape(windowNumber: number) }
             }
-            guard close || escape || mode else { return event }
+            guard close || escape || mode || history != nil else { return event }
             let target = event.windowNumber
             let handled = MainActor.assumeIsolated { () -> Bool in
                 guard let self, let window = self.window, window.windowNumber == target, window.attachedSheet == nil else { return false }
@@ -294,11 +305,53 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
                     self.toggleMode()
                     return true
                 }
+                if let history {
+                    return self.handleHistoryKey(history, isRepeat: isRepeat, windowNumber: target)
+                }
                 // Esc 交给网页：网页自己关闭弹层，或按设置请求隐藏窗口。
                 return false
             }
             return handled ? nil : event
         }
+
+        // 鼠标侧键在原生层处理：按下、拖动、松开都不交给 WebKit 和网页，按一下只走一次（见 HistoryNavigation.mouseAction）。
+        historyMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.otherMouseDown, .otherMouseDragged, .otherMouseUp]) { [weak self] event in
+            let type = event.type, button = event.buttonNumber, number = event.windowNumber
+            let consumed = MainActor.assumeIsolated {
+                self?.handleHistoryMouse(type: type, button: button, windowNumber: number) ?? false
+            }
+            return consumed ? nil : event
+        }
+    }
+
+    // MARK: - 后退、前进（⌘[ ⌘]、鼠标侧键）
+
+    /// 按键对应的后退、前进方向（纯 ⌘[ / ⌘]）。用户设的切换键和它相同时返回 nil：用户的设置优先，按键只当切换键
+    /// （唤醒键是全局快捷键，系统先拿走，按键到不了这里）。
+    func historyShortcut(keyCode: UInt16, characters: String?, flags: NSEvent.ModifierFlags) -> HistoryDirection? {
+        let pressed = HotKeyCombo(keyCode: UInt32(keyCode), carbonModifiers: HotKeyCombo.carbonModifiers(from: flags))
+        guard pressed != modeKey else { return nil }
+        return HistoryNavigation.direction(characters: characters, flags: flags)
+    }
+
+    /// ⌘[ ⌘]。返回 true 表示由这里处理，按键不再交给网页。只处理本窗口里、这一页能往这个方向走的按键；
+    /// 走不了时原样交给网页（菜单项也是灰的），和没有这个功能时一样。按住不放的重复按键只吃掉，不连着后退。
+    func handleHistoryKey(_ direction: HistoryDirection, isRepeat: Bool, windowNumber: Int) -> Bool {
+        guard let window, window.windowNumber == windowNumber, window.attachedSheet == nil,
+              let page = historyPage?(), page.canGo(direction) else { return false }
+        if isRepeat { return true }
+        return page.go(direction, source: HistoryNavigation.shortcutName(direction))
+    }
+
+    /// 鼠标侧键。返回 true 表示吃掉这个事件（不交给 WebKit 和网页）。只管本窗口里的事件，登录弹窗等别的窗口原样放过。
+    /// 没有目标（登录弹窗等别的窗口是 key 窗口）或没有可去的页面时也吃掉，什么都不做。
+    func handleHistoryMouse(type: NSEvent.EventType, button: Int, windowNumber: Int) -> Bool {
+        let action = HistoryNavigation.mouseAction(type: type, button: button)
+        guard action != .pass, let window, window.windowNumber == windowNumber, window.attachedSheet == nil else { return false }
+        if case .navigate(let direction) = action, let page = historyPage?() {
+            page.go(direction, source: "鼠标侧键")
+        }
+        return true
     }
 
     /// Phase 0 诊断：Esc 到达时的模式；150ms 后再记一次窗口是否仍可见，判断这次 Esc 由谁处理。

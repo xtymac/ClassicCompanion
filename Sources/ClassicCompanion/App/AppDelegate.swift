@@ -97,9 +97,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                          onBarPress: { [weak self] count, moved in
                              self?.diagnostics.log("window", "顶部按下：第 \(count) 下\(moved ? "，拖动了窗口" : "")")
                          },
+                         onBack: { [weak self] in
+                             self?.goInHistory(.back, eventWindow: self?.windowController?.window, source: "顶部返回箭头")
+                         },
                          state: toolbarState, appearance: pageAppearance)
         windowController = ChatWindowController(webView: web.webView, toolbar: bar, diagnostics: diagnostics,
                                                 appearance: pageAppearance)
+        // ⌘[ ⌘] 和鼠标侧键由聊天窗口处理（只管它自己的事件），目标页面在按下时解析一次。
+        windowController.historyPage = { [weak self] in self?.historyPage(eventWindow: self?.windowController?.window) }
+        web.onHistoryChange = { [weak self] in self?.historyChanged() }
         windowController.onWillShow = { [weak self] mode in self?.toolbarState.quick = mode == .quick }
         windowController.onDidMiniaturize = { [weak self] in self?.releaseForegroundIfWindowless() }
         windowController.onWillChangeLayout = { [weak self] in self?.web.holdReadingPosition() }
@@ -339,6 +345,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
     }
 
+    // MARK: - 后退、前进
+
+    /// 后退、前进的目标页面：这次操作的窗口（key 窗口；没有 key 窗口时是 eventWindow，菜单没有）是聊天窗口时是它的页面，
+    /// 登录弹窗、设置等其他窗口在前面时没有目标（见 HistoryNavigation.commandWindow、target）。
+    /// 每次操作开始时调用一次，之后只对返回的页面操作。以后有标签页时，这里返回这一刻选中的那一页。
+    private func historyPage(eventWindow: NSWindow? = nil) -> WebRuntime? {
+        let window = HistoryNavigation.commandWindow(keyWindow: NSApp.keyWindow, eventWindow: eventWindow)
+        return HistoryNavigation.target(for: window, chatWindow: windowController?.window, page: web)
+    }
+
+    /// 菜单和顶部返回箭头都从这里走（⌘[ ⌘] 和鼠标侧键由聊天窗口处理，见 ChatWindowController）。
+    private func goInHistory(_ direction: HistoryDirection, eventWindow: NSWindow? = nil, source: String) {
+        guard let page = historyPage(eventWindow: eventWindow) else {
+            diagnostics.log("nav", "\(direction.logName)（\(source)）：前面不是聊天窗口，不操作")
+            return
+        }
+        page.go(direction, source: source)
+    }
+
+    /// 顶部返回箭头只在不是聊天页面、并且能后退时显示。
+    private func historyChanged() {
+        let shows = web.showsBackButton
+        guard shows != toolbarState.showsBack else { return }
+        toolbarState.showsBack = shows
+        diagnostics.log("nav", "顶部返回箭头\(shows ? "显示" : "收起")：\(Redactor.describe(web.webView.url))")
+    }
+
     private func focusInputSoon() {
         focusTask?.cancel()
         focusTask = Task { [weak self] in
@@ -448,6 +481,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let modeEquivalent = modeKey.menuKeyEquivalent
         let modeItem = fileMenu.addItem(withTitle: t("menu.toggleMode"), action: #selector(AppDelegate.toggleMode), keyEquivalent: modeEquivalent?.key ?? "")
         modeItem.keyEquivalentModifierMask = modeEquivalent?.modifiers ?? []
+        // 动作名不用 goBack:，那是 WKWebView 自己的动作：响应链会先找到网页（包括登录弹窗），不经过 historyPage。
+        fileMenu.addItem(withTitle: t("menu.back"), action: #selector(AppDelegate.historyBack),
+                         keyEquivalent: HistoryNavigation.menuKey(.back))
+        fileMenu.addItem(withTitle: t("menu.forward"), action: #selector(AppDelegate.historyForward),
+                         keyEquivalent: HistoryNavigation.menuKey(.forward))
         fileMenu.addItem(withTitle: t("menu.reload"), action: #selector(AppDelegate.reloadPage), keyEquivalent: "r")
         fileMenu.addItem(withTitle: t("menu.restartAudio"), action: #selector(AppDelegate.restartAudio), keyEquivalent: "")
         fileMenu.addItem(withTitle: t("menu.closeWindow"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
@@ -559,11 +597,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     @objc private func reloadPage() { web.reload() }
     /// 朗读没有声音时手动用（issue #16）。找不到媒体进程时响一声，窗口和页面不动。
     @objc private func restartAudio() { if !web.restartMediaProcess() { NSSound.beep() } }
+    /// 菜单作用于 key 窗口：聊天窗口在前面时是它的页面，登录弹窗等窗口在前面时没有目标（菜单项是灰的）。
+    @objc private func historyBack() { goInHistory(.back, source: "菜单") }
+    @objc private func historyForward() { goInHistory(.forward, source: "菜单") }
     @objc private func checkForUpdates() { updates.checkForUpdates() }
 
+    /// 菜单项“后退”“前进”对应的方向，其他菜单项是 nil。
+    static func historyDirection(of action: Selector?) -> HistoryDirection? {
+        if action == #selector(AppDelegate.historyBack) { return .back }
+        if action == #selector(AppDelegate.historyForward) { return .forward }
+        return nil
+    }
+
     /// “检查更新…”跟随 Sparkle 的 canCheckForUpdates（等确认安装时也可用，用来叫回确认窗口）；
-    /// 没有更新配置的构建里灰掉。其余菜单项照旧可用。
+    /// 没有更新配置的构建里灰掉。“后退”“前进”跟随 key 窗口那一页的 canGoBack / canGoForward，
+    /// 登录弹窗等其他窗口在前面时灰掉。其余菜单项照旧可用。
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if let direction = Self.historyDirection(of: menuItem.action) {
+            return HistoryNavigation.isAvailable(direction, on: historyPage())
+        }
         guard menuItem.action == #selector(checkForUpdates) else { return true }
         guard let status = updates?.status else { return false }
         return status.canCheck || status.awaitingInstallDecision

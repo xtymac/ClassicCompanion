@@ -25,6 +25,8 @@ final class WebRuntime: NSObject {
     var onLoadFailed: (() -> Void)?
     /// 网页请求隐藏窗口（Esc）
     var onEscapeRequest: (() -> Void)?
+    /// 地址、能否后退或前进变了（顶部返回箭头跟着变）。
+    var onHistoryChange: (() -> Void)?
 
     /// 加载失败、窗口里没有页面时的恢复（2026-11-11 开机白屏）。见 LoadRecovery。
     private var recovery: LoadRecovery
@@ -98,7 +100,16 @@ final class WebRuntime: NSObject {
         applyEnhancementScripts()
 
         observations.append(webView.observe(\.url, options: [.new]) { [weak self] webView, _ in
-            MainActor.assumeIsolated { self?.onURLChange?(webView.url) }
+            MainActor.assumeIsolated {
+                self?.onURLChange?(webView.url)
+                self?.onHistoryChange?()
+            }
+        })
+        observations.append(webView.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.onHistoryChange?() }
+        })
+        observations.append(webView.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.onHistoryChange?() }
         })
     }
 
@@ -343,6 +354,40 @@ final class WebRuntime: NSObject {
     }
 }
 
+// MARK: - 后退、前进
+
+extension WebRuntime: HistoryPage {
+    func canGo(_ direction: HistoryDirection) -> Bool {
+        switch direction {
+        case .back: webView.canGoBack
+        case .forward: webView.canGoForward
+        }
+    }
+
+    /// 只走这个 WKWebView 自己的历史（goBack / goForward）。跨文档的条目照常经过下面的导航策略（decidePolicyFor），
+    /// 这里不放宽、不绕开；网页自己 pushState 出来的同一文档条目由网页处理。日志只写脱敏后的地址类别。
+    @discardableResult
+    func go(_ direction: HistoryDirection, source: String) -> Bool {
+        guard canGo(direction) else {
+            diagnostics.log("nav", "\(direction.logName)（\(source)）：没有可去的页面")
+            return false
+        }
+        let list = webView.backForwardList
+        let item = direction == .back ? list.backItem : list.forwardItem
+        diagnostics.log("nav", "\(direction.logName)（\(source)）→ \(Redactor.describe(item?.url))")
+        switch direction {
+        case .back: _ = webView.goBack()
+        case .forward: _ = webView.goForward()
+        }
+        return true
+    }
+
+    /// 顶部返回箭头是否显示（见 HistoryNavigation.showsBackButton）。
+    var showsBackButton: Bool {
+        HistoryNavigation.showsBackButton(url: webView.url, canGoBack: canGo(.back))
+    }
+}
+
 // MARK: - 导航策略
 
 extension WebRuntime: WKNavigationDelegate {
@@ -356,6 +401,11 @@ extension WebRuntime: WKNavigationDelegate {
         let kind = NavigationPolicy.classify(url)
         let userOpensElsewhere = navigationAction.navigationType == .linkActivated &&
             navigationAction.modifierFlags.contains(.command)
+        // 后退、前进（菜单、⌘[ ⌘]、鼠标侧键、顶部箭头、触控板轻扫）到别的文档时也经过这里，按同样的规则处理。
+        // 记一笔，查“按一下走了两次”时用。
+        if navigationAction.navigationType == .backForward, webView === self.webView {
+            diagnostics.log("nav", "后退/前进导航：\(Redactor.describe(url))（\(kind)）")
+        }
 
         switch kind {
         case .chat, .auth:

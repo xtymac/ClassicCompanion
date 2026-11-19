@@ -166,6 +166,7 @@ enum HotKeyCapture: Equatable {
         "⌥⌘D": LocalizedText("purpose.openDiagnostics"), "⇧⌘Z": LocalizedText("purpose.redo"),
         "⌘=": LocalizedText("purpose.zoomPage"), "⇧⌘=": LocalizedText("purpose.zoomPage"),
         "⌘-": LocalizedText("purpose.zoomPage"), "⌘0": LocalizedText("purpose.zoomPage"),
+        "⌘[": LocalizedText("purpose.goBack"), "⌘]": LocalizedText("purpose.goForward"),
     ]
 
     /// - Parameter taken: 另一行正在用的组合和它的用途（purpose.* 键）。
