@@ -9,12 +9,11 @@ import WebKit
 @MainActor
 final class DebugDriver {
     private let windowController: ChatWindowController
-    private let webView: WKWebView
     private let out: URL
 
-    init(windowController: ChatWindowController, webView: WKWebView) {
+    /// 不自己留网页视图：窗口里的网页视图可以换，每条命令开始时向窗口取（见 handle）。
+    init(windowController: ChatWindowController) {
         self.windowController = windowController
-        self.webView = webView
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ClassicCompanion", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -38,6 +37,8 @@ final class DebugDriver {
     private func handle(_ command: String) {
         let parts = command.split(separator: ":", maxSplits: 1).map(String.init)
         let arg = parts.count > 1 ? parts[1] : ""
+        // 命令开始时取一次窗口当前显示的网页，整条命令都用它；watch、trace、滚动这类等待中的命令中途网页换了也不跟着换。
+        let webView = windowController.webView
         switch parts.first ?? "" {
         case "show-full": windowController.show(mode: .full); write("show-full")
         case "show-quick": windowController.show(mode: .quick); write("show-quick")
@@ -45,17 +46,17 @@ final class DebugDriver {
         case "click":
             let xy = arg.split(separator: ",").compactMap { Double($0) }
             guard xy.count == 2 else { return }
-            click(CGPoint(x: xy[0], y: xy[1]))
+            click(CGPoint(x: xy[0], y: xy[1]), in: webView)
         case "move":
             let xy = arg.split(separator: ",").compactMap { Double($0) }
             guard xy.count == 2 else { return }
-            click(CGPoint(x: xy[0], y: xy[1]), moveOnly: true)
-        case "watch": Task { await watch(seconds: Int(arg) ?? 30) }
+            click(CGPoint(x: xy[0], y: xy[1]), in: webView, moveOnly: true)
+        case "watch": Task { await watch(seconds: Int(arg) ?? 30, in: webView) }
         case "escape": key(53, "\u{1b}")
-        case "scroll-to": Task { await scroll(top: Int(arg) ?? 0) }
-        case "reveal": Task { await reveal(arg) }
-        case "native": write("native \(nativeState())")
-        case "trace": Task { await trace(arg) }
+        case "scroll-to": Task { await scroll(top: Int(arg) ?? 0, in: webView) }
+        case "reveal": Task { await reveal(arg, in: webView) }
+        case "native": write("native \(nativeState(webView))")
+        case "trace": Task { await trace(arg, in: webView) }
         // Never execute arbitrary scripts or persist untrusted command payloads.
         default: write("rejected unknown command")
         }
@@ -64,18 +65,18 @@ final class DebugDriver {
     /// Gate B：只允许这些元素类型，不接受任意选择器。只返回几何信息，不含正文。
     private static let revealKinds: Set<String> = ["table", "pre", ".katex-display", ".katex", "main img"]
 
-    private func scroll(top: Int) async {
-        await runScroll(kind: "", index: 0, top: top, label: "scroll-to \(top)")
+    private func scroll(top: Int, in webView: WKWebView) async {
+        await runScroll(kind: "", index: 0, top: top, label: "scroll-to \(top)", in: webView)
     }
 
     /// 参数形如 `table#0`：把第 0 个同类元素滚到视口中央。
-    private func reveal(_ arg: String) async {
+    private func reveal(_ arg: String, in webView: WKWebView) async {
         let parts = arg.split(separator: "#", maxSplits: 1).map(String.init)
         guard let kind = parts.first, Self.revealKinds.contains(kind) else { return write("rejected reveal") }
-        await runScroll(kind: kind, index: parts.count > 1 ? Int(parts[1]) ?? 0 : 0, top: 0, label: "reveal \(arg)")
+        await runScroll(kind: kind, index: parts.count > 1 ? Int(parts[1]) ?? 0 : 0, top: 0, label: "reveal \(arg)", in: webView)
     }
 
-    private func runScroll(kind: String, index: Int, top: Int, label: String) async {
+    private func runScroll(kind: String, index: Int, top: Int, label: String, in webView: WKWebView) async {
         let result = try? await webView.callAsyncJavaScript(Self.scrollScript, arguments: ["kind": kind, "index": index, "top": top],
                                                             contentWorld: .defaultClient)
         write("\(label) \(result as? String ?? "nil")")
@@ -104,13 +105,13 @@ final class DebugDriver {
     return JSON.stringify({ count: list.length, top: Math.round(box.scrollTop), max: box.scrollHeight - box.clientHeight, view: box.clientHeight });
     """
 
-    private func nativeState() -> String {
+    private func nativeState(_ webView: WKWebView) -> String {
         guard let w = windowController.window else { return "no-window" }
         return "wid=\(w.windowNumber) visible=\(w.isVisible) key=\(w.isKeyWindow) appActive=\(NSApp.isActive) occluded=\(!w.occlusionState.contains(.visible)) webHidden=\(webView.isHidden) hiddenAncestor=\(webView.isHiddenOrHasHiddenAncestor) frame=\(Int(w.frame.width))x\(Int(w.frame.height)) web=\(Int(webView.frame.width))x\(Int(webView.frame.height)) mode=\(windowController.mode) fr=\(type(of: w.firstResponder as Any))"
     }
 
     /// Real AppKit mouse events through WKWebView's normal hit-testing (CSS px == points at zoom 1).
-    private func click(_ p: CGPoint, moveOnly: Bool = false) {
+    private func click(_ p: CGPoint, in webView: WKWebView, moveOnly: Bool = false) {
         guard let window = windowController.window else { return }
         let local = webView.isFlipped ? p : CGPoint(x: p.x, y: webView.bounds.height - p.y)
         let loc = webView.convert(local, to: nil)
@@ -127,13 +128,13 @@ final class DebugDriver {
 
     /// Continuous recorder for a real-user repro: input events, sidebar panel state transitions,
     /// janky frames, event-loop stalls and native window/cover changes. UI chrome only, no text.
-    private func watch(seconds: Int) async {
-        write("watch start \(seconds)s native \(nativeState())")
+    private func watch(seconds: Int, in webView: WKWebView) async {
+        write("watch start \(seconds)s native \(nativeState(webView))")
         _ = try? await webView.callAsyncJavaScript(Self.watchInstall, contentWorld: .defaultClient)
         var lastNative = ""
         let end = Date().addingTimeInterval(TimeInterval(seconds))
         while Date() < end {
-            let n = nativeState()
+            let n = nativeState(webView)
             if n != lastNative { write("watch native \(n)"); lastNative = n }
             if let lines = try? await webView.callAsyncJavaScript("return window.__ccWatch ? window.__ccWatch.drain() : 'not-installed'", contentWorld: .defaultClient) as? String, !lines.isEmpty {
                 write("watch page\n" + lines)
@@ -217,8 +218,8 @@ final class DebugDriver {
     }
 
     /// Samples UI-chrome state only (sidebar control labels, geometry, animation and frame metrics); no message text.
-    private func trace(_ label: String) async {
-        write("trace[\(label)] native \(nativeState())")
+    private func trace(_ label: String, in webView: WKWebView) async {
+        write("trace[\(label)] native \(nativeState(webView))")
         for delay in [0, 150, 500, 1200, 2500] {
             let t0 = Date()
             do {
