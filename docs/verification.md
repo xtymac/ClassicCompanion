@@ -282,3 +282,15 @@ Update feed: <https://raw.githubusercontent.com/xtymac/ClassicCompanion/main/app
 Update through the live feed (2026-11-18): verified on one MacBook Pro with Apple M4 Pro, macOS 27.0.1. After 0.1.0-beta.2 was installed by hand over 0.1.0-beta.1, Check for Updates… found 0.1.0-beta.3 (20261117.1150) in the live appcast and, after the two confirmations of the beta.2 flow, installed it and reopened the app. The appcast signature and the update signature both verified. The installed app has the same code signature hash as the published build, and Gatekeeper accepted it. After the update the previous chat loaded normally without signing in again. Whether an unsent draft is kept was not verified, because it was not confirmed that a draft existed before the update. Two earlier attempts to fetch the appcast timed out before the successful check; the cause has not been determined.
 
 Not verified: Check for Updates on the installed 0.1.0-beta.3 against the live feed, the look of the new confirmation window checked by eye and its VoiceOver speech, the first-opening confirmation, installing from the ZIP, a clean setup, macOS 15 and macOS 26.
+
+## Release 0.1.0-beta.4 (build 20261119.2352) — 2026-11-20
+
+The [beta.4 pre-release](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.4) is tagged at `70b95bf`. The app was signed with Developer ID. Apple accepted the app and the DMG for notarization, and both tickets were stapled. All 76 final release checks passed.
+
+| Check | Result |
+| --- | --- |
+| Public downloads | All seven attachments downloaded without signing in and matched the local release files byte for byte. All six checksums in `SHA256SUMS` passed. The downloaded DMG had a valid notarization ticket and Gatekeeper accepted it. |
+| Public update feed | Commit `f6bcf98` added beta.4. On November 20 at 00:23 JST, the public feed matched the locally signed appcast byte for byte. The beta.2 and beta.3 entries retained their original signatures. |
+| Isolated upgrade from beta.3 | One run on an M4 Max MacBook Pro using re-signed test copies, a local feed and a test key. The app installed build 20261119.2352 and reopened automatically. The Dock showed the graphite icon about 5 and 25 seconds after restart and again after quitting and reopening. |
+
+An upgrade from an installed beta.3 through the public feed is still unverified. The isolated test did not cover an app pinned to the Dock or the restoration of a signed-in session, an unsent draft or the last chat.
