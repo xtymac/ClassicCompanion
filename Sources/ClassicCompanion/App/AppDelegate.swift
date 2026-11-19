@@ -75,8 +75,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     static var build: String { AppInfo.current.summary }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 放在最前面：要在 Sparkle 启动、网页加载、窗口显示写入设置之前判断（DockIconRefresh.earlierVersionKeys）。
+        let launch = DockIconRefresh.recordLaunch(defaults: .standard, build: AppInfo.current.build)
         NSApp.setActivationPolicy(.regular)
         diagnostics.log("app", "启动 构建 \(Self.build)")
+        if case .updated(let from) = launch {
+            let icon = DockIconRefresh.bundleIcon()
+            if let icon { NSApp.applicationIconImage = icon }
+            diagnostics.log("app", "更新后第一次启动（上次构建 \(from ?? "未记录")）：Dock 图标\(icon == nil ? "没找到应用包里的图标，不设" : "设为应用包里的图标")")
+        }
         diagnostics.log("app", "界面语言 \(languages.language.rawValue)（设置：\(languages.preference.rawValue)，系统：\(Locale.preferredLanguages.prefix(3).joined(separator: ","))）")
 
         web = WebRuntime(diagnostics: diagnostics, settings: settings)
