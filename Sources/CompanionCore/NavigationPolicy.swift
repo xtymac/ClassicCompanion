@@ -63,6 +63,17 @@ public enum NavigationPolicy {
         return tld.allSatisfy { part in (2...3).contains(part.count) && part.allSatisfy { $0.isASCII && $0.isLetter } }
     }
 
+    /// 是否为聊天页面：主站的首页（新对话，路径 /）、对话（/c/<id>）和 GPT（/g/<gpt>、/g/<gpt>/c/<id>）。
+    /// 就是 Redactor 单独列出的那几类路径；主站的其他路径（例如 /pricing、/auth/login）、认证页面、
+    /// 其他网站和 about:、data: 页面都不是。和 restorableConversationURL、适配器的 onChatPage 一样只认 https 和主站域名。
+    /// 只看路径：query 和 fragment（例如 /?model=…、/#settings）不改变结果。
+    public static func isChatPage(_ url: URL?) -> Bool {
+        guard let url, url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased(), chatHosts.contains(host) else { return false }
+        guard let first = url.path.split(separator: "/").first else { return true }
+        return first == "c" || first == "g"
+    }
+
     /// 是否为可恢复的对话 URL（/c/<id> 或 /g/<gpt>/c/<id>）。返回去掉 query/fragment 的 URL。
     public static func restorableConversationURL(_ url: URL?) -> URL? {
         guard let url, classify(url) == .chat, url.scheme == "https",
