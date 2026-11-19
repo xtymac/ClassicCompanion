@@ -24,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     /// 现在唯一的聊天标签页：网页运行时、适配器、页面加载状态，和只属于这一页的 lastPath、focusTask。见 ChatTab。
     private var tab: ChatTab!
     /// 这个标签页的运行时回调怎么接到窗口上，和换页面、聚焦输入框。见 ChatTabs。
-    private var tabs: ChatTabs!
+    private var chatTabs: ChatTabs!
     private var network: NetworkStatus!
     private let media = WebMediaMonitor()
     private let toolbarState = ToolbarState()
@@ -126,18 +126,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             self.tab.runtime.prepareLayout(size: size, done: done)
         }
         windowController.onDidShow = { [weak self] kind in
-            self?.tabs.focusInputSoon()
+            self?.chatTabs.focusInputSoon()
             self?.tab.runtime.windowShown(kind)
         }
 
         // 网页运行时的回调（地址变化、Esc、加载完成、加载失败、提示变化、提交）和提示里的“重新加载”接到窗口上，
         // 还是在这里、还是这个顺序，内容见 ChatTabs.wire(_:)。
-        tabs = ChatTabs(tab: tab, windowController: windowController, diagnostics: diagnostics,
-                        hideWindow: { [weak self] reason in self?.windowController.hide(reason: reason) },
-                        focusInput: { adapter in await adapter.focusInput() },
-                        saveLastConversation: { [weak self] url in self?.settings.lastConversationURL = url },
-                        mediaState: { adapter in await adapter.webMediaState() })
-        tabs.wire(tab)
+        chatTabs = ChatTabs(tab: tab, windowController: windowController, diagnostics: diagnostics,
+                            hideWindow: { [weak self] reason in self?.windowController.hide(reason: reason) },
+                            focusInput: { adapter in await adapter.focusInput() },
+                            saveLastConversation: { [weak self] url in self?.settings.lastConversationURL = url },
+                            mediaState: { adapter in await adapter.webMediaState() })
+        chatTabs.wire(tab)
         updates = UpdateController(diagnostics: diagnostics)
 
         buildMainMenu()
@@ -557,7 +557,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         Task { [weak self] in
             guard let self else { return }
             guard await self.tab.adapter.openNewChatInPage() else { self.tab.runtime.newChat(); return }
-            self.tabs.focusInputSoon()
+            self.chatTabs.focusInputSoon()
         }
     }
     @objc private func reloadPage() { tab.runtime.reload() }
