@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let languages = LanguageController.shared
     private let diagnostics = Diagnostics()
     private var web: WebRuntime!
+    private var network: NetworkStatus!
     private var adapter: ChatGPTAdapter!
     private let media = WebMediaMonitor()
     private let toolbarState = ToolbarState()
@@ -86,7 +87,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         diagnostics.log("app", "界面语言 \(languages.language.rawValue)（设置：\(languages.preference.rawValue)，系统：\(Locale.preferredLanguages.prefix(3).joined(separator: ","))）")
 
-        web = WebRuntime(diagnostics: diagnostics, settings: settings)
+        // 网络状态由全应用共用的一个监视送给运行时；运行时自己不再开监视。
+        network = NetworkStatus()
+        web = WebRuntime(diagnostics: diagnostics, settings: settings, watchesNetwork: false)
+        network.add(web)
         adapter = ChatGPTAdapter(webView: web.webView, diagnostics: diagnostics, settings: settings)
         // 系统 TTS（SpeechController）已退出正式路径：1.2 版要求使用官方 Read Aloud，不实例化、不回退。
 
