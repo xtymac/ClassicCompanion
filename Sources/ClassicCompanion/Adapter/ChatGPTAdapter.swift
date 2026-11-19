@@ -27,15 +27,19 @@ enum VerifyResult {
 final class ChatGPTAdapter {
     private weak var webView: WKWebView?
     private let diagnostics: Diagnostics
+    /// 这个适配器写的日志都经过它，和它的网页运行时一样带上标签页的标签（见 TabLog）。
+    let log: TabLog
     private let settings: AppSettings
     /// 每次主框架 URL 变化递增，使旧引用与进行中的调用失效
     private(set) var generation = 0
     private let timeout: TimeInterval = 2.5
     private var openingNewChat = false
 
-    init(webView: WKWebView, diagnostics: Diagnostics, settings: AppSettings) {
+    /// tab：这个适配器属于哪个标签页，日志带上它的标签。正式运行由 ChatTab.make 传；不传（nil）就不带。
+    init(webView: WKWebView, diagnostics: Diagnostics, settings: AppSettings, tab: TabID? = nil) {
         self.webView = webView
         self.diagnostics = diagnostics
+        log = TabLog(diagnostics: diagnostics, tab: tab)
         self.settings = settings
     }
 
@@ -104,18 +108,18 @@ final class ChatGPTAdapter {
         guard !openingNewChat else { return true }
         guard isEnabled, onChatPage else { return false }
         guard webView?.url?.path != "/" else {
-            diagnostics.log("nav", "新建对话：已在新对话页")
+            log("nav", "新建对话：已在新对话页")
             return true
         }
         openingNewChat = true
         defer { openingNewChat = false }
         let gen = generation
         guard let json = await run(AdapterScripts.newChat), let obj = decode(json) else {
-            diagnostics.log("nav", "新建对话：点击结果未知，保留当前页面")
+            log("nav", "新建对话：点击结果未知，保留当前页面")
             return true
         }
         guard gen == generation else { return true }
-        diagnostics.log("nav", "新建对话 官方入口命中=\(obj["hits"] as? [Int] ?? [])")
+        log("nav", "新建对话 官方入口命中=\(obj["hits"] as? [Int] ?? [])")
         guard let clicked = obj["clicked"] as? Bool else { return true }
         guard clicked else { return false }
         for _ in 0..<10 {
@@ -123,11 +127,11 @@ final class ChatGPTAdapter {
             catch { return true }
             guard gen == generation else { return true }
             if webView?.url?.path == "/" {
-                diagnostics.log("nav", "新建对话：页内切换")
+                log("nav", "新建对话：页内切换")
                 return true
             }
         }
-        diagnostics.log("nav", "新建对话：已点击官方入口，保留页内切换，不追加整页加载")
+        log("nav", "新建对话：已点击官方入口，保留页内切换，不追加整页加载")
         return true
     }
 
@@ -158,12 +162,12 @@ final class ChatGPTAdapter {
             let notices = blocks.filter { $0.kind == .notice }.count
             // 只记录块数量与耗时，不记录正文
             diagnostics.capabilities.lastExtraction = "ok：文本块 \(blocks.count - notices)，提示 \(notices)，\(ms)ms"
-            diagnostics.log("adapter", "回答提取 ok：文本块 \(blocks.count - notices)，提示 \(notices)，\(ms)ms")
+            log("adapter", "回答提取 ok：文本块 \(blocks.count - notices)，提示 \(notices)，\(ms)ms")
             return .ok(AnswerRef(generation: gen, path: path, ids: ids), blocks)
         default:
             let reason = obj["reason"] as? String
             diagnostics.capabilities.lastExtraction = status + (reason.map { "(\($0))" } ?? "")
-            diagnostics.log("adapter", "回答提取未完成：\(status)\(reason.map { "(\($0))" } ?? "")")
+            log("adapter", "回答提取未完成：\(status)\(reason.map { "(\($0))" } ?? "")")
             return .unavailable(Self.describe(status: status, reason: reason))
         }
     }
@@ -252,14 +256,14 @@ final class ChatGPTAdapter {
                     case .success(let value): finish(value as? String)
                     case .failure(let error):
                         let ns = error as NSError
-                        self.diagnostics.log("adapter", "脚本错误 \(ns.domain)#\(ns.code)")
+                        self.log("adapter", "脚本错误 \(ns.domain)#\(ns.code)")
                         finish(nil)
                     }
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
                 MainActor.assumeIsolated {
-                    if !finished { self.diagnostics.log("adapter", "脚本超时") }
+                    if !finished { self.log("adapter", "脚本超时") }
                     finish(nil)
                 }
             }

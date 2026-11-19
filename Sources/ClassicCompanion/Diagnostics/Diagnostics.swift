@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import os
+import CompanionCore
 
 /// 脱敏诊断。只记录功能状态、耗时和错误类别；不记录聊天正文、回答全文、凭证或完整 URL。
 @MainActor
@@ -49,11 +50,12 @@ final class Diagnostics: ObservableObject {
     @Published var webMediaState = "unknown"
     @Published private(set) var experiments: [String] = []
 
-    func recordExperiment(_ line: String) {
+    /// tab：实验是对哪个标签页做的。给了就在日志那一行末尾带上它的标签（TabLog），实验记录里照原样不带。
+    func recordExperiment(_ line: String, tab: TabID? = nil) {
         let tf = DateFormatter(); tf.dateFormat = "HH:mm:ss"
         experiments.append("\(tf.string(from: Date())) \(line)")
         if experiments.count > 50 { experiments.removeFirst() }
-        log("experiment", line)
+        log("experiment", TabLog.tagged(line, tab))
     }
 
     /// 报告文件位置（只含脱敏内容）
@@ -207,5 +209,34 @@ final class Diagnostics: ObservableObject {
             lines.append("  \(tf.string(from: e.date)) [\(e.category)] \(e.message)")
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+/// 一个标签页写诊断日志用的：每行末尾带上这个标签页的标签，看得出是哪个标签页的事。
+/// 网页运行时和适配器各拿一个（建的时候给标签页的标识，见 ChatTab.make）；ChatTabs 写某个标签页的事时用那个标签页的标签
+/// （ChatTab.logTag）现建一个。
+/// 标签只是标签页的创建序号（TabID.rawValue：从 1 起，关掉的不再用，不保存，重开应用重新从 1 数），
+/// 不含标题、地址或别的内容。一行里其余的内容和不带标签时一字不差，脱敏照旧由各行自己做（Redactor）。
+/// tab 为 nil 时不带标签：测试里单独建的运行时、适配器就是这样，原有的日志断言不用改。
+/// 窗口（ChatWindowController）、AppDelegate、更新和计数写的不带标签：它们说的是窗口或全应用的事，
+/// 窗口只为显示着的页面（选中的标签页）写。
+struct TabLog: Sendable {
+    let diagnostics: Diagnostics
+    let tab: TabID?
+
+    @MainActor func callAsFunction(_ category: String, _ message: String) {
+        diagnostics.log(category, Self.tagged(message, tab))
+    }
+
+    /// 标签的写法：“【标签N】”，N 是创建序号，只有一个标签页时也写。
+    /// 找某个标签页的行：grep '【标签2】'（数字后面紧跟“】”，找标签 1 不会找到标签 12）；
+    /// 找所有带标签的行：grep -E ' 【标签[0-9]+】$'。
+    static func tag(_ tab: TabID) -> String { "【标签\(tab.rawValue)】" }
+
+    /// 一行加上标签：原文、一个空格、标签，放在末尾。放在末尾而不放在开头：按开头找的
+    /// （“[nav] 加载 ”、hasPrefix("首次收到无障碍请求")）照样找得到，不会因为多了标签就找不到、把“有”当成“没有”。
+    static func tagged(_ message: String, _ tab: TabID?) -> String {
+        guard let tab else { return message }
+        return "\(message) \(tag(tab))"
     }
 }

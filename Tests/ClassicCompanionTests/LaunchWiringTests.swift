@@ -17,10 +17,11 @@ import CompanionCore
 final class LaunchWiringTests: XCTestCase {
     private let chat = URL(string: "https://chatgpt.com/c/abc")!
 
-    private func makeRig() -> Rig {
+    /// tagged：运行时和适配器像正式运行时那样带这个标签页的标签（见 TabLog）。不带是原来的样子。
+    private func makeRig(tagged: Bool = false) -> Rig {
         let name = "LaunchWiringTests-\(UUID().uuidString)"
         addTeardownBlock { UserDefaults().removePersistentDomain(forName: name) }
-        let rig = Rig(defaults: UserDefaults(suiteName: name)!)
+        let rig = Rig(defaults: UserDefaults(suiteName: name)!, tagged: tagged)
         addTeardownBlock { [controller = rig.controller] in controller.window?.orderOut(nil) }
         return rig
     }
@@ -330,6 +331,63 @@ final class LaunchWiringTests: XCTestCase {
         XCTAssertEqual(rig.diagnostics.webMediaState, "none")
         XCTAssertEqual(rig.lines, ["读网页媒体状态"])
     }
+
+    // MARK: 9. 日志的标签
+
+    /// 冷启动的一整段：加载失败、点提示里的“重新加载”、提交、加载完成、聚焦，再换两次页面、0.8 秒后记媒体状态。
+    private func runLaunch(_ rig: Rig) async throws {
+        rig.tabs.windowIsKey = { true }
+        rig.controller.beginLaunchScreen()
+        rig.tab.runtime.load(chat)
+        failLoad(rig)
+        try await pause(0.3)
+        rig.noticeCover.rootView.model.onReload()
+        rig.tab.runtime.webView(rig.tab.runtime.webView, didCommit: nil)
+        rig.tab.runtime.webView(rig.tab.runtime.webView, didFinish: nil)
+        try await waitUntil { !rig.focused.isEmpty }
+        rig.tab.runtime.onURLChange?(URL(string: "https://chatgpt.com/c/abc?model=x")!)
+        rig.tab.runtime.onURLChange?(WebRuntime.homeURL)
+        try await waitUntil { rig.lines.last?.hasPrefix("[media]") == true }
+        try await pause(0.1)
+    }
+
+    /// 运行时和适配器带着标签页的标签时（正式运行时就是这样，见 ChatTab.make）：运行时和 ChatTabs 为这个标签页写的行
+    /// 末尾多了“ 【标签1】”；窗口写的（启动保护、启动画面、提示留着和淡出）不带，和 [nav] 里运行时写的提示行分得开。
+    /// 同一段不带标签再走一遍：去掉行末的标签就一字不差、顺序不变，别的什么都没多。
+    func testWithItsTagTheTabsLinesEndInItTheWindowsDoNotAndNothingElseChanges() async throws {
+        let tagged = makeRig(tagged: true)
+        try await runLaunch(tagged)
+        let tag = " 【标签1】"
+        XCTAssertEqual(tagged.lines, [
+            "[appearance] 启动保护：网页加载完成前不跟随页面底色（保持系统颜色）",
+            "[nav] 加载 https://chatgpt.com/c/<id>" + tag,
+            "[nav] 加载失败 NSURLErrorDomain#-1009 @ <nil>" + tag,
+            "[nav] 60 秒后自动重试" + tag,
+            "[nav] 无法连接提示：waiting" + tag,
+            "[launch] 启动画面结束：加载失败（…ms）",
+            "[nav] 重新加载失败的地址" + tag,
+            "[nav] 加载 https://chatgpt.com/c/<id>" + tag,
+            "[nav] 无法连接提示：connecting" + tag,
+            "[nav] 无法连接提示：hidden" + tag,
+            "[nav] 无法连接提示：网页已提交，留到加载完成",
+            "[nav] 加载完成 <nil>" + tag,
+            "[nav] 无法连接提示：加载完成，淡出",
+            "[appearance] 启动保护解除：加载完成时报的是深色，等页面颜色变化再采用",
+            "聚焦输入框",
+            "记下对话地址 https://chatgpt.com/c/abc",
+            "[nav] 页面变化 https://chatgpt.com/c/<id>?<redacted>" + tag,
+            "[nav] 页面变化 https://chatgpt.com/" + tag,
+            "读网页媒体状态",
+            "[media] 页面变化后 0.8s WebKit 媒体状态=none" + tag,
+        ])
+
+        let plain = makeRig()
+        try await runLaunch(plain)
+        XCTAssertEqual(tagged.lines.count, plain.lines.count)
+        for (withTag, without) in zip(tagged.lines, plain.lines) {
+            XCTAssertTrue(withTag == without || withTag == without + tag, "只多行末的标签：\(withTag) / \(without)")
+        }
+    }
 }
 
 /// 一个标签页、一个窗口和接线。AppDelegate 交给 ChatTabs 的几样换成记录，和日志一起按顺序记在 timeline 里。
@@ -357,14 +415,16 @@ private final class Rig {
     var newChatInPage = false
     private var watch: AnyCancellable?
 
-    init(defaults: UserDefaults) {
+    init(defaults: UserDefaults, tagged: Bool) {
         settings = AppSettings(defaults: defaults)
+        let id = TabList().selected
         let runtime = WebRuntime(diagnostics: diagnostics, settings: settings, recovery: LoadRecovery(backoff: [60]),
-                                 watchesNetwork: false)
+                                 watchesNetwork: false, tab: tagged ? id : nil)
         // 网页视图报深色：日志里写“深色”，看得出加载完成时报的是这个标签页的网页视图的颜色。窗口建好之前设，窗口不会看到变化。
         runtime.webView.underPageBackgroundColor = Self.dark
-        let adapter = ChatGPTAdapter(webView: runtime.webView, diagnostics: diagnostics, settings: settings)
-        tab = ChatTab(id: TabList().selected, runtime: runtime, adapter: adapter)
+        let adapter = ChatGPTAdapter(webView: runtime.webView, diagnostics: diagnostics, settings: settings,
+                                     tab: tagged ? id : nil)
+        tab = ChatTab(id: id, runtime: runtime, adapter: adapter)
         controller = ChatWindowController(webView: tab.runtime.webView, toolbar: EmptyView(), diagnostics: diagnostics,
                                           appearance: PageAppearance(defaults: defaults), page: tab.page)
         // 解除启动保护后等颜色变化的时限放长：它到点写的日志不在这些测试的时间线里。

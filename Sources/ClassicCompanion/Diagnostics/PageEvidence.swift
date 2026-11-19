@@ -1,4 +1,5 @@
 import WebKit
+import CompanionCore
 
 /// 证据采集和媒体实验（诊断窗口的按钮、命令行通知）对一个标签页做的几样：读它的适配器、动它的网页视图的媒体播放。
 /// 只读或只做实验，脱敏。正式运行是 TabEvidenceTarget；抽成协议是为了不开网页也能核对每一步都对开始时的那个标签页做
@@ -31,6 +32,7 @@ struct TabEvidenceTarget: EvidenceTarget {
 /// 证据采集和媒体实验的步骤，原来写在 AppDelegate 里，步骤和顺序不变。
 /// target 是开始时绑定的那个标签页的（ChatTabs 传开始这一刻选中的那个），每一步都对它做。
 /// 每次等完先问 isHeld：那个标签页已经不在这组里就不再往下做，已经写进诊断的留着。写报告文件由调用方在之后做。
+/// 实验的 tab 是那个标签页的标识，实验那一行日志带上它的标签（nil 不带，见 Diagnostics.recordExperiment）。
 @MainActor
 enum PageEvidence {
     static func collect(from target: some EvidenceTarget, measure: Bool, into diagnostics: Diagnostics,
@@ -47,35 +49,35 @@ enum PageEvidence {
     }
 
     static func runExperiment(_ kind: ExperimentKind, on target: some EvidenceTarget, diagnostics: Diagnostics,
-                              isHeld: () -> Bool) async {
+                              tab: TabID?, isHeld: () -> Bool) async {
         switch kind {
         case .suspendAll:
             await target.setAllMediaPlaybackSuspended(true)
             guard isHeld() else { return }
             let state = await target.webMediaState()
             guard isHeld() else { return }
-            diagnostics.recordExperiment("WebKit setAllMediaPlaybackSuspended(true) → 状态 \(state)")
+            diagnostics.recordExperiment("WebKit setAllMediaPlaybackSuspended(true) → 状态 \(state)", tab: tab)
         case .resumeAll:
             await target.setAllMediaPlaybackSuspended(false)
             guard isHeld() else { return }
             let state = await target.webMediaState()
             guard isHeld() else { return }
-            diagnostics.recordExperiment("WebKit setAllMediaPlaybackSuspended(false) → 状态 \(state)")
+            diagnostics.recordExperiment("WebKit setAllMediaPlaybackSuspended(false) → 状态 \(state)", tab: tab)
         case .pauseAll:
             await target.pauseAllMediaPlayback()
             guard isHeld() else { return }
             let state = await target.webMediaState()
             guard isHeld() else { return }
-            diagnostics.recordExperiment("WebKit pauseAllMediaPlayback → 状态 \(state)")
+            diagnostics.recordExperiment("WebKit pauseAllMediaPlayback → 状态 \(state)", tab: tab)
         case .setRate(let r):
             let result = await target.experimentSetRate(r)
             guard isHeld() else { return }
-            diagnostics.recordExperiment("DOM playbackRate=\(r)：\(result)")
+            diagnostics.recordExperiment("DOM playbackRate=\(r)：\(result)", tab: tab)
         case .measure:
             let measured = await target.measureMedia()
             guard isHeld() else { return }
             diagnostics.mediaMeasurement = measured
-            diagnostics.recordExperiment("测量：\(diagnostics.mediaMeasurement)")
+            diagnostics.recordExperiment("测量：\(diagnostics.mediaMeasurement)", tab: tab)
         }
     }
 }

@@ -87,11 +87,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
         // 网络状态由全应用共用的一个监视送给运行时；运行时自己不再开监视。运行时由 chatTabs 登记（见 ChatTabs.init）。
         let network = NetworkStatus()
-        let runtime = WebRuntime(diagnostics: diagnostics, settings: settings, watchesNetwork: false)
-        let adapter = ChatGPTAdapter(webView: runtime.webView, diagnostics: diagnostics, settings: settings)
         // 标签页列表开始时只有启动时的那一个；它的标识从这里来（TabID 只能由 TabList 发放）。列表随后交给 chatTabs。
+        // 先建列表再建运行时：运行时和适配器建的时候就要知道标识，日志从第一行起带它的标签（TabLog）。建列表不写日志、不做别的事。
         let tabList = TabList()
-        let launchTab = ChatTab(id: tabList.selected, runtime: runtime, adapter: adapter)
+        let launchTab = ChatTab.make(id: tabList.selected, diagnostics: diagnostics, settings: settings)
         // 系统 TTS（SpeechController）已退出正式路径：1.2 版要求使用官方 Read Aloud，不实例化、不回退。
 
         let bar = WebBar(onClose: { [weak self] in self?.windowController.hide(reason: "顶部关闭按钮") },
