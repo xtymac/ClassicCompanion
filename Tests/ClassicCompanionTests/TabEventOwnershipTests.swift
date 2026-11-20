@@ -119,6 +119,48 @@ final class TabEventOwnershipTests: XCTestCase {
         XCTAssertTrue(rig.focused.first === rig.b.adapter)
     }
 
+    #if DEBUG
+    /// 遮挡是每个页面自己的：A 不显示、盖着它自己的遮挡（先选中 A 开始启动画面，再选回 B），B 显示着、也盖着。
+    /// A 的加载失败、或者提交并加载完成（都经 A 的运行时，接线带着 A 的页面交给窗口）：A 的遮挡结束；
+    /// 窗口（还盖着 B 的启动画面）、B、窗口的日志和替身都不变，A 加载完成不聚焦。之后 B 自己的加载完成照常结束启动画面。
+    func testABackgroundTabsLoadEndsOnlyItsOwnCover() async throws {
+        for fails in [true, false] {
+            let rig = makeRig()
+            rig.tabs.windowIsKey = { true }
+            let a = rig.a
+            rig.tabs.selectForTesting(a)
+            rig.controller.beginLaunchScreen()
+            rig.tabs.selectForTesting(rig.b)
+            rig.controller.beginLaunchScreen()
+            XCTAssertTrue(a.page.isCovered)
+            XCTAssertTrue(rig.b.page.isCovered)
+            let before = rig.snapshot()
+            let coverB = "\(rig.b.page.isCovered) \(rig.b.page.coverAwaitsCommit) \(rig.b.page.coverGeneration) \(rig.b.page.coverStarted)"
+            a.runtime.load(chat)
+            if fails {
+                rig.fail(a.runtime)
+            } else {
+                rig.commit(a.runtime)
+                rig.finish(a.runtime)
+            }
+            XCTAssertFalse(a.page.isCovered, "A 的遮挡结束（失败=\(fails)）")
+            XCTAssertFalse(a.page.coverAwaitsCommit)
+            assertUntouched(rig, before, "A 的遮挡结束（失败=\(fails)）")
+            XCTAssertEqual("\(rig.b.page.isCovered) \(rig.b.page.coverAwaitsCommit) \(rig.b.page.coverGeneration) \(rig.b.page.coverStarted)",
+                           coverB, "B 的遮挡不变（失败=\(fails)）")
+            try await pause(0.3)
+            assertUntouched(rig, before, "之后 0.3 秒（失败=\(fails)）")
+            XCTAssertTrue(rig.focused.isEmpty, "A 加载完成不聚焦（失败=\(fails)）")
+
+            rig.commit(rig.b.runtime)
+            rig.finish(rig.b.runtime)
+            XCTAssertFalse(rig.controller.isShowingLaunchScreen, "B 自己的加载完成照常结束启动画面（失败=\(fails)）")
+            XCTAssertFalse(rig.b.page.isCovered)
+            XCTAssertEqual(rig.lines.filter { $0.hasPrefix("[launch]") }, ["[launch] 启动画面结束：网页已加载（…ms）"])
+        }
+    }
+    #endif
+
     // MARK: 2. A 的地址变化
 
     /// A 换到对话地址：不记对话地址；A 的路径和适配器代号变，B 的不变。A 第二次换页面后 0.8 秒的媒体日志读 A 的适配器。
