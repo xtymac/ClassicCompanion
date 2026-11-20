@@ -66,6 +66,37 @@ import Testing
         #expect(NavigationPolicy.restorableConversationURL(URL(string: "https://chatgpt.com/")) == nil)
         #expect(NavigationPolicy.restorableConversationURL(URL(string: "https://auth.openai.com/c/1")) == nil)
     }
+
+    /// 查询参数里带临时聊天参数的地址，不管路径、值、名字大小写、在第几个，都不算可恢复（用户 11-20 裁定：
+    /// 临时聊天不进最近关闭；认不准时，确认不了能恢复的地址不记）。只在查询参数里认，片段里的不算；别的查询参数照旧去掉。
+    @Test func temporaryChatAddressesAreNeverRestorable() {
+        let temporary = [
+            "https://chatgpt.com/?temporary-chat=true",
+            "https://chatgpt.com/c/abc?temporary-chat=true",
+            "https://chatgpt.com/g/g-1/c/9?temporary-chat=true",
+            "https://chatgpt.com/c/abc?model=x&temporary-chat=true#y",
+            "https://chatgpt.com/c/abc?temporary-chat",
+            "https://chatgpt.com/c/abc?temporary-chat=false",
+            "https://chatgpt.com/c/abc?Temporary-Chat=1",
+            "https://chatgpt.com/c/abc?temporary%2Dchat=true",
+        ]
+        for address in temporary {
+            let url = URL(string: address)
+            #expect(url.map(NavigationPolicy.isTemporaryChat) == true, "\(address)")
+            #expect(NavigationPolicy.restorableConversationURL(url) == nil, "\(address)")
+        }
+        let ordinary = [
+            ("https://chatgpt.com/c/abc?model=x", "https://chatgpt.com/c/abc"),
+            ("https://chatgpt.com/c/abc?chat=temporary", "https://chatgpt.com/c/abc"),
+            ("https://chatgpt.com/c/abc#temporary-chat=true", "https://chatgpt.com/c/abc"),
+            ("https://chatgpt.com/c/abc?temporary-chats=true", "https://chatgpt.com/c/abc"),
+        ]
+        for (address, restored) in ordinary {
+            let url = URL(string: address)
+            #expect(url.map(NavigationPolicy.isTemporaryChat) == false, "\(address)")
+            #expect(NavigationPolicy.restorableConversationURL(url)?.absoluteString == restored, "\(address)")
+        }
+    }
 }
 
 @Suite struct RedactorTests {

@@ -199,6 +199,7 @@ public struct TabList: Equatable, Sendable {
 ///
 /// 只记普通对话地址：`NavigationPolicy.restorableConversationURL` 认可的 /c/… 或 /g/…/c/…，去掉查询参数和片段
 /// （和 `lastConversationURL` 用同一个判断）。新对话页、登录页等没有对话地址的页不记，关闭后不能重新打开。
+/// 查询参数里带临时聊天参数的地址不管路径都不记（`NavigationPolicy.isTemporaryChat`）。
 /// 同一个地址关闭几次就记几次，不去重。不记标题。地址里有对话 id，要写日志时经过 `Redactor`。
 public struct RecentlyClosedTabs: Equatable, Sendable {
     public struct Entry: Equatable, Sendable {

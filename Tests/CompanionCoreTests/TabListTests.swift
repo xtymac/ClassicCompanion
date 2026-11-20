@@ -337,6 +337,8 @@ import Testing
             nil,
             home,
             URL(string: "https://chatgpt.com/?temporary-chat=true"),
+            URL(string: "https://chatgpt.com/c/abc?temporary-chat=true"),
+            URL(string: "https://chatgpt.com/g/g-1/c/9?model=x&temporary-chat=true"),
             URL(string: "https://chatgpt.com/gpts"),
             URL(string: "https://chatgpt.com/g/g-abc"),
             URL(string: "https://auth.openai.com/c/1"),
