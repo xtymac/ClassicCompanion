@@ -6,7 +6,7 @@ import CompanionCore
 /// 这里只放东西，不做事：正式运行时用 make(id:diagnostics:settings:) 建（启动时的那个在 AppDelegate 里），
 /// 测试也可以把建好的运行时和适配器交给 init；lastPath 和 focusTask 由 ChatTabs 的 urlChanged、focusInputSoon 改，
 /// 和它们原来在 AppDelegate 里时一样。阅读位置要用的几样（url、mainFrameCommits、pendingReadingRestore）也由 ChatTabs 改。
-/// 应用里现在只有一个（启动时建的那个）。标题以后再加。排好版的大小不在这里：它跟着藏起的网页视图记在窗口里
+/// 应用里启动时建一个，之后由 ChatTabs 新增、重新打开、⌘ 点击链接时加（都经 ChatTabs.adopt(_:_:)）。标题以后再加。排好版的大小不在这里：它跟着藏起的网页视图记在窗口里
 /// （ChatWindowController.hideInContainer，和把它固定在离开时大小的约束在一起），再显示时窗口拿它决定要不要补排版。
 @MainActor
 final class ChatTab {
@@ -40,8 +40,9 @@ final class ChatTab {
     var logTag: TabID? { runtime.log.tab }
 
     /// 正式运行时建一个标签页：先建网页运行时（不自己看网络：网络状态由 ChatTabs 登记到全应用共用的那个上），
-    /// 再建适配器，两者写的日志都带上标识 id 的标签。启动时的那个由 AppDelegate 这样建；新增的（ChatTabs.newTab()）也这样建：
-    /// AppDelegate 把同一个建法交给 ChatTabs（makeTab），标识由 ChatTabs.add(_:) 从列表里发。
+    /// 再建适配器，两者写的日志都带上标识 id 的标签。启动时的那个由 AppDelegate 这样建；之后加的（ChatTabs.newTab()、
+    /// reopenClosedTab()、openLink(_:from:_:)）也这样建：AppDelegate 把同一个建法交给 ChatTabs（makeTab），
+    /// 标识由 ChatTabs 从列表里发（list.append、reopen、insert(rightOf:)，再经 adopt(_:_:) 建）。
     static func make(id: TabID, diagnostics: Diagnostics, settings: AppSettings) -> ChatTab {
         let runtime = WebRuntime(diagnostics: diagnostics, settings: settings, watchesNetwork: false, tab: id)
         let adapter = ChatGPTAdapter(webView: runtime.webView, diagnostics: diagnostics, settings: settings, tab: id)
@@ -49,7 +50,7 @@ final class ChatTab {
     }
 
     /// 运行时和适配器由调用方建好再交进来：建立顺序（运行时 → 适配器）留在调用方（正式运行是 make）。
-    /// 运行时登记到网络状态由 ChatTabs 做（启动时的那个在 ChatTabs.init，之后的在 add）。
+    /// 运行时登记到网络状态由 ChatTabs 做（启动时的那个在 ChatTabs.init，之后加的在 adopt(_:_:)）。
     /// 两者的日志要么都带这个标签页的标签，要么都不带（测试里单独建的），不能带别的标签页的。
     /// 页面状态在这里建，带同一个标签（PageLoadState.logTag）：窗口给不显示的页面写的行也带这个标签页的标签。
     init(id: TabID, runtime: WebRuntime, adapter: ChatGPTAdapter) {

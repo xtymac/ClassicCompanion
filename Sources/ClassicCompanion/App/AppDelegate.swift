@@ -20,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let languages = LanguageController.shared
     private let diagnostics = Diagnostics()
     /// 标签页（顺序、选中项和标识的列表 TabList 也在这里）、它们的运行时回调怎么接到窗口上，和换页面、聚焦输入框。见 ChatTabs。
-    /// 现在只有启动时的那一个标签页。对选中的标签页做的操作（新对话、⌘R、媒体状态、证据采集）和设置的改动都经它，
+    /// 启动时有一个标签页，之后由按键、菜单和 ⌘ 点击链接经 ChatTabs 增减。对选中的标签页做的操作（新对话、⌘R、媒体状态、证据采集）和设置的改动都经它，
     /// 在操作开始时取选中的那个；这里不再另外留着一个标签页。
     private var chatTabs: ChatTabs!
     /// 标签页的菜单项（3.11）：文件菜单、窗口菜单、菜单栏图标的菜单里的那几项，和左上角 × 的提示里的键。见 TabMenus。
