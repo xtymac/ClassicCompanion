@@ -1,7 +1,7 @@
 import AppKit
 import CompanionCore
 
-/// 一个页面加载到哪一步了。这里只放状态：什么时候改、怎么用，规则都还在 ChatWindowController 里。
+/// 一个页面加载到哪一步了，包括它第一次加载的遮挡（启动画面）。这里只放状态：什么时候改、怎么用，规则都还在 ChatWindowController 里。
 /// 窗口显示其中一个（ChatWindowController.page），换网页视图时不跟着换。事件带着它属于的页面交给窗口：
 /// 先改那个页面自己的这些状态，只有它显示着时窗口才跟着变；不显示的页面的事件只改它自己的状态。
 @MainActor
@@ -36,6 +36,20 @@ final class PageLoadState {
     /// 每个页面加载完成时都记，和 hasFinishedFirstLoad 一起写。窗口只观察显示着的网页视图，不显示的页面的颜色只有这一份记录。
     /// 只记不用：切换到这个页面时能不能采用、怎么采用，留到下一阶段。
     var colorAtLastFinish: NSColor?
+
+    // 第一次加载的遮挡（现在只有启动画面）：这个页面自己的那一份。开始、到时限、到上限、提交后兜底、加载完成和失败
+    // 结束它的规则在 ChatWindowController 里（beginLaunchScreen()、endLaunchScreen(_:for:)），不管页面显不显示都照常改这几项；
+    // 窗口的启动画面只照显示着的页面的 isCovered 显示（applyCover(_:)）。不显示的页面的遮挡变了，窗口上什么都不变。
+
+    /// 遮挡还盖着：开始了、还没结束。
+    var isCovered = false
+    /// 到时限时网页还没提交，遮挡继续盖着，等加载完成、加载失败、提交后兜底或上限。
+    var coverAwaitsCommit = false
+    /// 每次开始遮挡加一。遮挡的时限和上限只在还是排下它们的那一次时起作用。
+    var coverGeneration = 0
+    /// 这一次遮挡开始的时刻（结束时日志里的耗时从这里算）。
+    var coverStarted = Date()
+
     /// 这个页面已经关闭（关闭标签页）。只由 ChatWindowController.pageClosed(_:) 设，不会改回。
     /// 关了以后它的事件和它排着的回调都不起作用：上面这些状态停在关闭那一刻，窗口也不因它而变（规则在 ChatWindowController 里）。
     var isClosed = false

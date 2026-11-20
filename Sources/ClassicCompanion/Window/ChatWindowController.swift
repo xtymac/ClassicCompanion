@@ -103,20 +103,13 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 遮挡（到时限后还在的启动画面、“无法连接”提示）在提交后最多再留多久。一直没有加载完成（例如子资源卡住）时，
     /// 到时就撤，不一直挡着已经能用的页面。和颜色兜底取同一个值。
     var pageRevealLimit: TimeInterval = 1
-    /// 到时限时网页还没提交，启动画面继续显示中。
-    private var launchAwaitsPage = false
-    /// 启动画面属于哪个页面：beginLaunchScreen 时显示着的那个。只有这个页面的加载完成、加载失败和提交后兜底能结束它，
-    /// 时限和上限也只对它起作用（见 showsLaunchScreen(for:)）。不持有页面。
-    private weak var launchPage: PageLoadState?
-    /// 每次 beginLaunchScreen 加一。时限和上限只在启动画面还是排下它们的那一次时起作用。
-    private var launchGeneration = 0
-    /// 窗口里显示着的页面加载到哪一步了（提交、加载完成、“无法连接”提示的状态和留着的提示、启动保护的颜色），见 PageLoadState。
+    /// 窗口里显示着的页面加载到哪一步了（提交、加载完成、“无法连接”提示的状态和留着的提示、启动保护的颜色、
+    /// 第一次加载的遮挡），见 PageLoadState。
     /// 规则都在这个类里。事件带着它属于的页面进来（pageDidCommit(_:)、pageDidFinishLoading(_:reportedColor:)、
     /// showLoadProblem(_:for:)、endLaunchScreen(_:for:)）：先改那个页面自己的状态，只有它就是这里的 page 时才动窗口
     /// （提示那层、淡出、启动画面、颜色、写窗口的日志）。不带页面的旧入口就是对 page 调用。
     /// 已经关闭的页面（pageClosed(_:)）的事件和排着的回调什么都不做。
     private(set) var page: PageLoadState
-    private var launchStarted = Date()
     private var lastDragLog = Date.distantPast
     /// 窗口已最小化到 Dock。
     var onDidMiniaturize: (() -> Void)?
@@ -139,6 +132,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private let webEdges: [NSLayoutConstraint]
     private var webPin: [NSLayoutConstraint] = []
     /// 只在启动时、网页加载完之前盖着，免得先露出一片空白。不是隐私遮罩，网页从不被挡住。
+    /// 盖不盖只照显示着的页面的遮挡状态（page.isCovered）改（applyCover(_:)），别处不直接改。
     private let launchCover: NSHostingView<LaunchScreen>
     /// 加载失败、窗口里没有页面时盖在网页上的“无法连接”提示。有页面时从不显示。
     /// 这一层和它的内容（loadProblem）都只照显示着的页面的 notice 改（applyNotice(_:)），别处不直接改。
@@ -221,7 +215,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         loadProblemCover.isHidden = page.notice == .hidden
         container.addSubview(loadProblemCover)
         launchCover.translatesAutoresizingMaskIntoConstraints = false
-        launchCover.isHidden = true
+        // 启动画面从页面的遮挡状态开始（新页面没有遮挡，和这里原来的初值一样），之后只经 applyCover(_:) 改。
+        launchCover.isHidden = !page.isCovered
         container.addSubview(launchCover)
         let edges = [webContainer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
                      webContainer.bottomAnchor.constraint(equalTo: container.bottomAnchor)]
@@ -629,44 +624,62 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         loadProblemCover.isHidden = p.notice == .hidden
     }
 
-    /// 启动画面属于这时显示着的页面（launchPage）。时限和上限是窗口的，但只对这个页面、这一次启动画面起作用：
-    /// 到点时页面已经释放、或之后又开始过一次启动画面（launchGeneration 变了），都不做事。
+    // MARK: - 第一次加载的遮挡（启动画面）
+    //
+    // 遮挡是每个页面自己的（PageLoadState 的 isCovered、coverAwaitsCommit、coverGeneration、coverStarted），规则只有这一套：
+    // 开始（beginCover(for:)）、到时限（coverLimitReached(for:)）、结束（endLaunchScreen(_:for:)：加载完成、加载失败、
+    // 到时限时已提交、到时限后提交兜底、到上限）。页面显不显示都照这套规则改它自己的遮挡状态，时限和上限到点也照常；
+    // 窗口只在页面显示着时跟着动：启动画面那层（applyCover(_:)）、淡出、启动保护的窗口部分、窗口的日志。
+    // 不显示的页面的遮挡变了，窗口上什么都不变（也不写日志）；它再显示时，窗口照它那时的状态显示（由切换的入口投上去，以后做）。
+    // 关闭的页面（pageClosed(_:)）不开始遮挡，它的事件和排着的时限、上限都不再改它的遮挡，也不动窗口。
+    // 遮挡的计时只弱引用页面：页面释放了，它的遮挡和计时一起作废；窗口显示着的页面由窗口持有，不会在显示时释放。
+
+    /// 启动时（AppDelegate）：显示着的页面开始遮挡，窗口盖上启动画面。
     func beginLaunchScreen() {
-        let p = page
-        launchPage = p
-        launchGeneration += 1
-        let generation = launchGeneration
-        launchCover.isHidden = false
-        launchStarted = Date()
-        launchAwaitsPage = false
+        beginCover(for: page)
+    }
+
+    /// 页面 p 开始第一次加载的遮挡：p 的遮挡状态重新开始（代号加一、记下开始的时刻、不在等提交），p 进入启动保护，
+    /// 排下这一次的时限和上限。p 显示着时窗口盖上启动画面。
+    /// 时限和上限属于 p 的这一次遮挡：到点时 p 已经释放、或 p 之后又开始过一次（p.coverGeneration 变了），都不做事；
+    /// 到点时不去看显示着的是哪个页面（是不是显示着只决定窗口动不动，见 coverLimitReached(for:)、endLaunchScreen(_:for:)）。
+    /// p 已经关闭时什么都不做。
+    private func beginCover(for p: PageLoadState) {
+        guard !p.isClosed else { return }
+        p.coverGeneration += 1
+        let generation = p.coverGeneration
+        p.isCovered = true
+        if p === page { applyCover(p) }
+        p.coverStarted = Date()
+        p.coverAwaitsCommit = false
         holdPageColor(p)
         DispatchQueue.main.asyncAfter(deadline: .now() + launchScreenLimit) { [weak self, weak p] in
             MainActor.assumeIsolated {
-                guard let self, let p, self.launchGeneration == generation else { return }
-                self.launchScreenLimitReached(for: p)
+                guard let self, let p, p.coverGeneration == generation else { return }
+                self.coverLimitReached(for: p)
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + launchScreenCap) { [weak self, weak p] in
             MainActor.assumeIsolated {
-                guard let self, let p, self.launchGeneration == generation else { return }
+                guard let self, let p, p.coverGeneration == generation else { return }
                 self.endLaunchScreen("超过上限", for: p)
             }
         }
     }
 
-    /// 启动画面显示着、属于页面 p，并且 p 是显示着的页面、没有关闭。结束启动画面和到时限后继续显示都先看它：
-    /// 别的页面（不是启动的那个、或者不显示、或者已关闭）的事件和回调不动启动画面。
-    /// 启动的页面关闭以后，它的事件、时限和上限都不再结束启动画面：关闭的只会是不显示的页面（ChatTabs.close(_:)），
-    /// 启动画面还在时又不能新增标签页，所以现在碰不到；以后新标签页的遮挡复用这套规则时，由切换标签页的入口决定换上来的页面的遮挡。
-    private func showsLaunchScreen(for p: PageLoadState) -> Bool {
-        isShowingLaunchScreen && launchPage === p && p === page && !p.isClosed
+    /// 页面 p 的遮挡还盖着、p 没有关闭。结束遮挡和到时限后继续盖着都先看它：没有遮挡的页面（没开始过、已经结束）
+    /// 和关闭的页面的事件、回调不改任何遮挡。看的只是 p 自己：别的页面的遮挡不会因为 p 的事件或计时而变。
+    private func isCovering(_ p: PageLoadState) -> Bool {
+        p.isCovered && !p.isClosed
     }
 
-    /// 到时限：启动的页面已经提交就照原来结束；还没提交就继续显示，等加载完成、失败、提交后兜底或上限。
-    private func launchScreenLimitReached(for p: PageLoadState) {
-        guard showsLaunchScreen(for: p) else { return }
+    /// 到时限：p 已经提交就照原来结束；还没提交就继续盖着，等加载完成、失败、提交后兜底或上限。
+    /// 继续盖着这件事记在 p 自己的状态里（p.coverAwaitsCommit）；日志只在 p 显示着时写。
+    private func coverLimitReached(for p: PageLoadState) {
+        guard isCovering(p) else { return }
         guard !p.hasCommittedPage else { return endLaunchScreen("超过时限", for: p) }
-        launchAwaitsPage = true
+        p.coverAwaitsCommit = true
+        guard p === page else { return }
         diagnostics.log("launch", "启动画面到时限：网页还没提交，继续显示（等加载完成、失败、提交后 \(Int(pageRevealLimit * 1000))ms，"
                         + "最多到 \(Int(launchScreenCap)) 秒）")
     }
@@ -676,15 +689,27 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         endLaunchScreen(outcome, for: page)
     }
 
-    /// 页面 p 加载完、加载失败、到时限（已提交）、提交后兜底或到上限时调用。之后不再出现。
-    /// 只在启动画面属于 p、p 也显示着、没有关闭时结束；别的页面调用时什么都不做。
+    /// 页面 p 加载完、加载失败、到时限（已提交）、提交后兜底或到上限时调用。p 的这一次遮挡结束，之后不再出现。
+    /// 只在 p 的遮挡还盖着、p 没有关闭时起作用；p 没有遮挡时什么都不做。p 自己的遮挡状态显不显示都照样结束；
+    /// 窗口只在 p 显示着时动：写日志、撤掉启动画面、淡出。
     /// 启动保护不在这里解除，见 pageDidFinishLoading(_:reportedColor:)。
     func endLaunchScreen(_ outcome: String, for p: PageLoadState) {
-        guard showsLaunchScreen(for: p) else { return }
-        diagnostics.log("launch", "启动画面结束：\(outcome)（\(Int(Date().timeIntervalSince(launchStarted) * 1000))ms）")
-        launchAwaitsPage = false
-        launchCover.isHidden = true
+        guard isCovering(p) else { return }
+        if p === page {
+            diagnostics.log("launch", "启动画面结束：\(outcome)（\(Int(Date().timeIntervalSince(p.coverStarted) * 1000))ms）")
+        }
+        p.coverAwaitsCommit = false
+        p.isCovered = false
+        guard p === page else { return }
+        applyCover(p)
         fadeOutLaunchScreen()
+    }
+
+    /// 把页面 p 的遮挡状态投到窗口的启动画面上：盖着就显示，没有就藏起。
+    /// 只对显示着的页面调用（调用的地方先判断 p === page），每次改了它的 isCovered 之后都调用；
+    /// 只写这一样，不记日志、不碰淡出那层和别的状态。
+    private func applyCover(_ p: PageLoadState) {
+        launchCover.isHidden = !p.isCovered
     }
 
     /// 显示着的页面的主框架提交时调用（AppDelegate.onMainFrameCommitted，在“提示可以收起”之前）。
@@ -692,7 +717,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         pageDidCommit(page)
     }
 
-    /// 页面 p 的主框架提交了。提交后 pageRevealLimit 还没加载完成：到时限后还在的启动画面结束，留着的提示收起。
+    /// 页面 p 的主框架提交了。提交后 pageRevealLimit 还没加载完成：p 到时限后还在的遮挡结束，留着的提示收起。
     /// 兜底属于 p 的这次提交：到点时 p 已经释放、已经关闭、或又提交、加载完成过（代号变了），都不做事；
     /// 到点时不去看显示着的是哪个页面。p 已经关闭时什么都不做。
     func pageDidCommit(_ p: PageLoadState) {
@@ -709,11 +734,11 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// 页面 p 提交后 pageRevealLimit 还没加载完成。启动画面只在属于 p、p 显示着时结束；
+    /// 页面 p 提交后 pageRevealLimit 还没加载完成。p 的遮挡在到时限后等提交的话结束（p 显示着时窗口才撤启动画面）；
     /// p 留着的提示总是在 p 的状态里收起，窗口的提示和日志只在 p 显示着时动。
     private func pageRevealLimitReached(for p: PageLoadState) {
         let waited = "提交后 \(Int(pageRevealLimit * 1000))ms 还没加载完成"
-        if launchAwaitsPage { endLaunchScreen(waited, for: p) }
+        if p.coverAwaitsCommit { endLaunchScreen(waited, for: p) }
         if p.noticeAwaitsLoad {
             if p === page { diagnostics.log("nav", "无法连接提示：\(waited)，收起") }
             p.noticeAwaitsLoad = false
@@ -888,11 +913,14 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 页面 p 关闭了（关闭标签页时由 ChatTabs.close(_:) 调用，在它的网页运行时关闭之后）。从此 p 是关闭的（p.isClosed，不会改回）：
     /// - 带页的入口（showLoadProblem(_:for:)、pageDidCommit(_:)、pageDidFinishLoading(_:reportedColor:)、
     ///   endLaunchScreen(_:for:)）对 p 什么都不做，不改 p 的状态，也不动窗口；
-    /// - p 排着的回调（提交后兜底、颜色等待、150ms 颜色更新）到点时什么都不做，启动画面的时限和上限也不再因 p 动作；
+    /// - p 排着的回调（提交后兜底、颜色等待、150ms 颜色更新）到点时什么都不做，p 的遮挡（启动画面）的时限和上限也不再改它
+    ///   （p 的遮挡停在关闭时：还盖着的就一直算盖着，但它只是 p 的状态，不会结束、也不会挡住别的页面的遮挡）；
+    /// - p 不再开始遮挡；
     /// - p 的网页视图报的颜色不再采用。
     /// p 的其余状态停在这一刻。关两遍和关一个从没显示过的页面都可以。这里不写日志（运行时关闭时写了一行）。
-    /// p 是显示着的页面时也照这样做：窗口停在关闭时的样子，不会再因 p 而变。换上哪个页面显示、它的提示、遮挡和颜色，
-    /// 是切换标签页的入口的事（以后做）；正式的关闭入口 ChatTabs.close(_:) 只关不选中、不显示的标签页。
+    /// p 是显示着的页面时也照这样做：窗口停在关闭时的样子，不会再因 p 而变（启动画面还盖着的就一直盖着，直到换上别的页面）。
+    /// 换上哪个页面显示、它的提示、遮挡和颜色，是切换标签页的入口的事（以后做）：遮挡照换上来的页面自己的状态投（applyCover(_:)），
+    /// 和关闭的页面无关。正式的关闭入口 ChatTabs.close(_:) 只关不选中、不显示的标签页。
     func pageClosed(_ p: PageLoadState) {
         p.isClosed = true
     }
@@ -914,7 +942,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 进行中的模式切换先结束，和隐藏、显示、拖边一样：快照和排版都是旧网页的，
     /// 晚到的快照、排版完成和时限回调因为 layoutChange 已经不是它们那次而不起作用。
     ///
-    /// 页面加载状态（hasCommittedPage、awaitingFinish、commitGeneration、noticeAwaitsLoad、launchAwaitsPage、
+    /// 页面加载状态（hasCommittedPage、awaitingFinish、commitGeneration、noticeAwaitsLoad、遮挡的 isCovered 和 coverAwaitsCommit、
     /// holdsPageColor、colorBeforeFirstLoad、hasFinishedFirstLoad、colorAtLastFinish 和“无法连接”提示的状态 notice）
     /// 在阶段 2 之前还是窗口一份（显示着的 page 不跟着换）。这里不保存、不恢复、不重设，
     /// 换过之后它们就当作新网页视图的。所以前提是换的时候这些状态都已经停下来（pageStateIsSettled）；
@@ -953,16 +981,20 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 换网页视图的前提（见 replaceWebView）：没有启动画面和启动保护、没有在等加载完成前的颜色、
     /// 不在“已提交、还没加载完成”中、没有显示或留着“无法连接”提示。
     private var pageStateIsSettled: Bool {
-        !isShowingLaunchScreen && !launchAwaitsPage && !page.holdsPageColor && page.colorBeforeFirstLoad == nil
+        !isShowingLaunchScreen && !page.coverAwaitsCommit && !page.holdsPageColor && page.colorBeforeFirstLoad == nil
             && !page.awaitingFinish && !page.noticeAwaitsLoad && page.notice == .hidden
     }
 
     #if DEBUG
     /// 只给测试用（调试版才有）：把窗口当作显示着的页面换成 p，别的什么都不做——不投 p 的提示、不动启动画面和颜色、
     /// 不换网页视图、不换颜色代号、不写日志。这不是切换页面的规则（“显示这个页面的状态”的入口留到下一阶段），
-    /// 只用来验证：换走再换回来以后，排着的回调仍只按排下它的那一次的代号起作用。
-    func setDisplayedPageForTesting(_ p: PageLoadState) {
+    /// 只用来验证：换走再换回来以后，排着的回调仍只按排下它的那一次的代号起作用；不显示的页面的事件和计时只改它自己的状态。
+    /// 所以换过以后窗口的启动画面和提示可能还是换走的那个页面的样子。
+    /// showingItsCover：再把 p 的遮挡状态投到窗口的启动画面上（applyCover(_:)，以后切换标签页的入口也要这样投），
+    /// 用来验证不显示时照常结束或还盖着的遮挡，换上来时窗口照它显示。只投这一样，不淡出、不写日志。
+    func setDisplayedPageForTesting(_ p: PageLoadState, showingItsCover: Bool = false) {
         page = p
+        if showingItsCover { applyCover(p) }
     }
     #endif
 

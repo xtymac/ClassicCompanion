@@ -169,7 +169,8 @@ final class ChatTabs {
     ///
     /// 顺序：先进入关闭态，再收尾。
     /// 1. 运行时关闭（WebRuntime.close()）：不再自己发起加载、不再排重试，排着的重试取消，停止加载，回调断开，弹窗关掉。
-    /// 2. 页面状态关闭（ChatWindowController.pageClosed(_:)）：带这个页面的入口和它排着的兜底、颜色回调都不再起作用。
+    /// 2. 页面状态关闭（ChatWindowController.pageClosed(_:)）：带这个页面的入口和它排着的兜底、颜色回调、遮挡的时限和上限
+    ///    都不再起作用。
     /// 3. 排着的聚焦任务取消（到点本来也因为它不是选中的而不做，这里让它马上结束、不再等）。
     /// 4. 从列表（list）和 tabs 里一起拿掉，两者始终一一对应。不记入最近关闭（⇧⌘T 记哪个地址是重新打开的任务）。
     /// 5. 从共用的网络状态上去掉（tabLeft）。
@@ -209,7 +210,8 @@ final class ChatTabs {
             self.hideWindow("网页 Esc")
         }
         // 页面加载完成时结束启动画面；若窗口在前台，再尝试聚焦一次（唤醒时页面可能尚未就绪）。
-        // 结束启动画面和加载完成都带着这个标签页的页面交给窗口：窗口只在它显示着时动（规则在 ChatWindowController 里）。
+        // 结束启动画面和加载完成都带着这个标签页的页面交给窗口：遮挡（启动画面）是这个页面自己的，不显示时也照常结束；
+        // 窗口只在它显示着时动（规则在 ChatWindowController 里）。
         // 聚焦只给选中的标签页。
         tab.runtime.onMainFrameLoaded = { [weak self, weak tab] in
             guard let self else { return }
