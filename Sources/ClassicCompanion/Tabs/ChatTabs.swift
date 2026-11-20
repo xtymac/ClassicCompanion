@@ -18,6 +18,8 @@ import CompanionCore
 /// - 窗口和全应用的事（隐藏窗口、聚焦输入框、记下可恢复的对话地址）只在它是选中的标签页时做。
 ///   页面加载状态的窗口部分由 ChatWindowController 判断（只有显示着的页面动窗口），这里不重复判断。
 /// - 排着的任务（80ms 后聚焦、0.8 秒后记媒体状态）带着排下它的标签页（weak），到点时它不再是对的对象就不做。
+/// - 网页的对话框（提示框、确认框、文件选择）：选中的标签页的马上显示；别的标签页的排在它自己身上，等它被选中再显示
+///   （select(_:)），它关闭时按取消处理（WebRuntime.close()）。别的标签页要开新窗口（登录等弹窗）：不开。
 /// 操作也一样：对选中的标签页做的操作在开始这一刻取选中的那个，之后一直明确传着它，等过之后（await、定时、窗口的下一个回调）
 /// 不再回来读“现在选中的”。等完先看它还在不在这组里，不在就不做；会被更新的请求取代的（聚焦）还看代号。
 /// 后台的事从不改前台。设置（网页增强、页面缩放、网页无障碍、弹窗标题）每个标签页都改。
@@ -257,7 +259,8 @@ final class ChatTabs {
     ///
     /// 顺序：先进入关闭态，再收尾。
     /// 1. 运行时关闭（WebRuntime.close()）：不再自己发起加载、不再排重试，排着的重试取消，停止加载，回调断开，停掉地址观察和
-    ///    消息桥，弹窗关掉；之后迟到的导航事件、网页脚本的回调都不做事、不写日志。
+    ///    消息桥，弹窗关掉；排着的网页对话框不再显示、显示着的文件选择收起，都按取消回答网页；之后迟到的导航事件、网页脚本的
+    ///    回调都不做事、不写日志。
     /// 2. 适配器关闭（ChatGPTAdapter.close()）：不再在网页里跑脚本、不再读媒体状态，进行中的脚本返回或超时以后不写日志、
     ///    不写诊断。
     /// 3. 页面状态关闭（ChatWindowController.pageClosed(_:)）：带这个页面的入口和它排着的兜底、颜色回调、遮挡的时限和上限
@@ -343,6 +346,13 @@ final class ChatTabs {
             self.windowController.pageDidCommit(page)
             if let tab { self.mainFrameCommitted(tab) }
         }
+        // 网页的对话框（提示框、确认框、文件选择）和新窗口按“它是不是选中的标签页”：是就和原来一样马上显示、照常开；
+        // 不是就把对话框排在它自己身上，等它被选中再显示（select(_:) 最后放出来），新窗口不开（规则在 WebRuntime 的
+        // WKUIDelegate 那一段）。这一组或 tab 已经释放：当作不是选中的（排着，关闭时按取消处理）。
+        tab.runtime.isSelectedTab = { [weak self, weak tab] in
+            guard let self, let tab else { return false }
+            return self.isSelected(tab)
+        }
     }
 
     /// ⌘R 和提示里的“重新加载”（窗口的按钮）：按下这一刻选中的标签页重新加载。提示显示的是窗口显示着的页面的状态，
@@ -426,8 +436,15 @@ final class ChatTabs {
     /// 4. 聚焦（D5，和唤醒一样）：之前排着的聚焦都作废（代号加一：A → B → A 时 A 换走前排下的那次也不再聚焦）；
     ///    窗口是 key 窗口才给 tab 排一次（focusInputSoon(for:)，80ms 后）。
     /// 5. 可恢复的对话地址跟着选中的：tab 现在的地址是可以恢复的对话就记下；不是就不改（还留着之前记下的）。
+    /// 6. tab 不显示时排着的网页对话框（提示框、确认框、文件选择）放出来（WebRuntime.showHeldDialogs()）：
+    ///    在这一轮之后（select 和调用它的 closeTab、newTab 先做完）按到达的先后一次显示一个，每一个显示之前再看 tab 还是不是
+    ///    选中的、关没关闭（又切换走了就接着排着，等下一次选中）。
+    ///    不等补排版（laidOut），也不等第一次加载的遮挡：排着的提示框、确认框让 tab 的网页停着等回答，补排版要在网页里跑的
+    ///    排版脚本、第一次加载都要等回答以后才走得动，等它们只会等到时限（补排版 1.5 秒，遮挡 10／30 秒）；
+    ///    选中的标签页自己的对话框在遮挡、补排版时也是马上显示的（原来就这样）。
     /// 不改的：tab 和换下去的那一页自己的状态（页面加载状态、路径、媒体状态、排着的任务）；进行中的、开始时绑定了某一页的操作
     /// （新对话、读媒体状态、证据采集、媒体实验）照样只对它们那一页做；换下去的那一页之后的事件只改它自己的状态。
+    /// 换下去的那一页正显示着的对话框（文件选择不是模态的，换的时候可能还开着）不收起，回答照样给它；它之后的对话框排着。
     func select(_ tab: ChatTab) {
         guard holds(tab), !isSelected(tab) else { return }
         _ = list.select(tab.id)
@@ -441,6 +458,7 @@ final class ChatTabs {
         focusGeneration += 1
         if windowIsKey() { focusInputSoon(for: tab) }
         if let restorable = NavigationPolicy.restorableConversationURL(tab.url) { saveLastConversation(restorable) }
+        tab.runtime.showHeldDialogs()
     }
 
     /// 换上来的 tab 要补排版：窗口在它的网页视图还藏着、还是离开时的大小时调用（排版变化之前）。
