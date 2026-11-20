@@ -22,7 +22,8 @@ import CompanionCore
 /// 加载、失败、提交、加载完成像 LoadRecoveryWebTests 一样直接调运行时的导航代理。AppDelegate 交进来的几样换成记录。
 /// A 的运行时和适配器自己写的日志（加载、失败、重试）记在 A 自己的 Diagnostics 里：共用的 diagnostics 里只有窗口、
 /// ChatTabs 和 B 的运行时写的，所以“窗口的日志不变”可以整条比。
-/// 选中的标签页和窗口显示着的页面要一致：换选中的只用 selectForTesting（两边一起设，不换网页视图）。
+/// 选中的标签页和窗口显示着的页面要一致：1–16 换选中的只用 selectForTesting（两边一起设，不换网页视图，切换时的那些事都不做），
+/// 单独看每一条按所属页处理的规则；17 经真正的切换入口 select(_:)，看同样的规则在切换以后照样成立。
 @MainActor
 final class TabEventOwnershipTests: XCTestCase {
     private let chat = URL(string: "https://chatgpt.com/c/abc")!
@@ -997,13 +998,14 @@ final class TabEventOwnershipTests: XCTestCase {
 
         rig.mediaDelay = 0
         rig.tabs.mediaTick()
-        try await waitUntil { rig.lines.filter { $0.hasPrefix("[media]") }.count == 3 }
+        try await waitUntil { rig.mediaRead.count == 3 }
+        try await pause(0.1)
         XCTAssertEqual(rig.mediaRead.map(rig.name), ["B", "A", "B"])
+        XCTAssertEqual(rig.diagnostics.webMediaState, "媒体B")
         XCTAssertEqual(rig.lines.filter { $0.hasPrefix("[media]") }, [
             "[media] WebKit 媒体状态 none → 媒体B（窗口可见=false）",
-            "[media] WebKit 媒体状态 媒体B → 媒体A（窗口可见=false）",
-            "[media] WebKit 媒体状态 媒体A → 媒体B（窗口可见=false）",
-        ])
+            "[media] WebKit 媒体状态 none → 媒体A（窗口可见=false）",
+        ], "每个标签页和它自己上次读到的比：A 第一次读到的从 none 起，B 第二次读到的和上次一样、不写")
     }
 
     /// 读的时候 B 被拿掉（先选中 A）：读完不显示、不写日志、不改记下的状态。下一次读选中的 A，照常从原来的状态记。
@@ -1080,6 +1082,136 @@ final class TabEventOwnershipTests: XCTestCase {
         await rig.tabs.collectEvidence(measure: true)
         XCTAssertTrue(rig.diagnostics.readAloudEvidence.contains("not-chat-page"), rig.diagnostics.readAloudEvidence)
         XCTAssertEqual(rig.diagnostics.mediaMeasurement, "not-chat-page")
+    }
+
+    // MARK: - 17. 经真正的切换入口（ChatTabs.select(_:)）
+
+    // 上面的操作换成真正的切换以后照样只对开始时绑定的那一页做；窗口级的（提示里的“重新加载”、窗口显示后、聚焦）
+    // 跟着切换过去的那一页。切换本身会聚焦换上来的那一页（窗口是 key 窗口时）、写一行“选中”。
+
+    /// B 选中时按新对话，页面里的入口还在等时切换到 A（窗口是 key 窗口：切换给 A 排一次聚焦，80ms 后），
+    /// 紧接着（A 的聚焦到点之前）入口返回。
+    /// 点到了：给 B 的聚焦请求不算数（B 不是选中的），不取消 A 的那次，A 照常聚焦，只聚焦一次。
+    /// 没点到：整页加载给 B（它自己的页面），A 不加载；A 照常聚焦。
+    func testANewChatKeepsToItsTabAcrossARealSwitch() async throws {
+        for inPage in [true, false] {
+            let rig = makeRig()
+            rig.tabs.windowIsKey = { true }
+            rig.newChatInPage = inPage
+            rig.newChatWaits = true
+            rig.tabs.newChat()
+            try await waitUntil { !rig.newChatAsked.isEmpty }
+            rig.tabs.select(rig.a)
+            rig.releaseNewChat()
+            try await pause(0.3)
+            XCTAssertEqual(rig.newChatAsked.map(rig.name), ["B"], "点到=\(inPage)")
+            XCTAssertEqual(rig.focused.map(rig.name), ["A"], "只聚焦切换过去的 A（点到=\(inPage)）")
+            XCTAssertEqual(rig.loadedA, [], "点到=\(inPage)")
+            XCTAssertEqual(rig.loadedB, inPage ? [] : [WebRuntime.homeURL], "点到=\(inPage)")
+        }
+    }
+
+    /// 读媒体状态的时候切换到 A：读完显示和写日志的还是 B；下一秒读 A，和 A 自己上次的比（none），
+    /// 不写成“B 的状态 → A 的状态”。切回 B 再读，和 B 上次的一样，不写。
+    func testAMediaTickKeepsToItsTabAcrossARealSwitch() async throws {
+        let rig = makeRig()
+        rig.mediaDelay = 0.15
+        rig.tabs.mediaTick()
+        try await waitUntil { !rig.mediaRead.isEmpty }
+        rig.tabs.select(rig.a)
+        try await waitUntil { rig.lines.contains { $0.hasPrefix("[media]") } }
+        XCTAssertEqual(rig.diagnostics.webMediaState, "媒体B")
+
+        rig.mediaDelay = 0
+        rig.tabs.mediaTick()
+        try await waitUntil { rig.mediaRead.count == 2 }
+        try await pause(0.1)
+        XCTAssertEqual(rig.diagnostics.webMediaState, "媒体A")
+        rig.tabs.select(rig.b)
+        rig.tabs.mediaTick()
+        try await waitUntil { rig.mediaRead.count == 3 }
+        try await pause(0.1)
+        XCTAssertEqual(rig.mediaRead.map(rig.name), ["B", "A", "B"])
+        XCTAssertEqual(rig.lines.filter { $0.hasPrefix("[media]") }, [
+            "[media] WebKit 媒体状态 none → 媒体B（窗口可见=false）",
+            "[media] WebKit 媒体状态 none → 媒体A（窗口可见=false）",
+        ])
+    }
+
+    /// 采集证据和媒体实验的第一步里切换到另一页：剩下的步骤还是开始时那一页的。
+    func testEvidenceAndExperimentsKeepToTheirTabAcrossARealSwitch() async {
+        let rig = makeRig()
+        let steps = EvidenceSteps()
+        rig.tabs.evidenceTarget = { [weak rig] tab in EvidenceSpy(name: rig?.name(tab.adapter) ?? "?", steps: steps) }
+        steps.onFirstStep = { [weak rig] in rig.map { $0.tabs.select($0.a) } }
+        await rig.tabs.collectEvidence(measure: true)
+        XCTAssertEqual(steps.list, ["B probe", "B readAloudEvidence", "B measureMedia"])
+        XCTAssertTrue(rig.tabs.selected === rig.a)
+
+        steps.list = []
+        steps.onFirstStep = { [weak rig] in rig.map { $0.tabs.select($0.b) } }
+        await rig.tabs.runExperiment(.suspendAll)
+        XCTAssertEqual(steps.list, ["A suspend true", "A webMediaState"])
+        XCTAssertTrue(rig.tabs.selected === rig.b)
+    }
+
+    /// 切换到 A 以后，窗口级的事都给 A：提示里的“重新加载”、窗口显示后的提前重试和聚焦。B 不再收到。
+    func testTheWindowsReloadAndShowFollowARealSwitch() async throws {
+        let rig = makeRig()
+        rig.b.runtime.load(chat)
+        rig.fail(rig.b.runtime)
+        rig.a.runtime.load(other)
+        rig.fail(rig.a.runtime, other)
+        rig.tabs.select(rig.a)
+        XCTAssertEqual(rig.controller.shownLoadProblem, .waiting, "A 的提示投上来")
+
+        rig.controller.onDidShow?(.wake)
+        XCTAssertEqual(rig.loadedA, [other, other], "A 提前重试")
+        XCTAssertEqual(rig.loadedB, [chat])
+        rig.noticeCover.rootView.model.onReload()
+        XCTAssertEqual(rig.loadedA, [other, other, other])
+        XCTAssertEqual(rig.loadedB, [chat])
+        try await waitUntil { !rig.focused.isEmpty }
+        try await pause(0.2)
+        XCTAssertEqual(rig.focused.map(rig.name), ["A"])
+    }
+
+    /// 切换到 A 以后，换下去的 B（它的网页视图藏在窗口里）的提交、加载完成、失败、提示、颜色都只改 B 自己的状态：
+    /// 窗口（遮挡、提示、颜色、淡出）、A、聚焦、隐藏、记下地址都不变。A 加载完成照常聚焦 A。
+    func testTheOutgoingTabsEventsAfterARealSwitchLeaveTheShownTabAlone() async throws {
+        let rig = makeRig()
+        rig.tabs.windowIsKey = { true }
+        rig.controller.beginNewTabCover(for: rig.a.page)
+        rig.tabs.select(rig.a)
+        XCTAssertEqual(rig.controller.shownCoverKind, .newTab)
+        try await waitUntil { !rig.focused.isEmpty }
+        try await pause(0.2)
+        let window = rig.window, a = Fields(rig.a.page)
+        let calls = "隐藏=\(rig.hidden) 聚焦=\(rig.focused.map(rig.name)) 记下=\(rig.saved)"
+        // 窗口和切换写的类别（B 的运行时自己写的加载、失败、页面变化的行不算）。
+        let windowLines = { rig.lines.filter { line in ["[launch]", "[appearance]", "[window]", "[tabs]"].contains { line.hasPrefix($0) } } }
+        let lines = windowLines()
+
+        rig.b.runtime.load(chat)
+        rig.fail(rig.b.runtime)
+        rig.b.runtime.reload()
+        rig.commit(rig.b.runtime)
+        rig.b.runtime.webView.underPageBackgroundColor = TwoTabs.white
+        rig.finish(rig.b.runtime)
+        rig.b.runtime.onURLChange?(chat)
+        rig.b.runtime.onEscapeRequest?()
+        try await pause(0.3)
+        XCTAssertTrue(rig.b.page.hasFinishedFirstLoad, "B 自己的状态照常改")
+        XCTAssertEqual(rig.window, window, "窗口不变")
+        XCTAssertEqual(Fields(rig.a.page), a, "A 不变")
+        XCTAssertEqual("隐藏=\(rig.hidden) 聚焦=\(rig.focused.map(rig.name)) 记下=\(rig.saved)", calls)
+        XCTAssertEqual(windowLines(), lines, "窗口不写日志")
+
+        rig.commit(rig.a.runtime)
+        rig.finish(rig.a.runtime)
+        XCTAssertNil(rig.controller.shownCoverKind, "A 自己的加载完成照常结束它的遮挡")
+        try await waitUntil { rig.focused.count == 2 }
+        XCTAssertEqual(rig.focused.map(rig.name), ["A", "A"])
     }
 }
 
@@ -1218,7 +1350,16 @@ private final class TwoTabs {
     private(set) var newChatAsked: [ChatGPTAdapter] = []
     var newChatInPage = false
     var newChatDelay: Double = 0
+    /// 为 true 时页面里的新对话入口一直等着，直到测试调 releaseNewChat()（时机由测试定，不靠计时）。
+    var newChatWaits = false
+    private var newChatGate: CheckedContinuation<Void, Never>?
     private var watch: AnyCancellable?
+
+    /// 放行等着的页面里的新对话入口。
+    func releaseNewChat() {
+        newChatGate?.resume()
+        newChatGate = nil
+    }
 
     init(defaults: UserDefaults, backoffA: [TimeInterval]) {
         settings = AppSettings(defaults: defaults)
@@ -1266,6 +1407,7 @@ private final class TwoTabs {
                             self?.newChatAsked.append(adapter)
                             self?.timeline.append("页面里新对话 \(self?.name(adapter) ?? "?")")
                             if let delay = self?.newChatDelay, delay > 0 { try? await Task.sleep(for: .milliseconds(Int(delay * 1000))) }
+                            if self?.newChatWaits == true { await withCheckedContinuation { self?.newChatGate = $0 } }
                             return self?.newChatInPage ?? false
                         })
         watch = diagnostics.$entries.dropFirst().sink { [weak self] entries in

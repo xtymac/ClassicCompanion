@@ -8,8 +8,8 @@ import CompanionCore
 /// 和改设置时每个标签页都要跟着改的几样也在这里，AppDelegate 只调用。
 ///
 /// 这里有一组标签页（tabs，按从左到右）和选中的那个（selected）。顺序、选中项和标识都由 list（TabList）决定。
-/// 应用里现在仍只有启动时的那一个，它就是选中的、窗口显示着的。还没有标签栏，也没有切换的入口
-/// （换网页视图、把页面状态投到窗口、采用颜色都留到下一阶段）。
+/// 换选中的只经 select(_:)（切换标签页：先改选中项，再让窗口显示它，再做跟着它的事）。
+/// 应用里现在仍只有启动时的那一个，它就是选中的、窗口显示着的；还没有标签栏、菜单和按键，应用里没有地方调用 select(_:)。
 ///
 /// 规则：事件属于发出它的标签页，接线时就绑定那个标签页，处理时明确传着它，不在中途拿“现在选中的”来代替。
 /// - 标签页自己的状态（页面加载状态、lastPath、适配器的代号、它自己的日志）不管选没选中都照常改。
@@ -23,7 +23,8 @@ import CompanionCore
 /// 离开这组时去掉（tabLeft(_:)）。关闭标签页的收尾见 close(_:)：先让它的运行时和页面状态进入关闭态，再拿掉。
 /// 这里写的某个标签页的日志（页面变化、媒体状态、实验）带那个标签页的标签（TabLog，见 log(_:_:_:)）；窗口的日志不带
 /// （例外：不显示的页面的遮挡结束时窗口写的那一行带那一页的标签，见 ChatWindowController.endLaunchScreen(_:for:)）。
-/// 选中的标签页和窗口显示着的页面要一致：应用里只有一个标签页，建窗口时传的就是它的 page；测试用 selectForTesting 两边一起设。
+/// 选中的标签页和窗口显示着的页面要一致：启动时建窗口传的就是启动的那个标签页的 page；之后 select(_:) 两边一起换
+/// （测试另有 selectForTesting，只换这两样）。
 ///
 /// 要用到的 AppDelegate 的东西由 AppDelegate 交进来（正式运行时的做法写在各项旁边），测试换成记录。
 @MainActor
@@ -61,11 +62,9 @@ final class ChatTabs {
     /// 证据采集和媒体实验对一个标签页做的事交给谁。就是 TabEvidenceTarget(tab:)（它的适配器和网页视图）；
     /// 只有测试换它：真的步骤要真实页面，换成记录才能在步骤之间换选中的标签页、看每一步对哪个标签页做。
     var evidenceTarget: @MainActor (ChatTab) -> any EvidenceTarget = { TabEvidenceTarget(tab: $0) }
-    /// 聚焦请求的代号，每次 focusInputSoon(for:) 加一（不管是哪个标签页的）。窗口里只有一个键盘焦点，
-    /// 最新的请求说了算：排着的聚焦到点时代号变了就不做，哪怕它的标签页又被选中了（选中 A → B → A）。
+    /// 聚焦请求的代号，每次 focusInputSoon(for:) 请求聚焦、每次切换标签页（select(_:)）都加一（不管是哪个标签页的）。
+    /// 窗口里只有一个键盘焦点，最新的请求说了算：排着的聚焦到点时代号变了就不做，哪怕它的标签页又被选中了（选中 A → B → A）。
     private var focusGeneration = 0
-    /// 上一次读到的网页媒体状态（每秒读一次，只用来写“变了”的日志）。原来在 AppDelegate 上。
-    private let media = WebMediaMonitor()
     /// 排版变化前记下阅读位置、窗口还没说排版结束的，按记下的先后（和窗口的前后两个回调一一配对）。
     /// 其中已经丢弃的（isSettled）留在原位、到时什么都不做。见 holdReadingPositionForLayout()。
     private var readingHolds: [ReadingHold] = []
@@ -173,17 +172,19 @@ final class ChatTabs {
     /// 关闭标签页 tab 的收尾：之后它的任何事件、通知和计时都不再起作用，这组不再持有它（别处也不持有时，它连同运行时、
     /// 页面状态和网页视图一起释放）。应用里现在还没有关闭标签页的入口（没有按键、菜单、标签栏），只有测试调用。
     ///
-    /// 前提：tab 不是选中的（窗口显示的不是它）。关选中的标签页要先把选中项和窗口换到别的标签页，那是切换标签页的入口（以后做），
+    /// 前提：tab 不是选中的（窗口显示的不是它）。关选中的标签页要先切换到别的标签页（select(_:)，3.7 定选哪一个），
     /// 这里不选下一个、不换网页视图、不投别的页面的状态。只有一个标签页时它就是选中的，所以也不能关（⌘W 隐藏窗口，不释放）。
     /// tab 已经不在这组里（关过了，或者不是这组的）：什么都不做，所以关两遍是安全的。
     ///
     /// 顺序：先进入关闭态，再收尾。
     /// 1. 运行时关闭（WebRuntime.close()）：不再自己发起加载、不再排重试，排着的重试取消，停止加载，回调断开，弹窗关掉。
     /// 2. 页面状态关闭（ChatWindowController.pageClosed(_:)）：带这个页面的入口和它排着的兜底、颜色回调、遮挡的时限和上限
-    ///    都不再起作用。
-    /// 3. 排着的聚焦任务取消（到点本来也因为它不是选中的而不做，这里让它马上结束、不再等）。
-    /// 4. 从列表（list）和 tabs 里一起拿掉，两者始终一一对应。不记入最近关闭（⇧⌘T 记哪个地址是重新打开的任务）。
-    /// 5. 从共用的网络状态上去掉（tabLeft）。
+    ///    都不再起作用，也不能再显示。
+    /// 3. 它的网页视图显示过、换下去后藏在窗口里的，从窗口里拿出来（ChatWindowController.removeHiddenWebView(_:)）：
+    ///    窗口不再持有它。
+    /// 4. 排着的聚焦任务取消（到点本来也因为它不是选中的而不做，这里让它马上结束、不再等）。
+    /// 5. 从列表（list）和 tabs 里一起拿掉，两者始终一一对应。不记入最近关闭（⇧⌘T 记哪个地址是重新打开的任务）。
+    /// 6. 从共用的网络状态上去掉（tabLeft）。
     ///
     /// 不取消的：进行中的新对话、证据采集和媒体实验、每秒的媒体状态和页面变化后的媒体日志。它们在下一次 holds 检查处停下
     /// （不加载、不聚焦、不写诊断；运行时已关闭，加载也发不出去）；在这之前还拿着这个标签页，所以释放要等它们正在等的那一步
@@ -192,9 +193,10 @@ final class ChatTabs {
     /// 一一配对，不能拿掉一条），到时因为这一页不在这组里而作废。都不碰网页：运行时已经关闭，网页随标签页一起释放。
     func close(_ tab: ChatTab) {
         guard holds(tab) else { return }
-        precondition(!isSelected(tab), "关选中的标签页要先切换到别的标签页（切换入口以后做）")
+        precondition(!isSelected(tab), "关选中的标签页要先切换到别的标签页（select(_:)）")
         tab.runtime.close()
         windowController.pageClosed(tab.page)
+        windowController.removeHiddenWebView(tab.runtime.webView)
         tab.focusTask?.cancel()
         tab.focusTask = nil
         tab.pendingReadingRestore?.isSettled = true
@@ -288,7 +290,10 @@ final class ChatTabs {
 
     /// 80ms 后聚焦 tab 的输入框。先取消 tab 排着的那次。
     /// 到点时只有 tab 还是选中的、并且这还是最新的一次聚焦请求（代号没变）才聚焦；tab 已经释放也不做。
+    /// 请求时 tab 就不是选中的（例如新对话等页面结果时切换了标签页）：不算一次请求，什么都不做——不然它会把代号加一，
+    /// 取消切换时给换上来的那一页排下的聚焦，结果哪一页都不聚焦。
     func focusInputSoon(for tab: ChatTab) {
+        guard isSelected(tab) else { return }
         tab.focusTask?.cancel()
         focusGeneration += 1
         let generation = focusGeneration
@@ -298,6 +303,36 @@ final class ChatTabs {
             let result = await self.focusInput(tab.adapter)
             self.diagnostics.recordInputFocus(result)
         }
+    }
+
+    // MARK: - 切换标签页
+
+    /// 切换到标签页 tab：它成为选中的、窗口显示它。tab 已经是选中的、不在这组里（没加进来、关闭了、拿掉了）：什么都不做。
+    /// 应用里现在没有地方调用（还没有标签栏、菜单和按键）；3.6 新增标签页、3.7 关闭显示着的标签页都经这里换。
+    ///
+    /// 顺序：
+    /// 1. 先改选中项（list）。窗口在下一步结束进行中的切模式时说“排版结束”，那时选中的已经是 tab：
+    ///    换下去的那一页排版前记下的阅读位置留在它自己身上（D2），不放回到正要藏起的那一页。
+    /// 2. 写一行“选中”（带 tab 的标签，没有地址和标题）：之后窗口不带标签的行就能对上是哪一页。
+    /// 3. 窗口显示 tab 的页面和网页视图，并投上它的状态（ChatWindowController.display(_:webView:)：遮挡、提示、颜色；
+    ///    换下去的网页视图藏起、固定在离开时的大小；淡出层去掉；键盘焦点交给 tab 的网页视图）。
+    /// 4. 聚焦（D5，和唤醒一样）：之前排着的聚焦都作废（代号加一：A → B → A 时 A 换走前排下的那次也不再聚焦）；
+    ///    窗口是 key 窗口才给 tab 排一次（focusInputSoon(for:)，80ms 后）。
+    /// 5. 可恢复的对话地址跟着选中的：tab 现在的地址是可以恢复的对话就记下；不是就不改（还留着之前记下的）。
+    /// 6. tab 又显示、已经按现在的窗口大小排好版：它留着的阅读位置这时放回或丢弃（tabShownAndLaidOut(_:)）。
+    ///    3.5 起换上来的网页视图可能要先补排版，这一步要改到补排版完成以后（见下面的 3.5 那一步）。
+    /// 不改的：tab 和换下去的那一页自己的状态（页面加载状态、路径、媒体状态、排着的任务）；进行中的、开始时绑定了某一页的操作
+    /// （新对话、读媒体状态、证据采集、媒体实验）照样只对它们那一页做；换下去的那一页之后的事件只改它自己的状态。
+    func select(_ tab: ChatTab) {
+        guard holds(tab), !isSelected(tab) else { return }
+        _ = list.select(tab.id)
+        log(tab, "tabs", "选中")
+        windowController.display(tab.page, webView: tab.runtime.webView)
+        focusGeneration += 1
+        if windowIsKey() { focusInputSoon(for: tab) }
+        if let restorable = NavigationPolicy.restorableConversationURL(tab.url) { saveLastConversation(restorable) }
+        // 3.5：换上来的网页视图要先按现在的窗口大小补排版时，改成补排版完成后再调用这一步（排好时窗口告诉 ChatTabs）。
+        tabShownAndLaidOut(tab)
     }
 
     // MARK: - 对选中的标签页做的操作
@@ -312,7 +347,7 @@ final class ChatTabs {
 
     /// 新对话（菜单、⌘N、顶部的按钮）：对按下这一刻选中的标签页做。先试页面里官方的入口，确定没点到时整页加载新对话页。
     /// 等页面里的结果时选中的可能换了、这个标签页也可能被拿掉：之后只对它做，它已经不在这组里就什么都不做。
-    /// 整页加载给它（它不选中也加载：是它自己的页面，不动前台）；聚焦也请求给它，到点时它不是选中的就不聚焦（focusInputSoon(for:)）。
+    /// 整页加载给它（它不选中也加载：是它自己的页面，不动前台）；聚焦也请求给它，它这时或到点时不是选中的就不聚焦（focusInputSoon(for:)）。
     func newChat() {
         let tab = selected
         Task { [weak self] in
@@ -326,6 +361,7 @@ final class ChatTabs {
 
     /// 每秒一次（AppDelegate 的定时器）：读选中的标签页的网页媒体状态，只显示、写日志，不控制。
     /// 这一次读哪个标签页在调用这一刻定下，读完显示和写日志的也是它，读的时候换了选中的也不跟着换。
+    /// “变了”是和这一页自己上次读到的比（ChatTab.mediaState）：切换标签页后不会写出“换走的那一页的状态 → 这一页的状态”。
     /// 读完时它已经不在这组里就都不做（不显示、不写日志、不改记下的状态）：读到的是一个已经不在的标签页，
     /// 下一秒就读到选中的那个。
     func mediaTick() {
@@ -335,9 +371,9 @@ final class ChatTabs {
             let state = await self.mediaState(tab.adapter)
             guard self.holds(tab) else { return }
             self.diagnostics.webMediaState = state
-            if state != self.media.state {
-                self.log(tab, "media", "WebKit 媒体状态 \(self.media.state) → \(state)（窗口可见=\(self.windowController.window?.isVisible ?? false)）")
-                self.media.state = state
+            if state != tab.mediaState {
+                self.log(tab, "media", "WebKit 媒体状态 \(tab.mediaState) → \(state)（窗口可见=\(self.windowController.window?.isVisible ?? false)）")
+                tab.mediaState = state
             }
         }
     }
@@ -393,8 +429,8 @@ final class ChatTabs {
         put(hold, backOn: tab, verdict)
     }
 
-    /// 3.4（切换标签页）、3.5（每页排版大小）调用：tab 又显示了（是选中的、窗口显示的是它的网页视图），
-    /// 并且已经按现在的窗口大小排好版（要补排版的排完了，或者大小没变不用排）。
+    /// 切换标签页（select(_:)）在窗口显示 tab 之后调用（3.5 起改到补排版完成以后）：tab 又显示了（是选中的、
+    /// 窗口显示的是它的网页视图），并且已经按现在的窗口大小排好版（要补排版的排完了，或者大小没变不用排）。
     /// 它有留着的阅读位置（pendingReadingRestore）就在这时按规则放回或丢弃；没有就什么都不做。
     /// tab 不是选中的（不在这组里的也不会是选中的）：什么都不做，留着的继续留着。
     func tabShownAndLaidOut(_ tab: ChatTab) {
@@ -485,8 +521,8 @@ final class ChatTabs {
 
     #if DEBUG
     /// 只给测试用（调试版才有）：把 tab 记作选中的，并让窗口把 tab 的页面当作显示着的，两边保持一致。
-    /// 别的都不做：不换网页视图（不调用 replaceWebView）、不把页面状态投到窗口、不采用颜色、不聚焦、不写日志。
-    /// 真正切换标签页的入口留到下一阶段。
+    /// 别的都不做：不换网页视图、不把页面状态投到窗口、不采用颜色、不聚焦、不记地址、不放回阅读位置、不写日志。
+    /// 切换标签页的入口是 select(_:)；这个只用来单独验证一处规则（事件和排着的任务按所属页处理），不带切换时的那些事。
     func selectForTesting(_ tab: ChatTab) {
         precondition(holds(tab), "只能选这组里的标签页")
         _ = list.select(tab.id)
