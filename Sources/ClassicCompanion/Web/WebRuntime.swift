@@ -39,6 +39,8 @@ final class WebRuntime: NSObject {
     var openInBrowser: @MainActor (URL) -> Void = { _ = NSWorkspace.shared.open($0) }
     /// 把登录等弹窗的窗口显示到前面（makeKeyAndOrderFront）。正式运行就是原来的做法；只有测试换它：测试不能显示窗口。
     var showPopupWindow: @MainActor (NSWindow) -> Void = { $0.makeKeyAndOrderFront(nil) }
+    /// 弹窗的窗口在不在屏幕上：可见、没有最小化（isInFront(_:) 看它）。只有测试换它：测试里的弹窗窗口从不显示。
+    var popupWindowIsOnScreen: @MainActor (NSWindow) -> Bool = { $0.isVisible && !$0.isMiniaturized }
 
     /// 加载失败、窗口里没有页面时的恢复（2026-11-11 开机白屏）。见 LoadRecovery。
     private var recovery: LoadRecovery
@@ -455,9 +457,32 @@ final class WebRuntime: NSObject {
         onLoadProblemChange?(status)
     }
 
-    private func openExternally(_ url: URL) {
+    /// 外部链接（不在应用里打开的地址）交给默认浏览器——只在发出它的网页视图 webView 在前面（isInFront(_:)）时。
+    /// 不在前面：不交给浏览器，写一行（地址经 Redactor，带标签），调用方照样取消这次导航、不给新窗口。不显示的标签页的网页
+    /// 自己跳到外部地址、window.open 外部地址，不会在用户看着别的标签页时突然打开浏览器、把浏览器放到前面。
+    /// 选中的标签页（和没接上标签页的运行时，isSelectedTab 总是 true）照原来交给浏览器。
+    /// 不显示的标签页的网页什么时候真的这样做（网页自己的跳转、脚本、计时器）这里测不到：真的触发要在 M1 的屏幕检查上看。
+    private func openExternally(_ url: URL, from webView: WKWebView) {
+        guard isInFront(webView) else {
+            let source = webView === self.webView ? "不显示的标签页" : "不显示的标签页的弹窗（窗口不在屏幕上）"
+            log("nav", "\(source)要把外部链接交给默认浏览器：不交，取消：\(Redactor.describe(url))")
+            return
+        }
         log("nav", "外部链接交给默认浏览器：\(Redactor.describe(url))")
         openInBrowser(url)
+    }
+
+    /// 发出请求的网页视图 webView 现在是不是在用户眼前（外部链接交不交给浏览器看它）：
+    /// - 这一页自己的网页视图：这一页是选中的标签页（isSelectedTab；没接上的运行时总是 true）。
+    /// - 这一页开的弹窗，窗口在屏幕上（popupWindowIsOnScreen）：是。弹窗是自己的窗口，切换标签页时不藏起来，
+    ///   用户可能正在用它（比如点登录页上的条款链接），所以不跟着标签页选不选中。
+    /// - 弹窗的窗口不在屏幕上（关掉了、藏起、最小化）、不认识的网页视图：和这一页一样（isSelectedTab）。
+    private func isInFront(_ webView: WKWebView) -> Bool {
+        if webView !== self.webView, let window = popupWindows.first(where: { $0.contentView === webView }),
+           popupWindowIsOnScreen(window) {
+            return true
+        }
+        return isSelectedTab()
     }
 
     /// 这次导航是不是在新标签页打开的 ⌘ 点击（3.12）：是这个页面自己的网页视图（不是它开的弹窗：弹窗里的 ⌘ 点击照原来交给
@@ -567,6 +592,9 @@ extension WebRuntime: HistoryPage {
 
 /// 关闭以后（isClosed）：网页自己发起的导航、下载一律取消，导航事件一律不理（不改状态、不写日志、不转给窗口）。
 ///
+/// 外部链接（外部网站，和 ⌘ 点击不在新标签页打开的链接）交给默认浏览器，只在发出它的网页视图在前面时（openExternally(_:from:)）：
+/// 不显示的标签页（和它窗口不在屏幕上的弹窗）要打开外部地址，取消、写一行，不交给浏览器。选中的标签页照原来。
+///
 /// ⌘ 点击链接（点链接并按着 ⌘，原来整支交给默认浏览器）：这个页面自己的网页视图里点的聊天页面链接（ChatLinkClick）改为
 /// 在新标签页打开（3.12：⌘ 在后台，⇧⌘ 切换过去，见 openInTab(_:_:)），这一页的导航取消；打不打开都一样取消
 /// （到上限、启动画面还在、点击来自不显示的标签页等不打开时，这一页也不跳转、也不交给浏览器）。别的 ⌘ 点击照原来交给浏览器。
@@ -597,7 +625,7 @@ extension WebRuntime: WKNavigationDelegate {
                     openInTab(url, opening)
                     return (.cancel, preferences)
                 }
-                openExternally(url)
+                openExternally(url, from: webView)
                 return (.cancel, preferences)
             }
             if webView === self.webView, kind == .auth {
@@ -605,7 +633,7 @@ extension WebRuntime: WKNavigationDelegate {
             }
             return (.allow, preferences)
         case .external:
-            if let url { openExternally(url) }
+            if let url { openExternally(url, from: webView) }
             return (.cancel, preferences)
         case .blocked:
             log("nav", "已阻止导航：\(Redactor.describe(url))")
@@ -754,6 +782,7 @@ extension WebRuntime: WKDownloadDelegate {
 /// 网页要求输入文字（prompt）：这里没有实现，WebKit 不调用代理、网页直接得到 null，什么都不显示（原来就这样，没有改）。
 ///
 /// 新窗口（登录等弹窗）：不是选中的标签页要开，不开（返回 nil，写一行）。WebKit 要当场拿到弹窗的网页视图，不能像对话框那样等。
+/// 目标是外部地址的新窗口：不开弹窗，交给默认浏览器（openExternally(_:from:)：发出它的网页视图不在前面就不交，写一行）。
 /// 例外（3.12）：⌘ 点击目标是新窗口的聊天页面链接，不开弹窗，在新标签页打开（返回 nil），在上面这条之前判断。
 extension WebRuntime: WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
@@ -768,7 +797,7 @@ extension WebRuntime: WKUIDelegate {
         }
         let kind = NavigationPolicy.classify(url)
         if kind == .external, let url {
-            openExternally(url)
+            openExternally(url, from: webView)
             return nil
         }
         if kind == .blocked { return nil }
