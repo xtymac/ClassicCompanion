@@ -268,6 +268,116 @@ final class TabDisplayTests: XCTestCase {
         XCTAssertNil(rig.controller.shownLoadProblem)
     }
 
+    /// 换走的页面的淡出回调迟到（D7 没有代号作废，靠回调只拿着那一层自己）：p0 的两层淡出（启动画面的、提示的）在换上 p1
+    /// 以后才把完成的回调调用，还调用两次。两种情形：
+    /// - p1 自己还盖着新标签页的遮挡；
+    /// - p1 已经有了自己正在淡出的两层（显示着时遮挡结束、提示收起）。
+    /// 迟到的回调都不动 p1：窗口上看得见的（遮挡、淡出那层、提示、颜色、显示的页面和网页视图）、p1 自己的状态、
+    /// p1 的淡出那两层（还在、窗口还记着它们）、网页视图（在容器里、显示、拿着键盘焦点）都不变，也不写日志。
+    /// 之后 p1 自己的回调照常把它自己的两层拿掉。淡出用接缝 runFade 手动送回完成的回调。
+    func testALateFadeCompletionOfTheLeftPageLeavesTheNewPageAlone() throws {
+        for newPageHasItsOwnFade in [false, true] {
+            let label = "p1 有自己的淡出=\(newPageHasItsOwnFade)"
+            let rig = make()
+            let fades = FadeCalls()
+            rig.controller.runFade = { view, done in fades.calls.append((view, done)) }
+            rig.controller.beginLaunchScreen()
+            rig.controller.showLoadProblem(.connecting, for: rig.pages[0])
+            rig.controller.pageDidCommit(rig.pages[0])
+            rig.controller.showLoadProblem(.hidden, for: rig.pages[0])
+            rig.controller.endLaunchScreen("网页已加载", for: rig.pages[0])
+            rig.controller.pageDidFinishLoading(rig.pages[0], reportedColor: rig.views[0].underPageBackgroundColor)
+            XCTAssertEqual(fades.calls.count, 2, label)
+            let leftFades = fades.calls
+            XCTAssertTrue(leftFades[0].view === rig.controller.launchFadeView, label)
+            XCTAssertTrue(leftFades[1].view === rig.controller.loadProblemFadeView, label)
+
+            rig.controller.beginNewTabCover(for: rig.pages[1])
+            rig.display(1)
+            XCTAssertTrue(leftFades.allSatisfy { $0.view.superview == nil }, "换走时马上拿掉（\(label)）")
+            if newPageHasItsOwnFade {
+                rig.controller.showLoadProblem(.connecting, for: rig.pages[1])
+                rig.controller.pageDidCommit(rig.pages[1])
+                rig.controller.showLoadProblem(.hidden, for: rig.pages[1])
+                rig.controller.endLaunchScreen("网页已加载", for: rig.pages[1])
+                rig.controller.pageDidFinishLoading(rig.pages[1], reportedColor: rig.views[1].underPageBackgroundColor)
+                XCTAssertEqual(fades.calls.count, 4, label)
+            } else {
+                XCTAssertEqual(rig.controller.shownCoverKind, .newTab, label)
+            }
+            let ownFades = Array(fades.calls.dropFirst(2))
+            let window = rig.window
+            let page = Self.state(of: rig.pages[1])
+            let lines = rig.lines
+            let place = try XCTUnwrap(rig.views[1].superview)
+
+            for _ in 0..<2 {
+                for call in leftFades { call.done() }
+            }
+            XCTAssertEqual(rig.window, window, label)
+            XCTAssertEqual(Self.state(of: rig.pages[1]), page, label)
+            XCTAssertEqual(rig.lines, lines, label)
+            XCTAssertTrue(rig.controller.page === rig.pages[1], label)
+            XCTAssertTrue(rig.controller.webView === rig.views[1], label)
+            XCTAssertTrue(rig.views[1].superview === place, label)
+            XCTAssertFalse(rig.views[1].isHidden, label)
+            XCTAssertTrue(rig.controller.window?.firstResponder === rig.views[1], label)
+            if newPageHasItsOwnFade {
+                XCTAssertTrue(ownFades.allSatisfy { $0.view.superview != nil }, "p1 自己的淡出那两层还在（\(label)）")
+                XCTAssertTrue(rig.controller.launchFadeView === ownFades[0].view, label)
+                XCTAssertTrue(rig.controller.loadProblemFadeView === ownFades[1].view, label)
+
+                for call in ownFades { call.done() }
+                XCTAssertTrue(ownFades.allSatisfy { $0.view.superview == nil }, "p1 自己的回调照常拿掉（\(label)）")
+            } else {
+                XCTAssertEqual(rig.controller.shownCoverKind, .newTab, "p1 的遮挡还盖着（\(label)）")
+                XCTAssertTrue(rig.pages[1].isCovered, label)
+            }
+        }
+    }
+
+    /// 同一件事用真的淡出动画（不换 runFade，只在它外面记下完成的回调什么时候来）：p0 的启动画面淡出到一半时换上 p1，
+    /// p1 当场结束遮挡、开始它自己的淡出。p0 那层被中途拿掉，它的回调提前来（这时 p1 那层还在淡出）：p1 那层还在、
+    /// 窗口还记着它。之后 p1 的回调来了，它那层才没了。这条也说明真的回调确实会在新页面的淡出途中到。
+    func testARealLateFadeCompletionArrivesDuringTheNewPagesFadeAndLeavesItAlone() async throws {
+        let rig = make()
+        let real = rig.controller.runFade
+        let fades = FadeCalls()
+        rig.controller.runFade = { [weak controller = rig.controller] view, finished in
+            real(view) {
+                finished()
+                // 回调做完以后窗口记着的那层、它在不在。
+                let current = controller?.launchFadeView
+                fades.finished.append((view, current.map(ObjectIdentifier.init), current?.superview != nil))
+            }
+        }
+        rig.controller.beginLaunchScreen()
+        rig.controller.endLaunchScreen("网页已加载", for: rig.pages[0])
+        let left = try XCTUnwrap(rig.controller.launchFadeView)
+        rig.controller.beginNewTabCover(for: rig.pages[1])
+        rig.display(1)
+        rig.controller.endLaunchScreen("网页已加载", for: rig.pages[1])
+        let own = try XCTUnwrap(rig.controller.launchFadeView)
+        XCTAssertFalse(own === left)
+        XCTAssertNil(left.superview)
+
+        try await waitUntil { fades.finished.contains { $0.view === own } }
+        XCTAssertEqual(fades.finished.count, 2, "两层的回调都来了")
+        let first = try XCTUnwrap(fades.finished.first)
+        XCTAssertTrue(first.view === left, "p0 那层中途拿掉，回调比 p1 那层的先到")
+        XCTAssertEqual(first.current, ObjectIdentifier(own), "p0 的回调做完，窗口记着的还是 p1 那层")
+        XCTAssertTrue(first.currentOnScreen, "p0 的回调做完，p1 那层还在")
+        XCTAssertNil(own.superview, "p1 那层照常淡出完拿掉")
+        XCTAssertFalse(rig.controller.isShowingLaunchScreen)
+        XCTAssertTrue(rig.controller.page === rig.pages[1])
+    }
+
+    /// 页面自己的遮挡、提示、启动保护（核对“没变”用）。
+    private static func state(of p: PageLoadState) -> String {
+        "盖着=\(p.isCovered) 样子=\(p.coverKind) 等提交=\(p.coverAwaitsCommit) 代号=\(p.coverGeneration) "
+            + "提示=\(p.notice) 留到加载完成=\(p.noticeAwaitsLoad) 启动保护=\(p.holdsPageColor) 加载完成过=\(p.hasFinishedFirstLoad)"
+    }
+
     // MARK: - 颜色（D4）
 
     /// 第一次加载完成、颜色已经稳定：换上来马上采用它此刻报的颜色（深浅变了写一行），顶部一条和窗口底色跟着变。
@@ -516,6 +626,13 @@ private final class LayoutCalls {
     var snapshots: [(NSImage?) -> Void] = []
     var prepares: [() -> Void] = []
     var events: [String] = []
+}
+
+/// 接缝 runFade 收到的淡出（那一层和完成的回调），真的淡出完成时记下的（那一层、回调做完时窗口记着的那层和它在不在）。
+@MainActor
+private final class FadeCalls {
+    var calls: [(view: NSView, done: @MainActor () -> Void)] = []
+    var finished: [(view: NSView, current: ObjectIdentifier?, currentOnScreen: Bool)] = []
 }
 
 /// 一个窗口和三个页面（各自的网页视图，带标签 1、2、3）。开始时显示 p0。记下的页面颜色是 savedDark，
