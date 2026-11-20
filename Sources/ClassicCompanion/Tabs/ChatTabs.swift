@@ -21,7 +21,8 @@ import CompanionCore
 /// 后台的事从不改前台。设置（网页增强、页面缩放、网页无障碍、弹窗标题）每个标签页都改。
 /// 每个标签页的运行时在这组里时都登记在共用的网络状态上（NetworkStatus 只通知，重试与否由各页自己的恢复规则决定），
 /// 离开这组时去掉（tabLeft(_:)）。关闭标签页的收尾见 close(_:)：先让它的运行时和页面状态进入关闭态，再拿掉。
-/// 这里写的某个标签页的日志（页面变化、媒体状态、实验）带那个标签页的标签（TabLog，见 log(_:_:_:)）；窗口的日志不带。
+/// 这里写的某个标签页的日志（页面变化、媒体状态、实验）带那个标签页的标签（TabLog，见 log(_:_:_:)）；窗口的日志不带
+/// （例外：不显示的页面的遮挡结束时窗口写的那一行带那一页的标签，见 ChatWindowController.endLaunchScreen(_:for:)）。
 /// 选中的标签页和窗口显示着的页面要一致：应用里只有一个标签页，建窗口时传的就是它的 page；测试用 selectForTesting 两边一起设。
 ///
 /// 要用到的 AppDelegate 的东西由 AppDelegate 交进来（正式运行时的做法写在各项旁边），测试换成记录。
@@ -125,6 +126,15 @@ final class ChatTabs {
     /// tab 还在这组标签页里。
     func holds(_ tab: ChatTab) -> Bool {
         tabs.contains { $0 === tab }
+    }
+
+    /// 启动画面还在：这组里有页面的启动画面（启动时的那种遮挡）还盖着，到时限后还在等提交也算
+    /// （ChatWindowController.coversWithLaunchScreen(_:)）。只有启动时的那个标签页会有：启动画面只在启动时开始一次
+    /// （beginLaunchScreen()）。新标签页的遮挡不算，窗口那层显不显示也不看（看的是页面自己的遮挡状态）。
+    /// 计划 4.3“启动画面还在的时候不能新增标签页”：3.6 新增标签页的入口（菜单置灰、按键不响应）在它为 true 时不加。
+    /// 应用里现在没有地方调用。
+    var isLaunchScreenUp: Bool {
+        tabs.contains { windowController.coversWithLaunchScreen($0.page) }
     }
 
     /// 加一个标签页：放在最右，不选中，接好线，登记到网络状态。标识从 list 来，先发标识再由 make 用它建标签页
