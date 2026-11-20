@@ -878,13 +878,22 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         return fill
     }
 
-    private func fadeAway(_ view: NSView) {
+    /// 让一层淡出（0.2 秒变透明），完了调用 done。就是 NSAnimationContext；只有测试换它（好让 done 在任意时刻、多次调用）。
+    var runFade: @MainActor (NSView, @escaping @MainActor () -> Void) -> Void = { view, done in
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
             view.animator().alphaValue = 0
         } completionHandler: {
-            MainActor.assumeIsolated { view.removeFromSuperview() }
+            MainActor.assumeIsolated { done() }
         }
+    }
+
+    /// 淡出完把这一层拿掉。完成的回调只拿着这一层自己：只做 view.removeFromSuperview()，不碰窗口的状态
+    /// （launchFade、loadProblemFade、遮挡、提示、网页视图）。所以换显示的页面时 dropFades() 先拿掉的那层，回调迟到
+    /// （AppKit 在中途拿掉的动画会提前调用，也可能在新页面有了自己的淡出那层之后才到）也只是再拿一次那层旧的，
+    /// 不影响新页面——不用代号作废（D7；TabDisplayTests 里迟到的回调那几条核对）。
+    private func fadeAway(_ view: NSView) {
+        runFade(view) { view.removeFromSuperview() }
     }
 
     /// 页面 p 进入启动保护（p 自己的状态）。p 显示着时窗口的颜色也停下来：已经排着队的颜色更新作废——取消，并且换代号，
