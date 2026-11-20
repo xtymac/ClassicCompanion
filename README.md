@@ -8,7 +8,7 @@
 
 **ChatGPT, a shortcut away in a native macOS window.**
 
-Classic Companion wraps the official ChatGPT website with SwiftUI, AppKit and WKWebView. Press `⌥ Space` to open a compact chat window, or switch to the full window with `⌃⌘F`. It includes configurable shortcuts, persistent sign-in, page zoom and four interface languages. ChatGPT provides the conversations and Read Aloud; this is an independent app, not affiliated with OpenAI.
+Classic Companion wraps the official ChatGPT website with SwiftUI, AppKit and WKWebView. Press `⌥ Space` to open a compact chat window, or switch to the full window with `⌃⌘F`. It includes configurable shortcuts, persistent sign-in, page zoom, back and forward (`⌘[` / `⌘]` or mouse side buttons) and four interface languages. ChatGPT provides the conversations and Read Aloud; this is an independent app, not affiliated with OpenAI.
 
 This is the **public source repository**, licensed under [Apache-2.0](LICENSE). This repository brings together source code, downloads and feedback.
 
