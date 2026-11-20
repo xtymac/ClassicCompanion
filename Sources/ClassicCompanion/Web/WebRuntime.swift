@@ -692,9 +692,10 @@ extension WebRuntime: WKNavigationDelegate {
                 guard let self, !self.isClosed else { return }
                 let size = self.webView.frame.size
                 let js = "JSON.stringify({rs: document.readyState, els: document.getElementsByTagName('*').length, vis: document.visibilityState})"
-                self.webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { result in
+                // 回调只弱引用运行时：网页一直忙、脚本一直不回来，也不拿着关闭了的运行时（和它的网页视图）。
+                self.webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { [weak self] result in
                     MainActor.assumeIsolated {
-                        guard !self.isClosed else { return }
+                        guard let self, !self.isClosed else { return }
                         let summary = (try? result.get()) as? String ?? "error"
                         self.log("render", "自检 frame=\(Int(size.width))x\(Int(size.height)) \(summary)")
                     }
