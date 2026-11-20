@@ -16,7 +16,7 @@ import Testing
 
     // MARK: 认键
 
-    /// 每个键：正好的修饰键、它的字符（含按着 ⇧ 时的字符、大写锁定时的大写）→ 要做的事和键名。
+    /// 每个键：正好的修饰键、它的字符（含按着 ⇧ 时的字符、大写锁定时的大写；数字键看键位，字符随布局）→ 要做的事和键名。
     static let matches: [(String?, UInt16, M, TabKeys.Command, String)] = [
         ("t", 17, [.command], .newTab, "⌘T"),
         ("T", 17, [.command], .newTab, "⌘T"),
@@ -38,6 +38,21 @@ import Testing
         ("3", 20, [.command], .position(3), "⌘3"),
         ("4", 21, [.command], .position(4), "⌘4"),
         ("9", 25, [.command], .last, "⌘9"),
+        // 数字按键位：法文 AZERTY 上不按 ⇧ 是“&”“é”“\"”“'”“ç”，没有字符也一样。
+        ("&", 18, [.command], .position(1), "⌘1"),
+        ("é", 19, [.command], .position(2), "⌘2"),
+        ("\"", 20, [.command], .position(3), "⌘3"),
+        ("'", 21, [.command], .position(4), "⌘4"),
+        ("ç", 25, [.command], .last, "⌘9"),
+        (nil, 18, [.command], .position(1), "⌘1"),
+        // 小键盘：带着小键盘的标志，没有也一样。
+        ("1", 83, [.command, .numericPad], .position(1), "⌘1（小键盘）"),
+        ("2", 84, [.command, .numericPad], .position(2), "⌘2（小键盘）"),
+        ("3", 85, [.command, .numericPad], .position(3), "⌘3（小键盘）"),
+        ("4", 86, [.command, .numericPad], .position(4), "⌘4（小键盘）"),
+        ("9", 92, [.command, .numericPad], .last, "⌘9（小键盘）"),
+        ("1", 83, [.command], .position(1), "⌘1（小键盘）"),
+        ("9", 92, [.command], .last, "⌘9（小键盘）"),
     ]
 
     @Test(arguments: matches) func eachTabKeyIsRecognised(_ key: (String?, UInt16, M, TabKeys.Command, String)) {
@@ -56,14 +71,26 @@ import Testing
             ("]", [[.command], [.command, .option], [.command, .control], []]),
             ("{", [[.command], [.command, .shift, .control]]),
             ("[", [[.command], [.command, .option]]),
-            ("1", [[], [.command, .shift], [.command, .option], [.command, .control], [.command, .other]]),
-            ("9", [[.command, .shift], [.command, .other]]),
         ]
         for (characters, sets) in letters {
-            for modifiers in sets {
+            for modifiers in sets + [[.command, .numericPad], [.command, .shift, .numericPad]] {
                 #expect(TabKeys.match(characters: characters, keyCode: 0, modifiers: modifiers) == nil,
                         "\(characters) \(modifiers.rawValue)")
             }
+        }
+        // 数字键（主键盘和小键盘）：只认纯 ⌘（小键盘还容许小键盘的标志）。
+        let digitSets: [M] = [[], [.shift], [.option], [.control], [.command, .shift], [.command, .option], [.command, .control],
+                              [.command, .other], [.command, .numericPad, .other], [.command, .shift, .numericPad],
+                              [.command, .option, .numericPad], [.numericPad]]
+        for keyCode in Array(TabKeys.digitKeyCodes.keys) + Array(TabKeys.keypadDigitKeyCodes.keys) {
+            for modifiers in digitSets {
+                #expect(TabKeys.match(characters: "1", keyCode: keyCode, modifiers: modifiers) == nil,
+                        "键码 \(keyCode) \(modifiers.rawValue)")
+            }
+        }
+        for keyCode in TabKeys.digitKeyCodes.keys {
+            #expect(TabKeys.match(characters: "1", keyCode: keyCode, modifiers: [.command, .numericPad]) == nil,
+                    "主键盘的数字键带着小键盘的标志：不是（键码 \(keyCode)）")
         }
         for modifiers: M in [[], [.shift], [.command], [.option], [.command, .shift], [.control, .option],
                              [.control, .command], [.control, .other], [.control, .shift, .other], [.control, .shift, .option]] {
@@ -71,19 +98,25 @@ import Testing
         }
     }
 
-    /// 别的键：⌘5–⌘8、⌘0、纯 ⌘[ ⌘]（后退、前进）、⇧⌘ 的数字、别的字母、没有字符、法文 AZERTY 上不按 ⇧ 的“&”、
-    /// 不是 Tab 键的制表字符：都不是。
+    /// 别的键：⌘5–⌘8、⌘0（主键盘和小键盘）、纯 ⌘[ ⌘]（后退、前进）、⇧⌘ 的数字、别的字母、没有字符、
+    /// 别的键打出的数字字符（数字只认键位）、不是 Tab 键的制表字符：都不是。
     @Test func otherKeysAreNotTabKeys() {
         let others: [(String?, UInt16, M)] = [
             ("5", 23, [.command]), ("6", 22, [.command]), ("7", 26, [.command]), ("8", 28, [.command]), ("0", 29, [.command]),
+            ("5", 87, [.command, .numericPad]), ("6", 88, [.command, .numericPad]), ("7", 89, [.command, .numericPad]),
+            ("8", 91, [.command, .numericPad]), ("0", 82, [.command, .numericPad]),
             ("[", 33, [.command]), ("]", 30, [.command]),
-            ("!", 18, [.command, .shift]), ("(", 25, [.command, .shift]),
+            ("!", 18, [.command, .shift]), ("(", 25, [.command, .shift]), ("1", 18, [.command, .shift]),
             ("n", 45, [.command]), ("r", 15, [.command]), ("f", 3, [.command, .control]), ("q", 12, [.command]),
             ("z", 6, [.command, .shift]), ("r", 15, [.command, .shift]),
             (nil, 17, [.command]), (nil, 13, [.command]), ("", 17, [.command]),
-            ("&", 18, [.command]),
+            ("1", 0, [.command]), ("2", 12, [.command]), ("4", 37, [.command]), ("9", 23, [.command]), ("1", 23, [.command]),
             ("\t", 0, [.control]), ("\u{19}", 0, [.control, .shift]),
             ("tt", 17, [.command]),
+            // 方括号只按字符、只认 ⇧⌘：德文等要按 ⌥ 才打得出方括号的布局上不认，方括号的键位打出别的字符也不认。
+            ("}", 30, [.command, .shift, .option]), ("{", 33, [.command, .shift, .option]),
+            ("]", 23, [.command, .option]), ("[", 22, [.command, .option]),
+            ("*", 30, [.command, .shift]), ("ü", 33, [.command, .shift]),
         ]
         for (characters, keyCode, modifiers) in others {
             #expect(TabKeys.match(characters: characters, keyCode: keyCode, modifiers: modifiers) == nil,

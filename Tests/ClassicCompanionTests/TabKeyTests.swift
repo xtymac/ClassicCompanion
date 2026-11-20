@@ -255,23 +255,132 @@ final class TabKeyTests: XCTestCase {
 
     // MARK: - 重复按键
 
-    /// 按住不放的重复按键：吃掉、不做、不写行。只有一个标签页时重复的 ⌘W 也不隐藏（原来会：有意的改变）。
+    /// 按住不放的重复按键：吃掉、不做、不写行（用户 11-20 定：第一版一次按键只做一次，⌃Tab 也是）。每一类键都按一次：
+    /// 新增、重新打开、关闭、隐藏、两组切换键、主键盘和小键盘的数字。只有一个标签页时重复的 ⌘W 也不隐藏（原来会：有意的改变）。
+    /// 关掉一个有对话地址的标签页留下一条记录，重复的 ⇧⌘T 也不重新打开它。
     func testRepeatsAreSwallowedWithoutActing() throws {
         let rig = make()
         let b = try XCTUnwrap(rig.tabs.newTab())
+        let c = try XCTUnwrap(rig.tabs.newTab())
+        c.runtime.onURLChange?(chat)
+        rig.tabs.closeTab(c)
+        XCTAssertTrue(rig.tabs.canReopenClosedTab)
+        rig.tabs.select(rig.first)
         let keys = mark(rig), list = rig.tabs.list
-        XCTAssertTrue(try commandW(rig, repeating: true))
-        XCTAssertTrue(try commandT(rig, repeating: true))
-        XCTAssertTrue(try controlTab(rig, repeating: true))
-        XCTAssertTrue(try commandShiftW(rig, repeating: true))
+        let presses: [(String, Int, NSEvent.ModifierFlags)] = [
+            ("w", kVK_ANSI_W, .command), ("t", kVK_ANSI_T, .command), ("T", kVK_ANSI_T, [.command, .shift]),
+            ("W", kVK_ANSI_W, [.command, .shift]), ("\t", kVK_Tab, .control), ("\u{19}", kVK_Tab, [.control, .shift]),
+            ("}", kVK_ANSI_RightBracket, [.command, .shift]), ("{", kVK_ANSI_LeftBracket, [.command, .shift]),
+            ("2", kVK_ANSI_2, .command), ("9", kVK_ANSI_9, .command),
+            ("2", kVK_ANSI_Keypad2, [.command, .numericPad]), ("9", kVK_ANSI_Keypad9, [.command, .numericPad]),
+        ]
+        for (characters, code, flags) in presses {
+            XCTAssertTrue(try press(rig, characters, code, flags, repeating: true), "\(characters) \(flags.rawValue)")
+        }
         XCTAssertEqual(rig.tabs.list, list)
-        XCTAssertTrue(rig.tabs.selected === b)
+        XCTAssertTrue(rig.tabs.selected === rig.first)
+        XCTAssertTrue(rig.tabs.holds(b))
         XCTAssertEqual(rig.hidden, [])
         XCTAssertEqual(tabKeyLines(rig, after: keys), [])
 
         let one = make()
         XCTAssertTrue(try commandW(one, repeating: true))
         XCTAssertEqual(one.hidden, [])
+    }
+
+    // MARK: - 数字键按键位（用户 11-20 定）
+
+    /// 数字键的键码就是 Carbon 的常量：主键盘 kVK_ANSI_1–4、9，小键盘 kVK_ANSI_Keypad1–4、9。
+    func testDigitKeyCodesAreTheCarbonConstants() {
+        XCTAssertEqual(TabKeys.digitKeyCodes, [UInt16(kVK_ANSI_1): 1, UInt16(kVK_ANSI_2): 2, UInt16(kVK_ANSI_3): 3,
+                                               UInt16(kVK_ANSI_4): 4, UInt16(kVK_ANSI_9): 9])
+        XCTAssertEqual(TabKeys.keypadDigitKeyCodes, [UInt16(kVK_ANSI_Keypad1): 1, UInt16(kVK_ANSI_Keypad2): 2,
+                                                     UInt16(kVK_ANSI_Keypad3): 3, UInt16(kVK_ANSI_Keypad4): 4,
+                                                     UInt16(kVK_ANSI_Keypad9): 9])
+    }
+
+    /// 法文 AZERTY 那样不按 ⇧ 打出“&”“é”“"”“'”“ç”的数字键（造出来的事件，没在真实键盘上试过）：按键位照样是 ⌘1–⌘4、⌘9。
+    /// 别的键打出数字字符：不是，交给网页。⇧⌘ 加数字键：不是。
+    func testNumberKeysGoByPosition() throws {
+        let rig = make()
+        let all = [rig.first] + (try (1...3).map { _ in try XCTUnwrap(rig.tabs.newTab()) })
+        let keys = mark(rig)
+        let steps: [(String, Int, Int)] = [("&", kVK_ANSI_1, 0), ("ç", kVK_ANSI_9, 3), ("é", kVK_ANSI_2, 1),
+                                           ("'", kVK_ANSI_4, 3), ("\"", kVK_ANSI_3, 2)]
+        for (characters, code, target) in steps {
+            XCTAssertTrue(try press(rig, characters, code, .command), characters)
+            XCTAssertTrue(rig.tabs.selected === all[target], "\(characters) → 第 \(target + 1) 个")
+        }
+        XCTAssertEqual(tabKeyLines(rig, after: keys), ["⌘1", "⌘9", "⌘2", "⌘4", "⌘3"].map { "标签页按键 \($0)" })
+        let list = rig.tabs.list
+        XCTAssertFalse(try press(rig, "1", kVK_ANSI_5, .command), "别的键打出“1”")
+        XCTAssertFalse(try press(rig, "1", kVK_ANSI_1, [.command, .shift]), "⇧⌘ 加数字键")
+        XCTAssertFalse(try press(rig, "5", kVK_ANSI_5, .command), "⌘5")
+        XCTAssertEqual(rig.tabs.list, list)
+    }
+
+    /// 小键盘的 ⌘1–⌘4、⌘9（带着小键盘的标志）：和主键盘的一样，包括超出个数时吃掉、什么都不做；小键盘的 5–8、0 不是。
+    /// 日志里写“⌘N（小键盘）”。
+    func testKeypadNumberKeysActLikeTheTopRow() throws {
+        let rig = make()
+        let b = try XCTUnwrap(rig.tabs.newTab())
+        let keys = mark(rig)
+        XCTAssertTrue(try press(rig, "1", kVK_ANSI_Keypad1, [.command, .numericPad]))
+        XCTAssertTrue(rig.tabs.selected === rig.first)
+        XCTAssertTrue(try press(rig, "9", kVK_ANSI_Keypad9, [.command, .numericPad]))
+        XCTAssertTrue(rig.tabs.selected === b)
+        let list = rig.tabs.list
+        XCTAssertTrue(try press(rig, "3", kVK_ANSI_Keypad3, [.command, .numericPad]), "⌘3 时只有两个：吃掉")
+        XCTAssertEqual(rig.tabs.list, list)
+        XCTAssertEqual(tabKeyLines(rig, after: keys), [
+            "标签页按键 ⌘1（小键盘）", "标签页按键 ⌘9（小键盘）", "标签页按键 ⌘3（小键盘）：没有可切换到的标签页，按键不交给网页",
+        ])
+        for (characters, code) in [("5", kVK_ANSI_Keypad5), ("6", kVK_ANSI_Keypad6), ("7", kVK_ANSI_Keypad7),
+                                   ("8", kVK_ANSI_Keypad8), ("0", kVK_ANSI_Keypad0)] {
+            XCTAssertFalse(try press(rig, characters, code, [.command, .numericPad]), "小键盘 \(characters)")
+        }
+        XCTAssertFalse(try press(rig, "1", kVK_ANSI_Keypad1, [.command, .shift, .numericPad]), "⇧⌘ 加小键盘")
+        XCTAssertFalse(try press(rig, "1", kVK_ANSI_Keypad1, [.command, .option, .numericPad]), "⌥⌘ 加小键盘")
+        XCTAssertEqual(rig.tabs.list, list)
+    }
+
+    /// 小键盘的标志单独算（numericPad），fn、帮助键算作 other；大写锁定不算。键位组合（HotKeyCombo）还是只按键码和 ⌃⌥⇧⌘。
+    func testKeypadFlagIsItsOwnModifier() throws {
+        XCTAssertEqual(TabKeys.Modifiers([.command, .numericPad]), [.command, .numericPad])
+        XCTAssertEqual(TabKeys.Modifiers([.command, .function]), [.command, .other])
+        XCTAssertEqual(TabKeys.Modifiers([.command, .help]), [.command, .other])
+        XCTAssertEqual(TabKeys.Modifiers([.command, .numericPad, .function]), [.command, .numericPad, .other])
+        XCTAssertEqual(TabKeys.Modifiers([.command, .capsLock, .numericPad]), [.command, .numericPad])
+        let keypad = KeyPress(try event("1", kVK_ANSI_Keypad1, [.command, .numericPad], window: 0))
+        XCTAssertEqual(keypad.combo, HotKeyCombo(keyCode: UInt32(kVK_ANSI_Keypad1), carbonModifiers: UInt32(cmdKey)))
+        XCTAssertNil(KeyPress(try event("t", kVK_ANSI_T, [.command, .numericPad], window: 0)).tabKey,
+                     "别的键带着小键盘的标志：不是（和原来一样）")
+    }
+
+    /// 用户自己的唤醒键、切换键（按键码和修饰键比）就是这个数字键：让给它，主键盘（AZERTY 的“&”那个键）、小键盘都一样。
+    /// 录制时这些组合本来就被拒绝（纯 ⌘ 加一个键）：小键盘的标志不算修饰键。
+    func testTheUserKeyStillWinsOverNumberKeys() throws {
+        let rig = make()
+        let b = try XCTUnwrap(rig.tabs.newTab())
+        let keys = mark(rig)
+        rig.controller.wakeKey = HotKeyCombo(keyCode: UInt32(kVK_ANSI_Keypad1), carbonModifiers: UInt32(cmdKey))
+        XCTAssertFalse(try press(rig, "1", kVK_ANSI_Keypad1, [.command, .numericPad]))
+        rig.controller.wakeKey = HotKeyCombo(keyCode: UInt32(kVK_ANSI_1), carbonModifiers: UInt32(cmdKey))
+        XCTAssertFalse(try press(rig, "&", kVK_ANSI_1, .command))
+        XCTAssertTrue(rig.tabs.selected === b)
+        XCTAssertEqual(tabKeyLines(rig, after: keys), [])
+        XCTAssertTrue(try press(rig, "1", kVK_ANSI_Keypad1, [.command, .numericPad]), "别的数字键照常")
+        XCTAssertTrue(rig.tabs.selected === rig.first)
+
+        for (code, flags, keyName) in [(kVK_ANSI_Keypad1, NSEvent.ModifierFlags([.command, .numericPad]), "1"),
+                                       (kVK_ANSI_Keypad9, [.command, .numericPad], "9"), (kVK_ANSI_1, .command, "&"),
+                                       (kVK_ANSI_1, .command, "1")] {
+            guard case .reject(let text) = HotKeyCapture.evaluate(keyCode: UInt32(code), flags: flags, keyName: keyName) else {
+                XCTFail("⌘\(keyName)（键码 \(code)）应该被拒绝")
+                continue
+            }
+            XCTAssertEqual(text.string(in: .simplifiedChinese), "⌘\(keyName) 是常用的快捷键，请换一个。")
+        }
     }
 
     // MARK: - 不拦的

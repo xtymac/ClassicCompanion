@@ -356,7 +356,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 本应用收到的一次按下（按键监视调用；测试直接调用）。返回 true：由这里处理，按键吃掉，不再交给菜单、输入法和网页。
     /// 按这个顺序：
     /// 1. 诊断，和原来一样，不管是哪个窗口、处理不处理都先写：Phase 0 的“⌘⇧ / ⌃⌘ 组合到达”那一行；Esc 到达那一行。
-    /// 2. 标签页的键（KeyPress.tabKey：⌘T ⇧⌘T ⌘W ⇧⌘W ⌃Tab ⌃⇧Tab ⇧⌘] ⇧⌘[ ⌘1–⌘4 ⌘9）：连同这一刻的情形交给 onTabKey
+    /// 2. 标签页的键（KeyPress.tabKey：⌘T ⇧⌘T ⌘W ⇧⌘W ⌃Tab ⌃⇧Tab ⇧⌘] ⇧⌘[ ⌘1–⌘4 ⌘9，数字按键位、含小键盘）：连同这一刻的情形交给 onTabKey
     ///    （ChatTabs.handleKey(_:_:)，做什么由 TabKeys.keyAction 定）。情形：按键是不是本窗口的、窗口上有没有表单
     ///    （和原来 ⌘W 的条件一样）、有没有应用级模态框、这个组合是不是用户自己的切换键或唤醒键、是不是重复按键。
     ///    它说处理了就吃掉。放在切换键前面：⌘W 原来就先于切换键；别的标签页的键和用户的键相同时 keyAction 放过，

@@ -39,8 +39,8 @@ struct KeyPress {
 }
 
 extension TabKeys.Modifiers {
-    /// 按键的修饰键：⌘⇧⌃⌥ 照搬，大写锁定不算，别的（fn、小键盘、帮助键）算作 other。
-    /// 所以纯 ⌘W 认法和原来一样（去掉大写锁定以后正好是 ⌘）。
+    /// 按键的修饰键：⌘⇧⌃⌥ 照搬，大写锁定不算，小键盘的标志是 numericPad（只有小键盘的 1–4、9 容许它），
+    /// 别的（fn、帮助键）算作 other。所以纯 ⌘W 认法和原来一样（去掉大写锁定以后正好是 ⌘）。
     init(_ flags: NSEvent.ModifierFlags) {
         let pressed = flags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock)
         var modifiers: TabKeys.Modifiers = []
@@ -48,7 +48,8 @@ extension TabKeys.Modifiers {
         if pressed.contains(.shift) { modifiers.insert(.shift) }
         if pressed.contains(.control) { modifiers.insert(.control) }
         if pressed.contains(.option) { modifiers.insert(.option) }
-        if !pressed.subtracting([.command, .shift, .control, .option]).isEmpty { modifiers.insert(.other) }
+        if pressed.contains(.numericPad) { modifiers.insert(.numericPad) }
+        if !pressed.subtracting([.command, .shift, .control, .option, .numericPad]).isEmpty { modifiers.insert(.other) }
         self = modifiers
     }
 }
