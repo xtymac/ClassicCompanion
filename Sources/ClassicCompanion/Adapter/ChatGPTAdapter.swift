@@ -261,8 +261,10 @@ final class ChatGPTAdapter {
     // MARK: - 执行
 
     /// 在隔离世界执行脚本，结果统一为 JSON 字符串；超时返回 nil。关闭以后不执行，直接返回 nil。
-    /// 脚本出错、超时写一行日志；那时已经关闭就不写（关闭的网页被释放时 WebKit 会让还没返回的脚本出错）。
-    /// 到时限的那一次只弱引用适配器：脚本早就返回了，适配器不用等到时限才能释放。
+    /// 脚本出错、超时写一行日志；那时已经关闭就不写（网页视图释放以后，WebKit 等网页不忙了才让还没返回的脚本出错，
+    /// 实测 WKErrorDomain#5，那时适配器早已关闭）。
+    /// 到时限的那一次和脚本的回调都只弱引用适配器：脚本早就返回了，适配器不用等到时限才能释放；到了时限脚本还没回来
+    /// （网页一直忙），适配器也不用等它回来。
     private func run(_ body: String, arguments: [String: Any] = [:], timeout: TimeInterval? = nil) async -> String? {
         guard !isClosed, let webView else { return nil }
         let timeout = timeout ?? self.timeout
@@ -273,13 +275,13 @@ final class ChatGPTAdapter {
                 finished = true
                 cont.resume(returning: value)
             }
-            webView.callAsyncJavaScript(body, arguments: arguments, in: nil, in: .defaultClient) { result in
+            webView.callAsyncJavaScript(body, arguments: arguments, in: nil, in: .defaultClient) { [weak self] result in
                 MainActor.assumeIsolated {
                     switch result {
                     case .success(let value): finish(value as? String)
                     case .failure(let error):
                         let ns = error as NSError
-                        if !self.isClosed { self.log("adapter", "脚本错误 \(ns.domain)#\(ns.code)") }
+                        if let self, !self.isClosed { self.log("adapter", "脚本错误 \(ns.domain)#\(ns.code)") }
                         finish(nil)
                     }
                 }
