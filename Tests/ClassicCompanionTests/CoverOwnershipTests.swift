@@ -17,7 +17,8 @@ import CompanionCore
 ///   显示着的页面关闭后启动画面停在关闭时的样子，换上别的页面时窗口照那个页面的遮挡显示（不会因为关闭的页面一直盖着）。
 /// - 释放的页面：计时什么都不做；窗口显示着的页面由窗口持有，它的遮挡总能按时结束。
 /// 只有一个页面时日志和窗口和改动之前一行不差，见 LaunchCoverTimelineTests（先在改动之前的代码上跑过）。
-/// 换显示着的页面只用测试的接缝 setDisplayedPageForTesting(_:showingItsCover:)（不换网页视图，不是切换标签页的入口）。
+/// 让不显示的页面开始启动画面，先用测试的接缝 setDisplayedPageForTesting(_:) 只把窗口当作显示着的页面换成它；
+/// 换上一个页面显示（投上它的遮挡）用切换标签页的入口 ChatWindowController.display(_:webView:)。
 /// WebKit 报的页面颜色和 LaunchColourTests 一样直接设 underPageBackgroundColor。这些测试不显示窗口。
 @MainActor
 final class CoverOwnershipTests: XCTestCase {
@@ -133,7 +134,7 @@ final class CoverOwnershipTests: XCTestCase {
 
     #if DEBUG
     /// 让 A 盖着自己的遮挡、但不显示：先把 A 当作显示着的、开始遮挡（时限 limit、上限 cap），再换回 B，
-    /// 把 B 的遮挡投到窗口上（B 没有遮挡时窗口的启动画面藏起）。B 盖着（displayedCovered）时之后再给 B 开始一次长的遮挡。
+    /// 把 B 的遮挡投到窗口上（display(_:webView:)，B 的网页视图本来就显示着；B 没有遮挡时窗口的启动画面藏起）。B 盖着（displayedCovered）时之后再给 B 开始一次长的遮挡。
     /// 都做完以后时限和上限放回很长。
     private func coverInBackground(_ a: PageLoadState, limit: TimeInterval, cap: TimeInterval, displayedCovered: Bool) {
         controller.setDisplayedPageForTesting(a)
@@ -142,7 +143,7 @@ final class CoverOwnershipTests: XCTestCase {
         controller.beginLaunchScreen()
         controller.launchScreenLimit = 60
         controller.launchScreenCap = 60
-        controller.setDisplayedPageForTesting(b, showingItsCover: true)
+        controller.display(b, webView: web)
         if displayedCovered { controller.beginLaunchScreen() }
         XCTAssertEqual(cover(a), Cover(covered: true, generation: 1))
         XCTAssertTrue(a.holdsPageColor, "A 进入它自己的启动保护")
@@ -271,6 +272,13 @@ final class CoverOwnershipTests: XCTestCase {
         assertUntouched(window, displayed, "第二次的计时到点")
     }
 
+    /// 另一个页面的网页视图（换上那个页面时一起换上），开始时报着 blankDark。
+    private func makeWeb() -> WKWebView {
+        let other = WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        other.underPageBackgroundColor = blankDark
+        return other
+    }
+
     /// 已经盖着过一次的 A 再开始一次（不检查第一次的结果）。
     private func coverInBackground2(_ a: PageLoadState, limit: TimeInterval, cap: TimeInterval) {
         controller.setDisplayedPageForTesting(a)
@@ -279,7 +287,7 @@ final class CoverOwnershipTests: XCTestCase {
         controller.beginLaunchScreen()
         controller.launchScreenLimit = 60
         controller.launchScreenCap = 60
-        controller.setDisplayedPageForTesting(b, showingItsCover: true)
+        controller.display(b, webView: web)
     }
 
     /// A 不显示，到时限还没提交、在等提交。
@@ -370,7 +378,7 @@ final class CoverOwnershipTests: XCTestCase {
     }
 
     /// 显示着的 B 盖着时关闭：启动画面停在关闭时（和以前一样，见 PageCloseTests），B 的计时到点也不动它。
-    /// 换上没有遮挡的 A（把 A 的遮挡投到窗口上）：窗口不再盖着，之后 B 的上限到点也不再盖上、不写日志。
+    /// 换上没有遮挡的 A（display(_:webView:)，把 A 的遮挡投到窗口上）：窗口不再盖着，之后 B 的上限到点也不再盖上、不写日志。
     /// 换上还盖着的 A：窗口照 A 盖着，A 自己的结束照常撤掉。关闭的页面不会让窗口一直盖着，也不会结束别的页面的遮挡。
     func testAClosedDisplayedPagesCoverGoesAwayWithIt() async throws {
         for aCovered in [false, true] {
@@ -384,7 +392,7 @@ final class CoverOwnershipTests: XCTestCase {
             try await pause(0.2)
             XCTAssertTrue(controller.isShowingLaunchScreen, "关闭的 B 显示着时启动画面停着")
             XCTAssertEqual(count("启动画面到时限"), 0, "关闭以后 B 的时限不动作")
-            controller.setDisplayedPageForTesting(a, showingItsCover: true)
+            controller.display(a, webView: makeWeb())
             XCTAssertEqual(controller.isShowingLaunchScreen, aCovered, "窗口照换上来的 A 盖不盖（A 盖着=\(aCovered)）")
             try await pause(0.4)
             XCTAssertEqual(controller.isShowingLaunchScreen, aCovered, "B 的上限到点不动窗口（A 盖着=\(aCovered)）")
@@ -449,7 +457,7 @@ final class CoverOwnershipTests: XCTestCase {
         try await waitUntil { !a.isCovered }
         XCTAssertTrue(controller.isShowingLaunchScreen, "窗口盖着 B 的")
         let lines = diagnostics.entries.count
-        controller.setDisplayedPageForTesting(a, showingItsCover: true)
+        controller.display(a, webView: makeWeb())
         XCTAssertFalse(controller.isShowingLaunchScreen, "结束了的遮挡：不盖")
         XCTAssertNil(controller.launchFadeView, "不淡出")
         XCTAssertEqual(diagnostics.entries.count, lines, "不写日志")
@@ -461,7 +469,7 @@ final class CoverOwnershipTests: XCTestCase {
         coverInBackground(a, limit: 0.05, cap: 60, displayedCovered: false)
         try await waitUntil { a.coverAwaitsCommit }
         try await pause(0.2)
-        controller.setDisplayedPageForTesting(a, showingItsCover: true)
+        controller.display(a, webView: makeWeb())
         XCTAssertTrue(controller.isShowingLaunchScreen, "还在等提交的遮挡：盖着")
         controller.pageDidCommit(a)
         try await pause(0.1)
@@ -478,7 +486,7 @@ final class CoverOwnershipTests: XCTestCase {
         a = PageLoadState()
         coverInBackground(a, limit: 0.4, cap: 60, displayedCovered: false)
         try await pause(0.1)
-        controller.setDisplayedPageForTesting(a, showingItsCover: true)
+        controller.display(a, webView: makeWeb())
         XCTAssertTrue(controller.isShowingLaunchScreen)
         try await waitUntil { a.coverAwaitsCommit }
         XCTAssertTrue(controller.isShowingLaunchScreen, "到时限还没提交：继续盖着")

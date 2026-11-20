@@ -2,7 +2,8 @@ import AppKit
 import CompanionCore
 
 /// 一个页面加载到哪一步了，包括它第一次加载的遮挡（启动画面或新标签页的遮挡）。这里只放状态：什么时候改、怎么用，规则都还在 ChatWindowController 里。
-/// 窗口显示其中一个（ChatWindowController.page），换网页视图时不跟着换。事件带着它属于的页面交给窗口：
+/// 窗口显示其中一个（ChatWindowController.page）。切换标签页时（ChatWindowController.display(_:webView:)）连同网页视图一起换，
+/// 换上来的页面的这些状态投到窗口上。事件带着它属于的页面交给窗口：
 /// 先改那个页面自己的这些状态，只有它显示着时窗口才跟着变；不显示的页面的事件只改它自己的状态。
 @MainActor
 final class PageLoadState {
@@ -42,13 +43,17 @@ final class PageLoadState {
     /// 解除启动保护时 WebKit 报着的颜色。它在加载完成前就有了，可能还是临时颜色：先不采用，等页面颜色变化；
     /// 到 pageColorSettleLimit 还没变，再按当前颜色采用（页面本来就是这个颜色）。
     /// 只给显示着的页面设：窗口只观察显示着的网页视图，等颜色变化和到时限采用都是窗口的事。
+    /// 还没等完就被换走的页面留着它，再显示时重新等（ChatWindowController.showPageColor(of:)）。
     var colorBeforeFirstLoad: NSColor?
+    /// 不显示时解除启动保护的时刻（窗口没有替它等颜色）。换上它显示时用一次就清掉：离这时还不到 pageColorSettleLimit，
+    /// 就照刚解除时一样等完剩下的时间（ChatWindowController.showPageColor(of:)）。
+    var releasedWhileHidden: Date?
     /// 第一次加载已经完成（之后一直是 true）。在这之前页面报的底色可能是加载完成前的临时颜色，不能采用（见 holdsPageColor）。
     /// 和 colorAtLastFinish 一起看：那个颜色本身可以是 nil，靠它分清“还没加载完成过”和“加载完成时没有报颜色”。
     var hasFinishedFirstLoad = false
     /// 最近一次加载完成时这个页面报的底色（调用方带进来的网页视图 underPageBackgroundColor，nil 是 WebKit 没有报颜色）。
     /// 每个页面加载完成时都记，和 hasFinishedFirstLoad 一起写。窗口只观察显示着的网页视图，不显示的页面的颜色只有这一份记录。
-    /// 只记不用：切换到这个页面时能不能采用、怎么采用，留到下一阶段。
+    /// 切换到这个页面时，它不显示时刚解除启动保护（releasedWhileHidden）的话，拿它当“加载完成前的颜色”等变化。
     var colorAtLastFinish: NSColor?
 
     // 第一次加载的遮挡（启动画面、新标签页的遮挡）：这个页面自己的那一份。开始、到时限、到上限、提交后兜底、加载完成和失败

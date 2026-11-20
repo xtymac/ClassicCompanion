@@ -11,14 +11,15 @@ import CompanionCore
 /// （标签 1），A 是另一个页面（标签 2，以后的新标签页）。核对：
 /// - 给不显示的 A 开始新标签页的遮挡（beginNewTabCover(for:)）：A 盖着、进入它自己的启动保护、计时开始；窗口一点不变
 ///   （启动画面那层和它的样子、淡出、启动保护、提示、颜色、日志），B 也不变。
-/// - 窗口照显示着的页面的遮挡显示样子：换显示着的页面（测试的接缝）时启动画面 ↔ 新标签页的遮挡跟着换；淡出那层是结束的那种。
+/// - 窗口照显示着的页面的遮挡显示样子：换显示着的页面（display(_:webView:)）时启动画面 ↔ 新标签页的遮挡跟着换；淡出那层是结束的那种。
 /// - 显示着的页面盖着新标签页的遮挡时，规则和日志和启动画面一行不差（每种结束方式各走两遍逐步比）。
 /// - 不显示的页面的遮挡结束时写一行带它的标签的日志（原因和耗时，没有地址），窗口和 B 不变；没有标签的页面不写。
 ///   到时限还没提交时继续盖着、不写日志。显示着的页面的日志不变。
 /// - 还盖着的页面被显示时沿用它自己的计时（不重新开始）。
 /// - 关闭的页面不开始遮挡。
 /// - “启动画面还在”（ChatTabs.isLaunchScreenUp）：只看启动时的那种遮挡还盖着，新标签页的遮挡不算。
-/// 换显示着的页面只用测试的接缝 setDisplayedPageForTesting(_:showingItsCover:)（不换网页视图，不是切换标签页的入口）。
+/// 换显示着的页面用切换标签页的入口 ChatWindowController.display(_:webView:)（连同网页视图一起换，投上那个页面的遮挡）；
+/// 只要“窗口当作显示着的页面换一下、别的都不做”的地方用测试的接缝 setDisplayedPageForTesting(_:)。
 /// 这些测试不显示窗口；遮挡在屏幕上的样子（浅色、深色）要上屏看。
 @MainActor
 final class NewTabCoverTests: XCTestCase {
@@ -67,6 +68,13 @@ final class NewTabCoverTests: XCTestCase {
     /// A：标签 2 的页面。
     private func makeA() -> PageLoadState {
         PageLoadState(logTag: second)
+    }
+
+    /// 另一个页面的网页视图（换上那个页面时一起换上），开始时报着 blankDark。
+    private func makeWeb() -> WKWebView {
+        let other = WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        other.underPageBackgroundColor = blankDark
+        return other
     }
 
     /// 给不显示的 p 开始新标签页的遮挡，这一次的时限和上限是 limit、cap；之后放回很长。
@@ -250,7 +258,7 @@ final class NewTabCoverTests: XCTestCase {
     }
 
     #if DEBUG
-    /// 换显示着的页面（测试的接缝，投上它的遮挡）：B 盖着启动画面、A 盖着新标签页的遮挡。
+    /// 换显示着的页面（display(_:webView:)，投上它的遮挡）：B 盖着启动画面、A 盖着新标签页的遮挡。
     /// 换到 A → 新标签页的样子；换回 B → 启动画面；B 结束后换到 A → 新标签页的样子，A 自己结束 → 撤掉、淡出新标签页的样子；
     /// 换到没有遮挡的页面 → 不盖。日志只有两行显示着时结束的（和以前一样，不带标签）。
     func testTheWindowFollowsTheDisplayedPagesCoverKind() {
@@ -259,21 +267,21 @@ final class NewTabCoverTests: XCTestCase {
         let a = makeA()
         beginNewTab(a)
         XCTAssertEqual(controller.shownCoverKind, .launch)
-        controller.setDisplayedPageForTesting(a, showingItsCover: true)
+        let aWeb = makeWeb()
+        controller.display(a, webView: aWeb)
         XCTAssertEqual(controller.shownCoverKind, .newTab, "启动画面 → 新标签页")
-        controller.setDisplayedPageForTesting(b, showingItsCover: true)
+        controller.display(b, webView: web)
         XCTAssertEqual(controller.shownCoverKind, .launch, "新标签页 → 启动画面")
         controller.endLaunchScreen("网页已加载")
         XCTAssertNil(controller.shownCoverKind)
         XCTAssertEqual(controller.launchFadeView?.rootView.kind, .launch)
-        controller.setDisplayedPageForTesting(a, showingItsCover: true)
+        controller.display(a, webView: aWeb)
         XCTAssertEqual(controller.shownCoverKind, .newTab, "没盖着 → 新标签页")
         controller.endLaunchScreen("加载失败", for: a)
         XCTAssertNil(controller.shownCoverKind)
         XCTAssertEqual(controller.launchFadeView?.rootView.kind, .newTab)
         let c = PageLoadState()
-        controller.setDisplayedPageForTesting(a, showingItsCover: true)
-        controller.setDisplayedPageForTesting(c, showingItsCover: true)
+        controller.display(c, webView: makeWeb())
         XCTAssertNil(controller.shownCoverKind, "没有遮挡的页面：不盖")
         XCTAssertEqual(lines().filter { $0.hasPrefix("[launch]") },
                        ["[launch] 启动画面结束：网页已加载（…ms）", "[launch] 启动画面结束：加载失败（…ms）"])
@@ -424,7 +432,7 @@ final class NewTabCoverTests: XCTestCase {
         let a = makeA()
         controller.setDisplayedPageForTesting(a)
         controller.beginLaunchScreen()
-        controller.setDisplayedPageForTesting(b, showingItsCover: true)
+        controller.display(b, webView: web)
         let logged = lines()
         controller.endLaunchScreen("网页已加载", for: a)
         XCTAssertEqual(lines(), logged + [backgroundEnd("网页已加载", kind: "启动时")])
@@ -455,7 +463,7 @@ final class NewTabCoverTests: XCTestCase {
         try await pause(0.2)
         let logged = lines()
         let displayedAt = Date()
-        controller.setDisplayedPageForTesting(a, showingItsCover: true)
+        controller.display(a, webView: makeWeb())
         XCTAssertTrue(controller.isShowingLaunchScreen)
         XCTAssertEqual(controller.shownCoverKind, .newTab)
         XCTAssertEqual(lines(), logged, "换上来时不写日志")
@@ -471,13 +479,14 @@ final class NewTabCoverTests: XCTestCase {
 
     /// A 不显示时开始（新标签页的遮挡），换上 A：A 的启动保护照常挡住它报的颜色，顶部一条和窗口底色、遮挡的底色
     /// 都还是窗口原来的颜色（记下的页面颜色），直到 A 第一次加载完成。
-    /// （窗口只观察自己的网页视图：接缝不换网页视图，这里让它报的颜色代表 A 的网页视图报的。）
+    /// （换上 A 时连同 A 的网页视图一起换，报颜色的是 A 的网页视图。）
     func testADisplayedNewTabCoverKeepsTheWindowsColourUntilItsFirstLoadFinishes() async throws {
         make()
         let a = makeA()
         beginNewTab(a)
-        controller.setDisplayedPageForTesting(a, showingItsCover: true)
-        web.underPageBackgroundColor = white
+        let aWeb = makeWeb()
+        controller.display(a, webView: aWeb)
+        aWeb.underPageBackgroundColor = white
         try await pause(0.3)
         XCTAssertEqual(Self.rgb(appearance.background), Self.rgb(savedDark), "不采用")
         XCTAssertTrue(shown.isEmpty)
