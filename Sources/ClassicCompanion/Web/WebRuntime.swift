@@ -478,11 +478,15 @@ final class WebRuntime: NSObject {
     ///   用户可能正在用它（比如点登录页上的条款链接），所以不跟着标签页选不选中。
     /// - 弹窗的窗口不在屏幕上（关掉了、藏起、最小化）、不认识的网页视图：和这一页一样（isSelectedTab）。
     private func isInFront(_ webView: WKWebView) -> Bool {
-        if webView !== self.webView, let window = popupWindows.first(where: { $0.contentView === webView }),
-           popupWindowIsOnScreen(window) {
-            return true
+        isPopupOnScreen(webView) || isSelectedTab()
+    }
+
+    /// webView 是不是这一页开着的弹窗的网页视图，并且弹窗的窗口在屏幕上（popupWindowIsOnScreen）。这一页自己的网页视图不是。
+    private func isPopupOnScreen(_ webView: WKWebView) -> Bool {
+        guard webView !== self.webView, let window = popupWindows.first(where: { $0.contentView === webView }) else {
+            return false
         }
-        return isSelectedTab()
+        return popupWindowIsOnScreen(window)
     }
 
     /// 这次导航是不是在新标签页打开的 ⌘ 点击（3.12）：是这个页面自己的网页视图（不是它开的弹窗：弹窗里的 ⌘ 点击照原来交给
@@ -769,12 +773,21 @@ extension WebRuntime: WKDownloadDelegate {
 /// 关闭以后（isClosed）：不开新窗口，提示框、确认框、文件选择都按取消处理（不显示），媒体采集照样拒绝、不写日志。
 /// 对话框按取消处理从 dialogsCancelled 起（关闭一定先进入它；关闭显示着的标签页时更早，在切换到邻居之前）。
 ///
-/// 网页的对话框（提示框、确认框、文件选择）属于这个页面（这个标签页），按 runDialog(_:cancel:present:) 的规则显示：
-/// - 这一页是选中的（isSelectedTab）、没有排着的：马上显示，和原来一样（只有一个页面时总是这样，窗口隐藏、最小化时也是）。
-/// - 不是选中的：排在这一页上（heldDialogs，按到达的先后），什么都不显示，写一行（只有种类和个数）；
-///   这一页被选中、窗口显示它以后（ChatTabs.select(_:) 最后调用 showHeldDialogs()）一次放出一个，显示完再放下一个。
-/// - 排着时、放出来还没显示时、显示着时这一页的对话框按取消处理了（cancelDialogs()，关闭时）：按取消回答
-///   （提示框：结束；确认框：false；文件选择：nil）。
+/// 网页的对话框（提示框、确认框、文件选择）属于发出它的网页视图（WebKit 交来的 webView），按 runDialog(_:from:cancel:present:)
+/// 的规则显示。先看是谁发出的：
+/// - 这一页开着的弹窗（登录等），弹窗的窗口在屏幕上（popupWindowIsOnScreen）：属于那个弹窗。马上显示，不管这一页是不是选中的，
+///   也不排在这一页的队里（不等这一页排着的、放出来的）。弹窗是自己的窗口，切换标签页时不藏起来，用户看得见它、可能正在用它
+///   （登录页的确认框不能等到切回那个标签页才出来，弹窗的网页在等回答时一直停着）。这一页不是选中的时写一行（只有种类）。
+///   显示的样子和这一页的一样（presentAlert、presentConfirm、presentOpenPanel：应用级模态框、文件选择面板），
+///   不挂在弹窗的窗口上（挂上去要换显示的做法，留给以后定）。
+/// - 这一页自己的网页视图，和窗口不在屏幕上（藏起、最小化）的弹窗：属于这个标签页，按标签页的规则：
+///   - 这一页是选中的（isSelectedTab）、没有排着的：马上显示，和原来一样（只有一个页面时总是这样，窗口隐藏、最小化时也是）。
+///   - 不是选中的：排在这一页上（heldDialogs，按到达的先后），什么都不显示，写一行（只有种类和个数）；
+///     这一页被选中、窗口显示它以后（ChatTabs.select(_:) 最后调用 showHeldDialogs()）一次放出一个，显示完再放下一个。
+/// - 不管是谁发出的：排着时、放出来还没显示时、显示着时这一页的对话框按取消处理了（cancelDialogs()，关闭这个标签页时，
+///   和原来一样）：按取消回答（提示框：结束；确认框：false；文件选择：nil）。关闭时它开着的弹窗也一起关掉。
+/// 标签页换到后台时，它开着的弹窗照旧开着（不关、不藏，原来就这样，没有改）：登录可能正做到一半，关掉要重新来；
+/// 所以弹窗的对话框跟着弹窗的窗口走，不跟着标签页。
 /// 每个请求 WebKit 的回调都正好调用一次：代理方法每次调用正好返回一次，返回时由 WebKit 的接口调用回调。
 /// 排着的不设上限，个数不会自己一直涨：提示框、确认框让发出它的网页停下等回答，一个网页一次只有一个在等；
 /// 文件选择 WebKit 一个网页一次只发一个（两样都有测试实测，TabDialogTests）。一个标签页排着的最多是它的网页和它开着的
@@ -871,41 +884,45 @@ extension WebRuntime: WKUIDelegate {
                  initiatedByFrame frame: WKFrameInfo) async -> [URL]? {
         // 仅响应网页上的用户操作；不会自动上传任何文件
         let multiple = parameters.allowsMultipleSelection, directories = parameters.allowsDirectories
-        return await runDialog(.openPanel, cancel: nil) { shown in
+        return await runDialog(.openPanel, from: webView, cancel: nil) { shown in
             await presentOpenPanel(multiple, directories, shown)
         }
     }
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo) async {
-        await runDialog(.alert, cancel: ()) { shown in
+        await runDialog(.alert, from: webView, cancel: ()) { shown in
             await presentAlert(frame.securityOrigin.host, message, shown)
         }
     }
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo) async -> Bool {
-        await runDialog(.confirm, cancel: false) { shown in
+        await runDialog(.confirm, from: webView, cancel: false) { shown in
             await presentConfirm(frame.securityOrigin.host, message, shown)
         }
     }
 
     // MARK: 网页的对话框：排着、放出来、取消
 
-    /// 网页的一个对话框按这一页的规则走一遍，返回给 WebKit 的回答：
+    /// 网页的一个对话框（webView 发出的）按这一页的规则走一遍，返回给 WebKit 的回答：
     /// - 这一页的对话框已经按取消处理（dialogsCancelled：关闭了，或者正在关闭、还没切换到邻居）：cancel，不显示、不排着、
-    ///   不写日志（3.1 的规则）。
+    ///   不写日志（3.1 的规则）。弹窗发出的也一样。
+    /// - 弹窗的窗口在屏幕上、webView 是那个弹窗的（isPopupOnScreen(_:)）：马上显示，不排着；这一页不是选中的时写一行
+    ///   “弹窗的…：弹窗在屏幕上，马上显示”（只有种类）。
     /// - 这一页是选中的，没有排着的，也没有放出来还没显示完的：马上显示（present），和原来一样，不写日志。
     /// - 不然排在这一页上（写一行“排着等显示”），等放出来（waitForTurn(_:)）再显示（写一行“显示排着的”）；
     ///   等着时按取消处理了：cancel，不显示。
     /// - 显示着时按取消处理了：cancelDialogs() 调用这一次的 dismiss（能收起的收起），present 返回后按 cancel 回答
     ///   （不管用户选了什么）。
     /// 放出来的那一个显示完，放下一个（showHeldDialogs()）。present 最多调用一次；这个函数每次调用正好返回一次。
-    private func runDialog<Answer>(_ kind: WebDialogKind, cancel: Answer,
+    private func runDialog<Answer>(_ kind: WebDialogKind, from webView: WKWebView, cancel: Answer,
                                    present: (ShownDialog) async -> Answer) async -> Answer {
         guard !dialogsCancelled else { return cancel }
         var held: HeldDialog?
-        if !isSelectedTab() || !heldDialogs.isEmpty || dialogTurn != nil {
+        if isPopupOnScreen(webView) {
+            if !isSelectedTab() { log("web", "弹窗的\(kind.name)：弹窗在屏幕上，马上显示（标签页不显示）") }
+        } else if !isSelectedTab() || !heldDialogs.isEmpty || dialogTurn != nil {
             let waiting = HeldDialog(kind)
             heldDialogs.append(waiting)
             log("web", "网页的\(kind.name)排着等显示（排着 \(heldDialogs.count) 个）")
