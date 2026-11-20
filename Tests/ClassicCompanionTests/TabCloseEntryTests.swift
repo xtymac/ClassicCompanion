@@ -553,9 +553,9 @@ final class TabCloseRig {
         return tab
     }
 
-    /// 网页视图建好时就设上页面底色（白色）。不设的话（实测在系统深色外观下），换上一个从没加载过的网页视图后过一会儿
-    /// WebKit 报出页面底色，窗口照常采用、写一行“[appearance] 页面底色：浅色”——那是换上来的那一页自己的事，和关闭无关，
-    /// 却会在“关闭以后窗口不变、不写日志”的核对里冒出来。设上以后这一行不再出现。
+    /// 网页视图建好就设上页面底色（白色），和这个测试进程的外观无关。原因见 NewTabEntryTests.swift 里 NewTabRig.pinColour(_:)：
+    /// 深色外观下，放进窗口的空白网页视图过一会儿会自己报出白色，窗口采用、写一行“[appearance] 页面底色：浅色”，
+    /// 会落在“关闭以后窗口不变、不写日志”的核对里。
     private static func fixColour(_ tab: ChatTab) {
         tab.runtime.webView.underPageBackgroundColor = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
     }

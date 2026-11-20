@@ -336,7 +336,7 @@ private final class ThreeTabs {
     init(defaults: UserDefaults) {
         settings = AppSettings(defaults: defaults)
         let list = TabList()
-        let first = ChatTab.make(id: list.selected, diagnostics: diagnostics, settings: settings)
+        let first = Self.pinColour(ChatTab.make(id: list.selected, diagnostics: diagnostics, settings: settings))
         first.runtime.loadRequest = { _ in }
         controller = ChatWindowController(webView: first.runtime.webView, toolbar: EmptyView(), diagnostics: diagnostics,
                                           appearance: PageAppearance(defaults: defaults), page: first.page)
@@ -358,9 +358,16 @@ private final class ThreeTabs {
         t = [first, add(), add()]
     }
 
+    /// 网页视图建好就设上页面底色（白色），这一组测试就和这个测试进程的外观无关。原因见 NewTabEntryTests.swift 里
+    /// NewTabRig.pinColour(_:)：深色外观下，放进窗口的空白网页视图过一会儿会自己报出白色，窗口采用、写一行“页面底色：浅色”。
+    private static func pinColour(_ tab: ChatTab) -> ChatTab {
+        tab.runtime.webView.underPageBackgroundColor = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
+        return tab
+    }
+
     /// 加一个标签页（正式运行时的建法），不选中，加载请求不发出去。
     func add() -> ChatTab {
-        let tab = tabs.add { ChatTab.make(id: $0, diagnostics: diagnostics, settings: settings) }!
+        let tab = tabs.add { Self.pinColour(ChatTab.make(id: $0, diagnostics: diagnostics, settings: settings)) }!
         tab.runtime.loadRequest = { _ in }
         return tab
     }
