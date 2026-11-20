@@ -40,7 +40,8 @@ import Testing
         case .nextTab, .previousTab:
             return Look(visible: true, enabled: front && s.tabCount > 1, showsKeyEquivalent: key)
         case .statusNewTab:
-            return Look(visible: true, enabled: !s.launchScreenUp && !s.atLimit, showsKeyEquivalent: false,
+            // 到上限也能点（D9：找回窗口、显示到上限的提示），照样写上原因。
+            return Look(visible: true, enabled: !s.launchScreenUp, showsKeyEquivalent: false,
                         explainsLimit: s.atLimit && !s.launchScreenUp)
         }
     }
@@ -89,6 +90,13 @@ import Testing
         #expect(TabMenuRules.look(.newTab, in: settings) == Look(visible: true, enabled: false, showsKeyEquivalent: false))
         #expect(TabMenuRules.look(.nextTab, in: settings) == Look(visible: true, enabled: false, showsKeyEquivalent: false))
         #expect(TabMenuRules.look(.statusNewTab, in: settings).enabled, "菜单栏图标的菜单不看哪个窗口在前面")
+
+        let hiddenAtLimit = TabMenuRules.State(scope: .noWindow, atLimit: true, canReopen: true, tabCount: 4)
+        #expect(TabMenuRules.look(.statusNewTab, in: hiddenAtLimit)
+                    == Look(visible: true, enabled: true, showsKeyEquivalent: false, explainsLimit: true),
+                "窗口隐藏着、到上限：菜单栏图标的那一项能点（D9：找回窗口、显示到上限的提示），写上原因")
+        #expect(!TabMenuRules.look(.newTab, in: hiddenAtLimit).enabled, "文件菜单的那一项照旧置灰")
+        #expect(!TabMenuRules.look(.reopenClosedTab, in: hiddenAtLimit).enabled, "D15：到上限 ⇧⌘T 置灰")
 
         let modal = TabMenuRules.State(scope: .chatWindow, appModal: true, canReopen: true, tabCount: 2)
         for item in Item.allCases where item != .closeWindow {

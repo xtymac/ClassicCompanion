@@ -148,7 +148,7 @@ final class TabMenus: NSObject, NSMenuItemValidation, NSMenuDelegate {
         let key = look.showsKeyEquivalent ? Self.keyEquivalents[item] : nil
         menuItem.keyEquivalent = key?.key ?? ""
         menuItem.keyEquivalentModifierMask = key?.modifiers ?? []
-        // 只因为到了上限而置灰时，下面写上原因（提示框里的同一句话）。
+        // 到了上限时（新建、重新打开因此置灰；菜单栏图标的那一项还能点），下面写上原因（提示框里的同一句话）。
         menuItem.subtitle = look.explainsLimit ? TabHint.limit(capacity: tabs.list.capacity).text() : nil
     }
 
@@ -180,7 +180,7 @@ final class TabMenus: NSObject, NSMenuItemValidation, NSMenuDelegate {
         perform(.newTab, "新建标签页") { _ = $0.newTab() }
     }
 
-    /// 菜单栏图标的菜单：窗口没显示时 newTab() 先找回窗口（D9）。
+    /// 菜单栏图标的菜单：窗口没显示时 newTab() 先找回窗口（D9）；到上限时也能点，newTab() 找回窗口、显示到上限的提示。
     @objc func statusNewTab(_ sender: Any?) {
         perform(.statusNewTab, "新建标签页（菜单栏图标）") { _ = $0.newTab() }
     }

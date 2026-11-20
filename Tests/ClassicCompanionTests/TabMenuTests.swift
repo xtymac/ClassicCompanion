@@ -176,11 +176,11 @@ final class TabMenuTests: XCTestCase {
         check(built, [false, false, false, false, false, false, false], "模态框")
         modal = false
         built.menus.refresh()
-        // 到上限（有记录）：新建、重新打开、菜单栏图标的置灰，写上原因；别的照样。
+        // 到上限（有记录）：新建、重新打开置灰，写上原因；菜单栏图标的还能点（D9：找回窗口、显示提示），也写上原因；别的照样。
         _ = try XCTUnwrap(rig.tabs.newTab())
         _ = try XCTUnwrap(rig.tabs.newTab())
         XCTAssertTrue(rig.tabs.list.isFull)
-        check(built, [false, false, true, true, true, true, false], "到上限")
+        check(built, [false, false, true, true, true, true, true], "到上限")
         let limit = TabHint.limit(capacity: 4).text()
         XCTAssertEqual(built.items.newTab.subtitle, limit)
         XCTAssertEqual(built.items.reopenClosedTab.subtitle, limit)
@@ -249,6 +249,31 @@ final class TabMenuTests: XCTestCase {
         let lines = rig.lines(since: mark)
         XCTAssertEqual(Array(lines.prefix(3)), ["[menu] 菜单 新建标签页（菜单栏图标）", "[tabs] 新增标签页：窗口没有显示，先找回窗口", "找回窗口"])
         XCTAssertEqual(rig.tabs.tabs.count, 2)
+    }
+
+    /// 窗口隐藏着、到上限：菜单栏图标的“新建标签页”还能点（D9）；点了先找回窗口，再显示到上限的提示，不新增、不建。
+    func testStatusNewTabAtTheLimitRevealsTheWindowThenShowsTheLimitHint() throws {
+        let rig = make()
+        let built = try build(rig)
+        for _ in 0..<3 { _ = try XCTUnwrap(rig.tabs.newTab()) }
+        XCTAssertTrue(rig.tabs.list.isFull)
+        rig.tabs.windowIsVisible = { false }
+        key = nil
+        built.menus.refresh()
+        let status = NSMenu()
+        AppDelegate.fillStatusMenu(status)
+        built.menus.attachStatus(status)
+        let item = try XCTUnwrap(built.menus.statusNewTab)
+        XCTAssertTrue(built.menus.validateMenuItem(item))
+        let list = rig.tabs.list, hints = rig.limitHints
+        let mark = rig.mark()
+        built.menus.statusNewTab(nil)
+        XCTAssertEqual(rig.lines(since: mark), [
+            "[menu] 菜单 新建标签页（菜单栏图标）", "[tabs] 不新增标签页：已到上限（4 个）",
+            "[tabs] 窗口没有显示，先找回窗口再提示", "找回窗口", "[hint] 显示 到上限（4 个）的提示",
+        ])
+        XCTAssertEqual(rig.limitHints, hints + 1)
+        XCTAssertEqual(rig.tabs.list, list, "不新增")
     }
 
     /// 不能点的时候直接调用动作（菜单是一会儿之前验证的）：再看一遍，写一行，不做。按住不放的重复按键也不做。

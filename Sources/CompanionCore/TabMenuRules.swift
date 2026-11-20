@@ -16,7 +16,8 @@ import Foundation
 /// - 用户自己的唤醒键或切换键就是这一项的组合（takenByUserHotKey）：这一项不显示快捷键（按键照原来给用户的键）；
 ///   ⌘W 不会是用户的键（录制时不让设），照常显示。
 /// - 菜单栏图标的菜单里的“新建标签页”：不看哪个窗口在前面（和那里的“新建对话”一样；窗口没显示时入口先找回窗口，D9），
-///   只看模态框、启动画面、上限；没有快捷键。
+///   只看模态框、启动画面；没有快捷键。到上限时也能点（D9：点了找回窗口、显示到上限的提示，不新增），下面照样写上
+///   “最多打开 N 个标签页”。
 public enum TabMenuRules {
     public enum Item: CaseIterable, Hashable, Sendable {
         /// 文件 → 新建标签页 ⌘T。
@@ -81,7 +82,7 @@ public enum TabMenuRules {
         /// 能不能点。原来那一项“关闭窗口”是 true：这里不拦，照原来交给 AppKit。
         public var enabled: Bool
         public var showsKeyEquivalent: Bool
-        /// 下面写上“最多打开 N 个标签页”（只因为到了上限而置灰时）。
+        /// 下面写上“最多打开 N 个标签页”（新建、重新打开只因为到了上限而置灰时；菜单栏图标的那一项到上限时还能点，也写）。
         public var explainsLimit: Bool
 
         public init(visible: Bool, enabled: Bool, showsKeyEquivalent: Bool, explainsLimit: Bool = false) {
@@ -114,7 +115,8 @@ public enum TabMenuRules {
         case .nextTab, .previousTab:
             return Look(visible: true, enabled: inChat && state.tabCount > 1, showsKeyEquivalent: showsKey)
         case .statusNewTab:
-            return Look(visible: true, enabled: canOpen, showsKeyEquivalent: false, explainsLimit: limitIsTheReason)
+            return Look(visible: true, enabled: !state.appModal && !state.launchScreenUp, showsKeyEquivalent: false,
+                        explainsLimit: limitIsTheReason)
         }
     }
 
