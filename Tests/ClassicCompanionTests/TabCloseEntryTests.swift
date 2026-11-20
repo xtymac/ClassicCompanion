@@ -112,7 +112,7 @@ final class TabCloseEntryTests: XCTestCase {
         XCTAssertTrue(b.page.isClosed)
         XCTAssertNil(b.runtime.webView.superview)
         XCTAssertEqual(rig.network.registeredCount, 2)
-        XCTAssertTrue(rig.tabs.list.recentlyClosed.isEmpty, "不记最近关闭（3.8）")
+        XCTAssertTrue(rig.tabs.list.recentlyClosed.isEmpty, "2 没有地址，不记最近关闭（记什么见 TabReopenTests）")
     }
 
     // MARK: - 关选中的

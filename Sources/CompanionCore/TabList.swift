@@ -37,7 +37,7 @@ public struct TabList: Equatable, Sendable {
     }
 
     public enum ReopenResult: Equatable, Sendable {
-        /// 已放回并选中。调用方新建网页视图加载 `url`（是重新加载，不是原样找回）。
+        /// 已放回（`reopen()` 同时选中）。调用方新建网页视图加载 `url`（是重新加载，不是原样找回）。
         case reopened(TabID, url: URL)
         /// 已到上限：不打开，这条记录不消耗。
         case atCapacity
@@ -148,15 +148,17 @@ public struct TabList: Equatable, Sendable {
 
     // MARK: 重新打开
 
-    /// ⇧⌘T：取最近关闭的一条，新建标签页（新的标识）放回关闭时的位置并选中；
-    /// 那个位置已经不存在（标签页比当时少）就放在最右。连按按关闭的倒序逐个打开。
+    /// ⇧⌘T：取最近关闭的一条，新建标签页（新的标识）放回关闭时的位置并选中（`select: true`）；
+    /// 那个位置已经不存在（标签页比当时少）就放在最右。连按按关闭的倒序逐个打开。放在哪只有这一条规则。
     /// 已到上限时不打开，这条记录留着。
     /// 没有记录时一律返回 `.nothingToReopen`，即使已到上限：计划说没有记录时按键不响应，这里取不显示上限提示的读法。
-    public mutating func reopen() -> ReopenResult {
+    /// `select: false`：放回原位置、消耗这条记录，选中项不变。ChatTabs 用它：先把新标签页放进来，再经自己的切换入口选中它
+    /// （和关闭时先切换、再拿掉一样：选中项只在窗口跟着换的那一步改，不会已经指着新的、窗口却还显示着别的）。
+    public mutating func reopen(select: Bool = true) -> ReopenResult {
         guard let entry = recentlyClosed.latest else { return .nothingToReopen }
         guard !isFull else { return .atCapacity }
         recentlyClosed.removeLatest()
-        let id = insert(at: min(entry.index, tabs.count), select: true)
+        let id = insert(at: min(entry.index, tabs.count), select: select)
         return .reopened(id, url: entry.url)
     }
 }

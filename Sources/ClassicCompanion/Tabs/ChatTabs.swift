@@ -9,9 +9,9 @@ import CompanionCore
 ///
 /// 这里有一组标签页（tabs，按从左到右）和选中的那个（selected）。顺序、选中项和标识都由 list（TabList）决定。
 /// 换选中的只经 select(_:)（切换标签页：先改选中项，再让窗口显示它，再做跟着它的事）。新增标签页只经 newTab()，
-/// 关闭标签页只经 closeTab(_:)（closeSelectedTab()）。
+/// 关闭标签页只经 closeTab(_:)（closeSelectedTab()），重新打开最近关闭的只经 reopenClosedTab()。
 /// 应用里现在仍只有启动时的那一个，它就是选中的、窗口显示着的；还没有标签栏、菜单和按键，应用里没有地方调用 select(_:)、
-/// newTab() 和 closeTab(_:)。
+/// newTab()、closeTab(_:) 和 reopenClosedTab()。
 ///
 /// 规则：事件属于发出它的标签页，接线时就绑定那个标签页，处理时明确传着它，不在中途拿“现在选中的”来代替。
 /// - 标签页自己的状态（页面加载状态、lastPath、适配器的代号、它自己的日志）不管选没选中都照常改。
@@ -165,9 +165,17 @@ final class ChatTabs {
     /// 测试也用它加一个从不显示的标签页。
     func add(_ make: (TabID) -> ChatTab) -> ChatTab? {
         guard case .added(let id) = list.append(select: false) else { return nil }
+        return adopt(id, make)
+    }
+
+    /// list 刚放进去、不选中的标识 id：用 make 建标签页，放进 tabs 里和 list 一样的位置，接好线，登记到网络状态。
+    /// 加在最右（add(_:)）和放回原位置（reinsertClosedTab(_:)）都经这里：放在哪由 list 定，tabs 照抄 list 的位置，
+    /// 两者顺序总是一样。make 运行的那一会儿 list 已经有它、tabs 还没有；这时这里的代码都不运行（make 只建标签页）。
+    private func adopt(_ id: TabID, _ make: (TabID) -> ChatTab) -> ChatTab {
         let tab = make(id)
         precondition(tab.id == id, "新标签页要用这次发的标识")
-        tabs.append(tab)
+        guard let index = list.tabs.firstIndex(of: id) else { preconditionFailure("list 里刚放进去的标识") }
+        tabs.insert(tab, at: index)
         wire(tab)
         // 接好线再登记：已经知道网络状态时马上补发给它（断网时加进来的页面也等得到“网络恢复”），
         // 补发引起的变化照常到它自己的页面状态。
@@ -201,7 +209,7 @@ final class ChatTabs {
     ///
     /// - tab 不在这组里（关过了、不是这组的）：什么都不做（不隐藏窗口、不写日志），所以关两遍是安全的。
     /// - 只有一个标签页（它就是选中的）：不关、不释放，页面留着；和现在的 ⌘W 一样隐藏窗口（hideWindow("⌘W")，
-    ///   窗口写的就是现在 ⌘W 的那一行“隐藏：⌘W”），不写别的日志。
+    ///   窗口写的就是现在 ⌘W 的那一行“隐藏：⌘W”），不写别的日志，也不记入最近关闭（它没关）。
     /// - 多个标签页：先写一行“[tabs] 关闭（剩 N 个）”（带 tab 的标签，N 是关闭以后的个数；没有地址和标题），然后
     ///   - tab 不是选中的：收尾（close(_:)）。选中项、窗口都不变。
     ///   - tab 是选中的（窗口显示着它）：
@@ -213,6 +221,8 @@ final class ChatTabs {
     ///        进行中的切模式结束，tab 的网页视图换下去、藏在窗口里。聚焦和记下的对话地址（lastConversationURL）跟着那一页，
     ///        都由 select 做，这里不另外做。
     ///     4. 收尾（close(_:)）：这时 tab 已经不是选中的，和关不选中的一样，其中把它的网页视图从窗口里拿出来。
+    ///   两种都在收尾时记入最近关闭（close(_:) 第 7 步）：地址是 tab 这时的地址，位置是它这时在列表里的位置
+    ///   （切换只改选中项，不改位置）。
     ///   为什么先切换再关：list 和 tabs 只在收尾时一起改一次，切换只改选中项，所以任何时候两者一一对应，选中项也总指着
     ///   tabs 里还在的那一页（selected 不会落空）；切换用的就是平常的 select，不另写一份显示别的页面的做法。
     ///   如果先让 TabList 关掉（它在一步里拿掉并改选中项），窗口那时还显示着 tab，select 又因为邻居已经是选中的而什么都不做。
@@ -256,7 +266,10 @@ final class ChatTabs {
     ///    窗口不再持有它。
     /// 5. 排着的聚焦任务取消（到点本来也因为它不是选中的而不做，这里让它马上结束、不再等）。
     /// 6. 它记下的阅读位置都作废（dropReadingPositions(of:)，不碰网页）。
-    /// 7. 从列表（list）和 tabs 里一起拿掉，两者始终一一对应。不记入最近关闭（⇧⌘T 记哪个地址是重新打开的任务）。
+    /// 7. 从列表（list）和 tabs 里一起拿掉，两者始终一一对应。拿掉时列表记入最近关闭（TabList.close(_:url:)）：
+    ///    地址是 tab 在收尾开始那一刻的地址（tab.url，运行时最近一次报的；第 1 步停止加载之前取），是普通对话地址
+    ///    （NavigationPolicy.restorableConversationURL）才记，去掉查询参数，连同它这时的位置；新对话页、登录页、
+    ///    还没有地址的都不记。只在内存里，最多 10 条，不去重。这里不写地址（只有 closeTab 那一行，没有地址）。
     /// 8. 从共用的网络状态上去掉（tabLeft）。
     ///
     /// 不取消的（没有取消的办法）：进行中的新对话、证据采集和媒体实验、每秒的媒体状态、页面变化后的媒体日志、正在等页面结果的聚焦。
@@ -267,6 +280,7 @@ final class ChatTabs {
     func close(_ tab: ChatTab) {
         guard holds(tab) else { return }
         precondition(!isSelected(tab), "关选中的标签页要先切换到别的标签页（closeTab(_:)）")
+        let address = tab.url
         tab.runtime.close()
         tab.adapter.close()
         windowController.pageClosed(tab.page)
@@ -274,7 +288,7 @@ final class ChatTabs {
         tab.focusTask?.cancel()
         tab.focusTask = nil
         dropReadingPositions(of: tab)
-        let result = list.close(tab.id, url: nil)
+        let result = list.close(tab.id, url: address)
         precondition(result == .closed(selectionChanged: false), "不选中的标签页从列表里拿掉，选中项不变")
         tabs.removeAll { $0 === tab }
         tabLeft(tab)
@@ -465,28 +479,89 @@ final class ChatTabs {
     ///    没有它的空白网页显示着、遮挡还没盖上的时候；也不会像给显示着的页面开始遮挡那样动窗口的启动保护、写窗口的
     ///    “启动保护”那一行。它从没在窗口里显示过，不补排版（第一次加载有自己的遮挡）。
     ///    聚焦（窗口是 key 窗口才聚焦它，之前排着的作废）、记下可恢复的对话地址、阅读位置都由 select 照常做，这里不另外做。
+    /// 这条路和重新打开（reopenClosedTab()）共用（open(_:place:line:)），只有放在哪、加载什么、日志的说法不同。
     @discardableResult
     func newTab() -> ChatTab? {
-        guard let makeTab, let revealWindow else { preconditionFailure("新增标签页要有建法和找回窗口（AppDelegate 交进来）") }
+        open("新增", place: { make in add(make).map { ($0, nil) } }) { _ in "新增（现在 \(tabs.count) 个）" }
+    }
+
+    /// 新增（newTab()）和重新打开（reopenClosedTab()）共用的一条路，规则写在 newTab() 上：
+    /// 不打开（启动画面还在 → 写一行；已到上限 → 响一声、写一行）→ 窗口没显示就先找回 → 放进来（place）→ 写一行（line）→
+    /// 它的页面开始新标签页的遮挡 → 加载（place 给的地址；nil 是新对话页，WebRuntime.newChat()）→ 切换过去（select(_:)）。
+    /// 返回放进来的那一个；不打开时返回 nil。
+    /// - verb：日志里怎么说这件事（“新增”“重新打开”），不打开和先找回窗口的那几行用它。
+    /// - place：用 makeTab 建一个标签页放进这组（list 和 tabs 一起改、不选中、接好线、登记到网络状态），返回它和要加载的地址。
+    ///   前面看过没到上限，所以总能放进来；放不进来是用错了（断言）。
+    /// - line：放进来以后写的那一行（带它的标签，没有地址）。
+    private func open(_ verb: String, place: ((TabID) -> ChatTab) -> (tab: ChatTab, url: URL?)?,
+                      line: (ChatTab) -> String) -> ChatTab? {
+        guard let makeTab, let revealWindow else { preconditionFailure("\(verb)标签页要有建法和找回窗口（AppDelegate 交进来）") }
         guard !isLaunchScreenUp else {
-            logGroup("tabs", "不新增标签页：启动画面还在")
+            logGroup("tabs", "不\(verb)标签页：启动画面还在")
             return nil
         }
         guard !list.isFull else {
             beep()
-            logGroup("tabs", "不新增标签页：已到上限（\(list.capacity) 个）")
+            logGroup("tabs", "不\(verb)标签页：已到上限（\(list.capacity) 个）")
             return nil
         }
         if !windowIsVisible() {
-            logGroup("tabs", "新增标签页：窗口没有显示，先找回窗口")
+            logGroup("tabs", "\(verb)标签页：窗口没有显示，先找回窗口")
             revealWindow()
         }
-        guard let tab = add(makeTab) else { preconditionFailure("上面看过没到上限，找回窗口不加标签页") }
-        log(tab, "tabs", "新增（现在 \(tabs.count) 个）")
+        guard let (tab, url) = place(makeTab) else { preconditionFailure("上面看过没到上限，找回窗口不加标签页、不动记录") }
+        log(tab, "tabs", line(tab))
         windowController.beginNewTabCover(for: tab.page)
-        tab.runtime.newChat()
+        if let url { tab.runtime.load(url) } else { tab.runtime.newChat() }
         select(tab)
         return tab
+    }
+
+    // MARK: - 重新打开最近关闭的标签页
+
+    /// 有可以重新打开的记录（最近关闭的普通对话，见 TabList.recentlyClosed）。以后菜单项置灰、按键响不响应看它
+    /// （3.10、3.11）；到上限、启动画面还在另外看（list.isFull、isLaunchScreenUp），这里不算进去。
+    var canReopenClosedTab: Bool {
+        !list.recentlyClosed.isEmpty
+    }
+
+    /// 重新打开最近关闭的标签页（⇧⌘T 以后用的）：取最近关闭的那一条，新建一个标签页加载那个地址，放回它关闭时的位置
+    /// （那个位置已经没有了就放最右，规则在 TabList.reopen(select:)），切换过去。连着调用按关闭的倒序逐个打开。
+    /// 返回打开的那一个；不打开时返回 nil。只有接口（3.8）：应用里还没有地方调用（⇧⌘T 在 3.10、菜单在 3.11），只有测试调用。
+    /// 是重新加载这个地址，不是原样找回：新的标识、运行时、适配器、页面状态和网页视图，关掉的那个标签页不再用
+    /// （它已经关闭、释放）；未发送的草稿和关闭前的页面现场都不在。
+    ///
+    /// 不打开（列表、记录、选中项、窗口都不变，不找回窗口，不建网页；只写一行“[tabs] 不重新打开标签页：…”，不带标签）：
+    /// - 没有记录（canReopenClosedTab 为 false）：别的什么都不做，不响。先看这一条：没有记录时也不说启动画面、上限
+    ///   （和 TabList.reopen() 没有记录时不算到上限一样）。以后菜单项置灰、按键不响应；这一行只用来在诊断里看出“按了没反应”的原因。
+    /// - 启动画面还在：和 newTab() 一样，别的什么都不做；记录留着。
+    /// - 已到上限：和 newTab() 一样响一声（D8 的占位，以后换成上限提示）；不打开，记录留着（不消耗）。
+    ///
+    /// 打开的顺序和 newTab() 完全相同（同一条路 open(_:place:line:)，同一个建法 makeTab）：
+    /// 窗口没显示（隐藏、最小化）就写一行、先找回窗口 → 消耗这条记录，新建的标签页放回原位置，不选中，接好线、登记到网络状态
+    /// （reinsertClosedTab(_:)）→ 写一行“重新打开（第 k 个，现在 N 个，还有 M 条记录）”（带它的标签，没有地址）→
+    /// 它的页面开始新标签页的遮挡 → 加载记下的地址（WebRuntime.load(_:)，“[nav] 加载”那一行照常经 Redactor，没有对话 id）→
+    /// 切换过去（select(_:)）。
+    /// 它是新的网页视图，第一次显示：不补排版，没有留着的阅读位置（第一次加载由遮挡盖着）。聚焦（窗口是 key 窗口才聚焦）、
+    /// 记下可恢复的对话地址都由 select 照常做：这时它还没有地址（tab.url 是 nil），记下的不改；加载后报出对话地址时
+    /// 按平常的规则（urlChanged，它是选中的就记）。
+    @discardableResult
+    func reopenClosedTab() -> ChatTab? {
+        guard canReopenClosedTab else {
+            logGroup("tabs", "不重新打开标签页：没有记录")
+            return nil
+        }
+        return open("重新打开", place: reinsertClosedTab) { tab in
+            let position = (tabs.firstIndex { $0 === tab } ?? 0) + 1
+            return "重新打开（第 \(position) 个，现在 \(tabs.count) 个，还有 \(list.recentlyClosed.entries.count) 条记录）"
+        }
+    }
+
+    /// 取最近关闭的那条，用 make 建一个新的标签页放回记下的位置（list.reopen(select: false)：消耗这条记录、放回原位置或最右、
+    /// 不选中），tabs 放在同一个位置（adopt(_:_:)）。返回它和要加载的地址。没有记录、已到上限时什么都不放，返回 nil（记录留着）。
+    private func reinsertClosedTab(_ make: (TabID) -> ChatTab) -> (tab: ChatTab, url: URL?)? {
+        guard case .reopened(let id, let url) = list.reopen(select: false) else { return nil }
+        return (adopt(id, make), url)
     }
 
     // MARK: - 对选中的标签页做的操作
