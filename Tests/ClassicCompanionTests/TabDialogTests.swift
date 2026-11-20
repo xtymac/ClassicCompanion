@@ -11,6 +11,8 @@ import CompanionCore
 /// - 排着、放出来还没显示、显示着时关闭：按取消回答（提示框结束、确认框 false、文件选择 nil），显示着的叫它收起；
 /// - 关闭以后来的：马上按取消回答，不写日志（3.1）；
 /// - 不选中的标签页要开弹窗：不开。
+/// - 标签页开着的弹窗（窗口在屏幕上）的对话框属于弹窗：马上显示，不跟着标签页排着；关闭标签页时照样取消。
+/// - prompt() 不支持：哪里调用都马上得到 null（没有实现那个代理方法）。
 /// 每个请求 WebKit 的回调正好调用一次：两种核对——像 WebKit 那样调用带回调的代理方法（经 WKUIDelegate 协议），数回调；
 /// 真的网页（本地 html，不联网、不放进窗口）里调用 alert()、confirm()、点文件输入框，看网页拿到的回答、接着往下跑。
 /// 真的显示（模态框、文件选择面板）换成记录（DialogDesk），测试不弹模态框、不开面板、不开窗口。
@@ -1002,6 +1004,42 @@ final class TabDialogTests: XCTestCase {
         rig.tabs.closeTab(rig.first)
         XCTAssertEqual(closed, 1)
         XCTAssertTrue(rig.lines(since: mark).contains("[web] 关闭网页：停止加载，关掉 1 个弹窗 【标签1】"), "\(rig.lines(since: mark))")
+    }
+
+    // MARK: - prompt（不支持）
+
+    /// 网页要求输入文字（prompt()）不支持：运行时没有实现那个代理方法（WebKit 当作点了“取消”）。真的网页里调用 prompt()：
+    /// 选中的 1、不选中的 2、2 开着的弹窗（窗口在屏幕上）、关闭以后的 2，网页都在 1 秒内拿到 null，接着往下跑；
+    /// 什么都不显示、不排着、不写日志。
+    func testPromptIsAnsweredAsCancelledAtOnceEverywhere() async throws {
+        let rig = make()
+        let b = rig.add()
+        let desk = DialogDesk()
+        desk.install(on: rig.first, "1")
+        desk.install(on: b, "2")
+        let selector = NSSelectorFromString("webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:")
+        XCTAssertFalse(rig.first.runtime.responds(to: selector), "没有实现：WebKit 不调用代理")
+        await rig.loadPage(rig.first, "<html><body>x</body></html>")
+        await rig.loadPage(b, "<html><body>x</body></html>")
+        let (popupWeb, _) = try await popup(on: b, PopupScreen())
+        let js = "String(prompt('输入', '默认')) + ' 之后'"
+        let mark = rig.mark()
+
+        let selected = try await pageValue(rig.first, js)
+        let background = try await pageValue(b, js)
+        let inPopup = try await popupValue(popupWeb, js)
+        XCTAssertEqual(selected, "null 之后", "选中的")
+        XCTAssertEqual(background, "null 之后", "不选中的")
+        XCTAssertEqual(inPopup, "null 之后", "弹窗")
+        XCTAssertEqual(b.runtime.heldDialogCount, 0)
+
+        rig.tabs.closeTab(b)
+        let closed = try await pageValue(b, js)
+        XCTAssertEqual(closed, "null 之后", "关闭以后")
+        let closedPopup = try await popupValue(popupWeb, js)
+        XCTAssertEqual(closedPopup, "null 之后", "关闭以后的弹窗")
+        XCTAssertEqual(desk.presented, [])
+        XCTAssertEqual(dialogLines(rig, since: mark), ["[web] 关闭网页：停止加载，关掉 1 个弹窗 【标签2】"])
     }
 
     /// 不选中的标签页要开弹窗（聊天地址，原来会开一个登录弹窗那样的窗口）：不开，返回 nil，应用的窗口数不变，
