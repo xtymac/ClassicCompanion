@@ -5,7 +5,7 @@ import CompanionCore
 /// 上次的页面路径（lastPath）和排着的聚焦输入框任务（focusTask）。
 /// 这里只放东西，不做事：正式运行时用 make(id:diagnostics:settings:) 建（启动时的那个在 AppDelegate 里），
 /// 测试也可以把建好的运行时和适配器交给 init；lastPath 和 focusTask 由 ChatTabs 的 urlChanged、focusInputSoon 改，
-/// 和它们原来在 AppDelegate 里时一样。
+/// 和它们原来在 AppDelegate 里时一样。阅读位置要用的几样（url、mainFrameCommits、pendingReadingRestore）也由 ChatTabs 改。
 /// 应用里现在只有一个（启动时建的那个）。标题和排好版的大小以后再加。
 @MainActor
 final class ChatTab {
@@ -19,6 +19,15 @@ final class ChatTab {
     var lastPath: String?
     /// 排着的聚焦输入框任务。再次请求聚焦时先取消它；关闭标签页时也取消（ChatTabs.close(_:)）。
     var focusTask: Task<Void, Never>?
+    /// 这一页现在的地址：运行时最近一次报的（含 query），ChatTabs.urlChanged 记。阅读位置的连续性规则拿它和记下时的比。
+    var url: URL?
+    /// 这一页的主框架提交过几次（每次提交，网页里就换了一份文档），ChatTabs 在运行时报提交时加一。
+    /// 阅读位置的连续性规则用它看记下以后有没有提交过。
+    var mainFrameCommits = 0
+    /// 排版变化前记下的阅读位置，到该放回时这一页不是选中的：留在这里，等它再显示并按当前大小排好版
+    /// （ChatTabs.tabShownAndLaidOut(_:)）再放回。一页最多一个（新的顶掉旧的，旧的丢弃）。
+    /// 连续性规则说丢弃时（这一页在后台换了页面、提交过）当场丢弃并清掉网页里的；关闭标签页时丢掉（不碰网页）。
+    var pendingReadingRestore: ReadingHold?
 
     /// 这个标签页的日志带的标签：就是它的运行时的（正式运行时是 id；测试里单独建的运行时不带，是 nil）。
     /// ChatTabs 为这个标签页写日志时用它（见 TabLog）。

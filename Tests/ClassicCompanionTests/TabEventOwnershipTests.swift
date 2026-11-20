@@ -535,27 +535,56 @@ final class TabEventOwnershipTests: XCTestCase {
 
     // MARK: 13. 排版变化前后的阅读位置
 
-    /// 记下和放回都交给记下时选中的 B。
+    /// 记下和放回都交给记下时选中的 B，放回的是那一次的编号。
     func testTheReadingPositionIsRestoredToTheTabThatHeldIt() {
         let rig = makeRig()
         let calls = rig.recordReadingPosition()
         rig.controller.onWillChangeLayout?()
         rig.controller.onDidChangeLayout?()
         XCTAssertEqual(calls.list, ["记下 B", "放回 B"])
+        XCTAssertEqual(calls.tokens, [1, 1])
     }
 
-    /// B 记下之后选中了 A：放回给 B，A 什么都不收到。
-    func testARestoreAfterTheSelectionMovedGoesToTheTabThatHeld() {
+    /// A 记下之后选中了 B（D2）：不马上放回，也不丢，留在 A 上（写一行带 A 的日志）；B 什么都不收到，窗口不变。
+    /// A → B → A：A 又选中、排好版（tabShownAndLaidOut）时才放回给 A，是那一次的编号；之后再调一次什么都不做。
+    /// 没选中时调、对没有留着的标签页调，都什么都不做。
+    func testARestoreForATabThatIsNoLongerSelectedWaitsUntilItIsShownAndLaidOut() throws {
         let rig = makeRig()
+        rig.a.runtime.onURLChange?(chat)
         let calls = rig.recordReadingPosition()
-        rig.controller.onWillChangeLayout?()
         rig.tabs.selectForTesting(rig.a)
+        rig.controller.onWillChangeLayout?()
+        rig.tabs.selectForTesting(rig.b)
+        let before = rig.snapshot()
         rig.controller.onDidChangeLayout?()
-        XCTAssertEqual(calls.list, ["记下 B", "放回 B"])
+        XCTAssertEqual(calls.list, ["记下 A"])
+        XCTAssertEqual(rig.a.pendingReadingRestore?.token, 1)
+        XCTAssertNil(rig.b.pendingReadingRestore)
+        XCTAssertEqual(rig.lines.last, "[reading] 阅读位置：这一页没有显示，记下的位置留到它再显示并排好版时放回")
+        let after = rig.snapshot()
+        XCTAssertEqual(after.window, before.window)
+        XCTAssertEqual(after.displayed, before.displayed)
+        XCTAssertEqual(after.calls, before.calls)
+
+        rig.tabs.tabShownAndLaidOut(rig.a)
+        rig.tabs.tabShownAndLaidOut(rig.b)
+        XCTAssertEqual(calls.list, ["记下 A"], "A 不是选中的：不放回；B 没有留着的")
+        XCTAssertNotNil(rig.a.pendingReadingRestore)
+
+        let pending = try XCTUnwrap(rig.a.pendingReadingRestore)
+        rig.tabs.selectForTesting(rig.a)
+        rig.tabs.tabShownAndLaidOut(rig.a)
+        XCTAssertEqual(calls.list, ["记下 A", "放回 A"])
+        XCTAssertEqual(calls.tokens, [1, 1])
+        XCTAssertNil(rig.a.pendingReadingRestore)
+        XCTAssertTrue(pending.isSettled)
+        XCTAssertEqual(rig.lines.last, "[reading] 阅读位置：这一页又显示并排好版，放回留着的位置")
+        rig.tabs.tabShownAndLaidOut(rig.a)
+        XCTAssertEqual(calls.list, ["记下 A", "放回 A"], "只放回一次")
     }
 
-    /// B 记下之后选中了 A，B 在后台换了页面：放回作废，谁都不放回（不把旧对话的位置放到别的对话上）。
-    /// 只是 query 变了不算换页面，照常放回。
+    /// B 记下之后选中了 A，B 在后台换到别的对话：换的那一刻就丢弃（网页里丢掉那一次），排版结束时什么都不做，
+    /// 不把旧对话的位置放到别的对话上。只是 query 变了不算换页面：留着，B 再显示并排好版时放回。
     func testARestoreForABackgroundTabThatNavigatedIsDiscarded() {
         let rig = makeRig()
         rig.b.runtime.onURLChange?(chat)
@@ -563,18 +592,27 @@ final class TabEventOwnershipTests: XCTestCase {
         rig.controller.onWillChangeLayout?()
         rig.tabs.selectForTesting(rig.a)
         rig.b.runtime.onURLChange?(other)
+        XCTAssertEqual(calls.list, ["记下 B", "丢弃 B"])
+        XCTAssertEqual(calls.tokens, [1, 1])
+        rig.b.runtime.onURLChange?(URL(string: "https://chatgpt.com/c/ghi")!)
+        rig.commit(rig.b.runtime)
         rig.controller.onDidChangeLayout?()
-        XCTAssertEqual(calls.list, ["记下 B"])
+        XCTAssertEqual(calls.list, ["记下 B", "丢弃 B"], "丢弃过的那一次之后不再丢第二遍")
+        XCTAssertNil(rig.b.pendingReadingRestore)
 
         rig.tabs.selectForTesting(rig.b)
         rig.controller.onWillChangeLayout?()
         rig.tabs.selectForTesting(rig.a)
-        rig.b.runtime.onURLChange?(URL(string: "https://chatgpt.com/c/def?model=x")!)
+        rig.b.runtime.onURLChange?(URL(string: "https://chatgpt.com/c/ghi?model=x")!)
         rig.controller.onDidChangeLayout?()
-        XCTAssertEqual(calls.list, ["记下 B", "记下 B", "放回 B"])
+        XCTAssertEqual(calls.list, ["记下 B", "丢弃 B", "记下 B"])
+        rig.tabs.selectForTesting(rig.b)
+        rig.tabs.tabShownAndLaidOut(rig.b)
+        XCTAssertEqual(calls.list, ["记下 B", "丢弃 B", "记下 B", "放回 B"])
+        XCTAssertEqual(calls.tokens, [1, 1, 2, 2])
     }
 
-    /// B 记下之后、换回 B 之前，B 换到别的对话又换回原来的对话：路径一样，但换过页面，放回作废（看的是导航代号，不只看路径）。
+    /// B 记下之后、换回 B 之前，B 换到别的对话又换回原来的对话：换走那一刻就丢弃了，换回来也不再放回。
     func testARestoreForABackgroundTabThatNavigatedAwayAndBackIsDiscarded() {
         let rig = makeRig()
         rig.b.runtime.onURLChange?(chat)
@@ -585,7 +623,9 @@ final class TabEventOwnershipTests: XCTestCase {
         rig.b.runtime.onURLChange?(chat)
         XCTAssertEqual(rig.b.lastPath, "chatgpt.com/c/abc")
         rig.controller.onDidChangeLayout?()
-        XCTAssertEqual(calls.list, ["记下 B"])
+        rig.tabs.selectForTesting(rig.b)
+        rig.tabs.tabShownAndLaidOut(rig.b)
+        XCTAssertEqual(calls.list, ["记下 B", "丢弃 B"])
     }
 
     /// B 记下之后选中了 A、B 被拿掉：放回作废，不崩溃。
@@ -597,22 +637,66 @@ final class TabEventOwnershipTests: XCTestCase {
         rig.tabs.removeForTesting(rig.b)
         rig.controller.onDidChangeLayout?()
         XCTAssertEqual(calls.list, ["记下 B"])
+        XCTAssertNil(rig.b.pendingReadingRestore, "不在这组里的不留着")
+        XCTAssertFalse(rig.lines.contains { $0.contains("阅读位置") })
     }
 
-    /// 定下来的行为（和一个标签页时一样）：B 记下之后自己换了页面、仍是选中的，照原来放回给 B。
-    /// 新对话拿到对话地址（/ → /c/…）时还是同一个对话；换到别的对话时网页里的脚本自己不放回已经不在页面上的内容。
-    func testARestoreForTheStillSelectedTabIsSentEvenIfItNavigated() {
+    /// A 留着阅读位置时被拿掉（没关闭，运行时的回调还接着）：之后它的提交、换页面、再显示都不碰它的网页，也不写日志。
+    func testLateEventsOfARemovedTabWithAPendingPositionDoNothing() {
+        let rig = makeRig()
+        rig.a.runtime.onURLChange?(chat)
+        let calls = rig.recordReadingPosition()
+        makePending(rig, on: rig.a)
+        let lines = rig.lines
+        let a = rig.a
+        rig.tabs.removeForTesting(a)
+        rig.commit(rig.runtimeA)
+        rig.runtimeA.onURLChange?(other)
+        rig.tabs.tabShownAndLaidOut(a)
+        XCTAssertEqual(calls.list, ["记下 A"])
+        XCTAssertEqual(a.mainFrameCommits, 0)
+        XCTAssertEqual(rig.lines.filter { $0.contains("阅读位置") }, lines.filter { $0.contains("阅读位置") })
+    }
+
+    /// B 排版中记下（选中的），A 在后台换对话、提交：只看 A 自己的，B 的那一次不受影响，照常放回给 B。
+    func testABackgroundTabsNavigationLeavesTheSelectedTabsPositionAlone() {
+        let rig = makeRig()
+        rig.b.runtime.onURLChange?(chat)
+        rig.a.runtime.onURLChange?(chat)
+        let calls = rig.recordReadingPosition()
+        rig.controller.onWillChangeLayout?()
+        rig.a.runtime.onURLChange?(other)
+        rig.a.runtime.onURLChange?(URL(string: "https://chatgpt.com/c/ghi")!)
+        rig.commit(rig.runtimeA)
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 B", "放回 B"])
+        XCTAssertFalse(rig.lines.contains { $0.contains("阅读位置") })
+    }
+
+    /// 仍是选中的标签页也按连续性规则（3.2 起；阶段 2 时照样放回，是临时例外）：
+    /// B 记下之后从新对话页一步拿到对话地址（/ → /c/…）：放回给 B，但要网页确认（地址分不清是不是同一个对话）；
+    /// B 记下之后换到别的对话：换的那一刻丢弃，排版结束时什么都不做。
+    func testTheStillSelectedTabFollowsTheContinuityRule() {
         let rig = makeRig()
         rig.b.runtime.onURLChange?(WebRuntime.homeURL)
         let calls = rig.recordReadingPosition()
         rig.controller.onWillChangeLayout?()
         rig.b.runtime.onURLChange?(chat)
         rig.controller.onDidChangeLayout?()
-        XCTAssertEqual(calls.list, ["记下 B", "放回 B"])
+        XCTAssertEqual(calls.list, ["记下 B", "放回 B（要网页确认）"])
+
+        rig.controller.onWillChangeLayout?()
+        rig.b.runtime.onURLChange?(other)
+        XCTAssertEqual(calls.list, ["记下 B", "放回 B（要网页确认）", "记下 B", "丢弃 B"])
+        XCTAssertEqual(rig.lines.last, "[reading] 阅读位置：丢弃排版前记下的位置（换了对话）")
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 B", "放回 B（要网页确认）", "记下 B", "丢弃 B"])
+        XCTAssertEqual(calls.tokens, [1, 1, 2, 2])
     }
 
-    /// 套着的两次排版变化（拖边途中按切换键）：记下、记下、放回、放回，后进先出。中途选中了 A：
-    /// 后记下的那次（A 的）放回给 A，先记下的那次（B 的）放回给 B。都在同一个标签页上时，四次都给它（一个标签页时就是原来的）。
+    /// 套着的两次排版变化（拖边途中按切换键）：记下、记下、放回、放回，后进先出。都在同一个标签页上时，四次都给它
+    /// （一个标签页时就是原来的）。中途选中了 A：后记下的那次（A 的）放回给 A；先记下的那次（B 的）到时 B 不是选中的，
+    /// 留在 B 上（D2），B 再显示并排好版时放回。
     func testNestedLayoutChangesPairLastInFirstOut() {
         let rig = makeRig()
         let calls = rig.recordReadingPosition()
@@ -621,14 +705,191 @@ final class TabEventOwnershipTests: XCTestCase {
         rig.controller.onDidChangeLayout?()
         rig.controller.onDidChangeLayout?()
         XCTAssertEqual(calls.list, ["记下 B", "记下 B", "放回 B", "放回 B"])
+        XCTAssertEqual(calls.tokens, [1, 2, 2, 1])
 
         calls.list = []
+        calls.tokens = []
         rig.controller.onWillChangeLayout?()
         rig.tabs.selectForTesting(rig.a)
         rig.controller.onWillChangeLayout?()
         rig.controller.onDidChangeLayout?()
         rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 B", "记下 A", "放回 A"])
+        XCTAssertEqual(calls.tokens, [3, 4, 4])
+        XCTAssertEqual(rig.b.pendingReadingRestore?.token, 3)
+        rig.tabs.selectForTesting(rig.b)
+        rig.tabs.tabShownAndLaidOut(rig.b)
         XCTAssertEqual(calls.list, ["记下 B", "记下 A", "放回 A", "放回 B"])
+        XCTAssertEqual(calls.tokens, [3, 4, 4, 3])
+    }
+
+    /// A 记下、留着（不选中）期间在后台换了页面：按规则看。
+    /// - 换到别的对话：当场丢弃留着的（网页里按编号丢掉，写一行带 A 的日志），A 再显示也不放回；窗口不变。
+    func testAPendingPositionIsDroppedWhenItsTabChangesConversationInTheBackground() {
+        let rig = makeRig()
+        rig.a.runtime.onURLChange?(chat)
+        let calls = rig.recordReadingPosition()
+        makePending(rig, on: rig.a)
+        let before = rig.snapshot()
+        rig.a.runtime.onURLChange?(other)
+        XCTAssertEqual(calls.list, ["记下 A", "丢弃 A"])
+        XCTAssertEqual(calls.tokens, [1, 1])
+        XCTAssertNil(rig.a.pendingReadingRestore)
+        XCTAssertEqual(rig.lines.last, "[reading] 阅读位置：丢弃排版前记下的位置（换了对话）")
+        let after = rig.snapshot()
+        XCTAssertEqual(after.window, before.window)
+        XCTAssertEqual(after.displayed, before.displayed)
+        rig.tabs.selectForTesting(rig.a)
+        rig.tabs.tabShownAndLaidOut(rig.a)
+        XCTAssertEqual(calls.list, ["记下 A", "丢弃 A"])
+    }
+
+    /// - A 的主框架提交了（重新加载、整页导航）：当场丢弃，A 自己的页面状态照常记下提交。
+    func testAPendingPositionIsDroppedWhenItsTabCommitsInTheBackground() {
+        let rig = makeRig()
+        rig.a.runtime.onURLChange?(chat)
+        let calls = rig.recordReadingPosition()
+        makePending(rig, on: rig.a)
+        rig.commit(rig.runtimeA)
+        XCTAssertEqual(calls.list, ["记下 A", "丢弃 A"])
+        XCTAssertNil(rig.a.pendingReadingRestore)
+        XCTAssertTrue(rig.a.page.hasCommittedPage, "A 的页面状态照常记下提交")
+        XCTAssertEqual(rig.a.mainFrameCommits, 1)
+        XCTAssertEqual(rig.b.mainFrameCommits, 0)
+        XCTAssertEqual(rig.lines.last, "[reading] 阅读位置：丢弃排版前记下的位置（页面重新加载过）")
+    }
+
+    /// - 只变了 query：留着，A 再显示并排好版时放回。
+    /// - 新对话页一步拿到对话地址（第一条消息发出后在后台拿到地址）：留着，A 再显示时放回、要网页确认。
+    /// - 新对话页换了两次页面到对话：丢弃（不是“拿到地址”那一步）。
+    func testAPendingPositionFollowsTheRuleForQueryAndNewChatChanges() {
+        let rig = makeRig()
+        rig.a.runtime.onURLChange?(chat)
+        let calls = rig.recordReadingPosition()
+        makePending(rig, on: rig.a)
+        rig.a.runtime.onURLChange?(URL(string: "https://chatgpt.com/c/abc?model=x")!)
+        XCTAssertNotNil(rig.a.pendingReadingRestore)
+        rig.tabs.selectForTesting(rig.a)
+        rig.tabs.tabShownAndLaidOut(rig.a)
+        XCTAssertEqual(calls.list, ["记下 A", "放回 A"])
+
+        calls.list = []
+        rig.a.runtime.onURLChange?(WebRuntime.homeURL)
+        makePending(rig, on: rig.a)
+        rig.a.runtime.onURLChange?(other)
+        XCTAssertNotNil(rig.a.pendingReadingRestore, "/ → /c/…：留着，等网页确认")
+        rig.tabs.selectForTesting(rig.a)
+        rig.tabs.tabShownAndLaidOut(rig.a)
+        XCTAssertEqual(calls.list, ["记下 A", "放回 A（要网页确认）"])
+
+        calls.list = []
+        rig.a.runtime.onURLChange?(WebRuntime.homeURL)
+        makePending(rig, on: rig.a)
+        rig.a.runtime.onURLChange?(chat)
+        rig.a.runtime.onURLChange?(other)
+        XCTAssertEqual(calls.list, ["记下 A", "丢弃 A"])
+        XCTAssertNil(rig.a.pendingReadingRestore)
+        XCTAssertEqual(rig.lines.last, "[reading] 阅读位置：丢弃排版前记下的位置（新对话页之后换了不止一次页面）")
+    }
+
+    /// A 带着留着的阅读位置被关闭：丢掉留着的，不碰 A 的网页（不放回、不丢弃，运行时已经关了），之后什么都不再对它做。
+    /// A 在排版中记下、还没结束时被关闭：排版结束时也什么都不做。B 照常。
+    func testClosingATabDropsItsPendingAndInFlightPositionsWithoutTouchingItsPage() throws {
+        let rig = makeRig()
+        rig.a.runtime.onURLChange?(chat)
+        let calls = rig.recordReadingPosition()
+        makePending(rig, on: rig.a)
+        let pending = try XCTUnwrap(rig.a.pendingReadingRestore)
+        let a = rig.a
+        let urlChange = rig.runtimeA.onURLChange
+        rig.tabs.close(a)
+        XCTAssertNil(a.pendingReadingRestore)
+        XCTAssertTrue(pending.isSettled)
+        XCTAssertEqual(calls.list, ["记下 A"], "关闭时不碰 A 的网页")
+        urlChange?(other)
+        rig.tabs.tabShownAndLaidOut(a)
+        XCTAssertEqual(calls.list, ["记下 A"], "关闭以后的地址变化、再显示都不做事")
+
+        let rig2 = makeRig()
+        let calls2 = rig2.recordReadingPosition()
+        rig2.tabs.selectForTesting(rig2.a)
+        rig2.controller.onWillChangeLayout?()
+        rig2.controller.onWillChangeLayout?()
+        rig2.tabs.selectForTesting(rig2.b)
+        let a2 = rig2.a
+        rig2.tabs.close(a2)
+        rig2.controller.onDidChangeLayout?()
+        rig2.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls2.list, ["记下 A", "记下 A"])
+        XCTAssertNil(a2.pendingReadingRestore)
+
+        rig2.controller.onWillChangeLayout?()
+        rig2.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls2.list, ["记下 A", "记下 A", "记下 B", "放回 B"], "B 照常")
+    }
+
+    /// 丢弃只动那一次（编号），不动更新的：
+    /// - 套着记下两次、都到 A 不选中时才结束：先结束的是后记下的（编号大），留着；再结束的是先记下的（编号小），丢弃它，
+    ///   留着的还是更新的那次。A 再显示时放回更新的那次。
+    /// - 已经留着一次时又有更新的一次要留：丢弃旧的，留新的。
+    func testDiscardingAnOlderPositionLeavesTheNewerOneAlone() {
+        let rig = makeRig()
+        rig.a.runtime.onURLChange?(chat)
+        let calls = rig.recordReadingPosition()
+        rig.tabs.selectForTesting(rig.a)
+        rig.controller.onWillChangeLayout?()
+        rig.controller.onWillChangeLayout?()
+        rig.tabs.selectForTesting(rig.b)
+        rig.controller.onDidChangeLayout?()
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 A", "记下 A", "丢弃 A"])
+        XCTAssertEqual(calls.tokens, [1, 2, 1])
+        XCTAssertEqual(rig.a.pendingReadingRestore?.token, 2)
+        XCTAssertEqual(Array(rig.lines.suffix(2)), [
+            "[reading] 阅读位置：这一页没有显示，记下的位置留到它再显示并排好版时放回",
+            "[reading] 阅读位置：丢弃排版前记下的位置（这一页留着更新的一次）",
+        ])
+
+        makePending(rig, on: rig.a)
+        XCTAssertEqual(calls.list, ["记下 A", "记下 A", "丢弃 A", "记下 A", "丢弃 A"])
+        XCTAssertEqual(calls.tokens, [1, 2, 1, 3, 2])
+        XCTAssertEqual(rig.a.pendingReadingRestore?.token, 3)
+        XCTAssertTrue(rig.lines.contains("[reading] 阅读位置：丢弃排版前记下的位置（这一页有了更新的一次）"))
+        rig.tabs.selectForTesting(rig.a)
+        rig.tabs.tabShownAndLaidOut(rig.a)
+        XCTAssertEqual(calls.list.last, "放回 A")
+        XCTAssertEqual(calls.tokens.last, 3)
+    }
+
+    /// 放回和再显示时都自己再按规则看一遍，不只靠换页面时那一次：状态变了而没经过 urlChanged（这里直接改，应用里不会这样）
+    /// 也照样丢弃。
+    func testRestoreAndShowRecheckTheRuleThemselves() {
+        let rig = makeRig()
+        rig.b.runtime.onURLChange?(chat)
+        let calls = rig.recordReadingPosition()
+        rig.controller.onWillChangeLayout?()
+        rig.b.url = other
+        rig.b.adapter.invalidate()
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(calls.list, ["记下 B", "丢弃 B"])
+
+        calls.list = []
+        rig.a.runtime.onURLChange?(chat)
+        makePending(rig, on: rig.a)
+        rig.a.mainFrameCommits += 1
+        rig.tabs.selectForTesting(rig.a)
+        rig.tabs.tabShownAndLaidOut(rig.a)
+        XCTAssertEqual(calls.list, ["记下 A", "丢弃 A"])
+        XCTAssertNil(rig.a.pendingReadingRestore)
+    }
+
+    /// 让 tab 记下一次、在它不选中时结束排版：留在它上面。之后选中的是 B。
+    private func makePending(_ rig: TwoTabs, on tab: ChatTab) {
+        rig.tabs.selectForTesting(tab)
+        rig.controller.onWillChangeLayout?()
+        rig.tabs.selectForTesting(tab === rig.b ? rig.a : rig.b)
+        rig.controller.onDidChangeLayout?()
+        rig.tabs.selectForTesting(rig.b)
     }
 
     // MARK: 14. 设置：每个标签页都改
@@ -824,10 +1085,15 @@ private struct EvidenceSpy: EvidenceTarget {
     func pauseAllMediaPlayback() async { await steps.record("\(name) pauseAll") }
 }
 
-/// 记下、放回阅读位置的记录。
+/// 记下、放回、丢弃阅读位置的记录。
 @MainActor
 private final class ReadingPositionCalls {
+    /// 按发生的先后：“记下 B”“放回 A”“放回 A（要网页确认）”“丢弃 B”。
     var list: [String] = []
+    /// 和 list 一一对应的编号：记下的是这次发出的编号，放回、丢弃的是交过来的编号。
+    var tokens: [Int] = []
+    /// 发过几个编号（两个标签页共用一个数，从 1 起）。
+    var issued = 0
 }
 
 /// 一个运行时发出的加载请求。
@@ -979,11 +1245,23 @@ private final class TwoTabs {
         runtime === b.runtime ? "B" : runtime === runtimeA ? "A" : "?"
     }
 
-    /// 把记下、放回阅读位置换成记录（“记下 B”“放回 A”），返回记录。
+    /// 把记下、放回、丢弃阅读位置换成记录（“记下 B”“放回 A”“放回 A（要网页确认）”“丢弃 B”，和各自的编号），返回记录。
     func recordReadingPosition() -> ReadingPositionCalls {
         let calls = ReadingPositionCalls()
-        tabs.holdReadingPosition = { [weak self] runtime in calls.list.append("记下 \(self?.name(runtime) ?? "?")") }
-        tabs.restoreReadingPosition = { [weak self] runtime in calls.list.append("放回 \(self?.name(runtime) ?? "?")") }
+        tabs.holdReadingPosition = { [weak self] runtime in
+            calls.issued += 1
+            calls.list.append("记下 \(self?.name(runtime) ?? "?")")
+            calls.tokens.append(calls.issued)
+            return calls.issued
+        }
+        tabs.restoreReadingPosition = { [weak self] runtime, token, confirm in
+            calls.list.append("放回 \(self?.name(runtime) ?? "?")" + (confirm ? "（要网页确认）" : ""))
+            calls.tokens.append(token)
+        }
+        tabs.discardReadingPosition = { [weak self] runtime, token in
+            calls.list.append("丢弃 \(self?.name(runtime) ?? "?")")
+            calls.tokens.append(token)
+        }
         return calls
     }
 

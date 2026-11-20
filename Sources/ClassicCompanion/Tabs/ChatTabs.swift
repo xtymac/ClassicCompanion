@@ -49,10 +49,14 @@ final class ChatTabs {
     /// 窗口是不是 key 窗口（加载完成时据此决定要不要聚焦）。就是 windowController.isKey；
     /// 只有测试换它：测试不显示窗口，窗口不会成为 key 窗口。
     var windowIsKey: @MainActor () -> Bool
-    /// 记下、放回阅读位置：就是运行时的 holdReadingPosition()、restoreReadingPosition()。
-    /// 只有测试换它们：网页里没有页面，看不到效果，换成记录才看得出给了哪个标签页。
-    var holdReadingPosition: @MainActor (WebRuntime) -> Void = { $0.holdReadingPosition() }
-    var restoreReadingPosition: @MainActor (WebRuntime) -> Void = { $0.restoreReadingPosition() }
+    /// 记下、放回、丢弃阅读位置：就是运行时的 holdReadingPosition()（返回这一次的编号）、
+    /// restoreReadingPosition(_:confirmingContinuation:)（编号、要不要网页确认）、discardReadingPosition(_:)（编号）。
+    /// 只有测试换它们：网页里没有页面，看不到效果，换成记录才看得出给了哪个标签页、哪一次。
+    var holdReadingPosition: @MainActor (WebRuntime) -> Int = { $0.holdReadingPosition() }
+    var restoreReadingPosition: @MainActor (WebRuntime, Int, Bool) -> Void = {
+        $0.restoreReadingPosition($1, confirmingContinuation: $2)
+    }
+    var discardReadingPosition: @MainActor (WebRuntime, Int) -> Void = { $0.discardReadingPosition($1) }
     /// 证据采集和媒体实验对一个标签页做的事交给谁。就是 TabEvidenceTarget(tab:)（它的适配器和网页视图）；
     /// 只有测试换它：真的步骤要真实页面，换成记录才能在步骤之间换选中的标签页、看每一步对哪个标签页做。
     var evidenceTarget: @MainActor (ChatTab) -> any EvidenceTarget = { TabEvidenceTarget(tab: $0) }
@@ -61,7 +65,8 @@ final class ChatTabs {
     private var focusGeneration = 0
     /// 上一次读到的网页媒体状态（每秒读一次，只用来写“变了”的日志）。原来在 AppDelegate 上。
     private let media = WebMediaMonitor()
-    /// 排版变化前记下阅读位置、还没放回的，按记下的先后。见 holdReadingPositionForLayout()。
+    /// 排版变化前记下阅读位置、窗口还没说排版结束的，按记下的先后（和窗口的前后两个回调一一配对）。
+    /// 其中已经丢弃的（isSettled）留在原位、到时什么都不做。见 holdReadingPositionForLayout()。
     private var readingHolds: [ReadingHold] = []
 
     /// list：启动时的列表，只有 tab 一个、并且选中它（tab 的标识就是从它来的）。
@@ -171,8 +176,9 @@ final class ChatTabs {
     ///
     /// 不取消的：进行中的新对话、证据采集和媒体实验、每秒的媒体状态和页面变化后的媒体日志。它们在下一次 holds 检查处停下
     /// （不加载、不聚焦、不写诊断；运行时已关闭，加载也发不出去）；在这之前还拿着这个标签页，所以释放要等它们正在等的那一步
-    /// 网页脚本返回或超时。排版前记下的阅读位置留在 readingHolds 里（记下和放回按先后一一配对，不能拿掉一条），
-    /// 放回时因为它不在这组里而作废。
+    /// 网页脚本返回或超时。
+    /// 阅读位置：留着等再显示的那一次丢掉（pendingReadingRestore）；排版中记下的留在 readingHolds 里（记下和放回按先后
+    /// 一一配对，不能拿掉一条），到时因为这一页不在这组里而作废。都不碰网页：运行时已经关闭，网页随标签页一起释放。
     func close(_ tab: ChatTab) {
         guard holds(tab) else { return }
         precondition(!isSelected(tab), "关选中的标签页要先切换到别的标签页（切换入口以后做）")
@@ -180,6 +186,8 @@ final class ChatTabs {
         windowController.pageClosed(tab.page)
         tab.focusTask?.cancel()
         tab.focusTask = nil
+        tab.pendingReadingRestore?.isSettled = true
+        tab.pendingReadingRestore = nil
         let result = list.close(tab.id, url: nil)
         precondition(result == .closed(selectionChanged: false), "不选中的标签页从列表里拿掉，选中项不变")
         tabs.removeAll { $0 === tab }
@@ -217,7 +225,12 @@ final class ChatTabs {
         tab.runtime.onLoadFailed = { [weak self] in self?.windowController.endLaunchScreen("加载失败", for: page) }
         tab.runtime.onLoadProblemChange = { [weak self] status in self?.windowController.showLoadProblem(status, for: page) }
         // 提交时先告诉窗口：到时限后还在的启动画面和留着的提示要等加载完成（或提交后 1 秒）再撤。
-        tab.runtime.onMainFrameCommitted = { [weak self] in self?.windowController.pageDidCommit(page) }
+        // 再记下这一页提交过：网页里换了一份文档，之前记下的阅读位置都不再属于它（mainFrameCommitted(_:)）。
+        tab.runtime.onMainFrameCommitted = { [weak self, weak tab] in
+            guard let self else { return }
+            self.windowController.pageDidCommit(page)
+            if let tab { self.mainFrameCommitted(tab) }
+        }
     }
 
     /// ⌘R 和提示里的“重新加载”（窗口的按钮）：按下这一刻选中的标签页重新加载。提示显示的是窗口显示着的页面的状态，
@@ -230,8 +243,10 @@ final class ChatTabs {
     /// （两行日志都带它的标签）；记下可恢复的对话地址跟着选中的标签页，只有它是选中的才记。
     /// tab 已经不在这组里（关闭或拿掉了）就什么都不做：不改它的路径和适配器代号，不写日志。
     /// 关闭时运行时已经断开这个回调（WebRuntime.close()），这里是这组自己的规则，拿掉而没关闭的（removeForTesting）也一样。
+    /// 路径变了：这一页还没放回的阅读位置按连续性规则再看一遍（readingPageChanged(_:)，选没选中都一样）。
     private func urlChanged(_ url: URL?, for tab: ChatTab) {
         guard holds(tab) else { return }
+        tab.url = url
         if isSelected(tab), let restorable = NavigationPolicy.restorableConversationURL(url) {
             saveLastConversation(restorable)
         }
@@ -242,6 +257,7 @@ final class ChatTabs {
         tab.lastPath = path
         tab.adapter.invalidate()
         log(tab, "nav", "页面变化 \(Redactor.describe(url))")
+        readingPageChanged(tab)
         // 记录导航时网页媒体状态，用于验证“切换对话后官方朗读是否停止”（不主动干预）。
         // 读的是这个标签页的适配器；到点时它已经释放或不在这组标签页里就不记。
         if previous != nil {
@@ -332,31 +348,105 @@ final class ChatTabs {
 
     // MARK: - 排版变化前后的阅读位置
 
-    /// 一次排版变化前记下阅读位置的标签页，和它那时的导航代号。代号用适配器的 generation：路径每变一次加一（urlChanged），
-    /// 换走又换回同一个地址也看得出来，lastPath 看不出。不持有标签页。
-    private struct ReadingHold {
-        weak var tab: ChatTab?
-        let navigation: Int
-    }
+    // 窗口大小变（切模式、拖边）之前记下选中的标签页的阅读位置（网页里，带编号），变完之后放回给记下它的那一页。
+    // 放不放回看连续性规则（ReadingContinuity，用户 11-20 的 D1）：记下的还属于那一页现在显示的内容才放回，
+    // 不属于就丢弃，并让网页丢掉那一次记下的（按编号，不动更新的），选没选中都一样。
+    // - 规则在每次放回前看，那一页每换一次页面（urlChanged）、每提交一次（mainFrameCommitted）也看：哪一次说丢弃就当场丢弃，
+    //   之后换回原来的对话也不再放回。
+    // - 新对话页一步拿到对话地址（/ → /c/<id>）：地址分不清是不是同一个对话，放回时请网页确认，确认不了网页自己丢掉那一次。
+    // - 该放回时那一页不是选中的（D2）：不马上放回，也不丢，留在那一页上（ChatTab.pendingReadingRestore），
+    //   等它再显示并排好版时由 tabShownAndLaidOut(_:) 放回；留着期间规则说丢弃就丢弃；关闭标签页时丢掉（不碰网页）。
+    // 平常（没换页面）放回、丢弃都不写日志；丢弃、留着、留着的放回各写一行带标签的日志（只有原因，没有地址和内容）。
 
-    /// 窗口大小要变（切模式、拖边）之前：记下这一刻选中的标签页的阅读位置，并记住是它。
+    /// 窗口大小要变（切模式、拖边）之前：记下这一刻选中的标签页的阅读位置，并记住是它、是哪一次（编号）、那时的样子。
     /// 记下的按先后排着，放回时取最近的一条（后进先出）：两次排版变化可以套着（拖边途中按切换键：拖边记下、切换记下、
     /// 切换放回、拖边放回）。窗口的三处调用都是先记下再放回、一一成对，所以每次放回都有它的那一条。
     private func holdReadingPositionForLayout() {
         let tab = selected
-        readingHolds.append(ReadingHold(tab: tab, navigation: tab.adapter.generation))
-        holdReadingPosition(tab.runtime)
+        let token = holdReadingPosition(tab.runtime)
+        readingHolds.append(ReadingHold(tab: tab, token: token))
     }
 
-    /// 变完之后：放回给记下它的那个标签页，不是这时选中的。
-    /// - 那个标签页已经不在这组里（拿掉、释放）：这次放回作废。
-    /// - 它这时不是选中的、并且这期间换过页面：作废，不把旧对话的位置放到别的对话上。
-    /// - 它还是选中的：照原来放回，换过页面也放回（一个标签页时就是原来的行为）。网页里的脚本自己不放回已经不在页面上的内容；
-    ///   新对话拿到对话地址（/ → /c/…）时还是同一个对话，作废反而丢掉这次放回，网页里记下的位置也一直不放手。
+    /// 变完之后：交给记下它的那一页，不是这时选中的。
+    /// - 已经丢弃过（换页面、提交时规则说丢弃）：什么都不做。
+    /// - 那一页已经不在这组里（关闭、拿掉、释放）：作废，不碰它的网页。
+    /// - 规则说丢弃：丢弃，网页里也丢掉这一次。
+    /// - 那一页不是选中的：留到它再显示并排好版（keepPending(_:on:)）。
+    /// - 是选中的：放回（新对话页拿到对话地址的要网页确认）。只有一个标签页时它总是选中的。
     private func restoreReadingPositionAfterLayout() {
-        guard let hold = readingHolds.popLast(), let tab = hold.tab, holds(tab) else { return }
-        guard isSelected(tab) || tab.adapter.generation == hold.navigation else { return }
-        restoreReadingPosition(tab.runtime)
+        guard let hold = readingHolds.popLast(), !hold.isSettled, let tab = hold.tab, holds(tab) else { return }
+        let verdict = hold.continuity(on: tab)
+        if case .discard(let reason) = verdict { return discard(hold, on: tab, Self.text(reason)) }
+        guard isSelected(tab) else { return keepPending(hold, on: tab) }
+        put(hold, backOn: tab, verdict)
+    }
+
+    /// 3.4（切换标签页）、3.5（每页排版大小）调用：tab 又显示了（是选中的、窗口显示的是它的网页视图），
+    /// 并且已经按现在的窗口大小排好版（要补排版的排完了，或者大小没变不用排）。
+    /// 它有留着的阅读位置（pendingReadingRestore）就在这时按规则放回或丢弃；没有就什么都不做。
+    /// tab 不是选中的（不在这组里的也不会是选中的）：什么都不做，留着的继续留着。
+    func tabShownAndLaidOut(_ tab: ChatTab) {
+        guard isSelected(tab), let hold = tab.pendingReadingRestore else { return }
+        tab.pendingReadingRestore = nil
+        let verdict = hold.continuity(on: tab)
+        if case .discard(let reason) = verdict { return discard(hold, on: tab, Self.text(reason)) }
+        log(tab, "reading", "阅读位置：这一页又显示并排好版，放回留着的位置")
+        put(hold, backOn: tab, verdict)
+    }
+
+    /// tab 换了页面或提交了：它还没放回的（排版中的和留着的）按规则再看一遍，说丢弃的当场丢弃。
+    private func readingPageChanged(_ tab: ChatTab) {
+        var live = readingHolds.filter { !$0.isSettled && $0.tab === tab }
+        if let pending = tab.pendingReadingRestore { live.append(pending) }
+        for hold in live {
+            if case .discard(let reason) = hold.continuity(on: tab) { discard(hold, on: tab, Self.text(reason)) }
+        }
+    }
+
+    /// tab 的主框架提交了（新的一份文档）。不在这组里的不管。
+    private func mainFrameCommitted(_ tab: ChatTab) {
+        guard holds(tab) else { return }
+        tab.mainFrameCommits += 1
+        readingPageChanged(tab)
+    }
+
+    /// 放回 hold：带编号交给网页，规则要网页确认的带上确认。之后这一次就结束了。
+    private func put(_ hold: ReadingHold, backOn tab: ChatTab, _ verdict: ReadingContinuity.Verdict) {
+        hold.isSettled = true
+        restoreReadingPosition(tab.runtime, hold.token, verdict == .confirmOnPage)
+    }
+
+    /// 丢弃 hold：网页里按编号丢掉那一次（不动别的编号），留着的也拿掉。之后这一次就结束了。
+    private func discard(_ hold: ReadingHold, on tab: ChatTab, _ why: String) {
+        hold.isSettled = true
+        if tab.pendingReadingRestore === hold { tab.pendingReadingRestore = nil }
+        discardReadingPosition(tab.runtime, hold.token)
+        log(tab, "reading", "阅读位置：丢弃排版前记下的位置（\(why)）")
+    }
+
+    /// 该放回时 tab 不是选中的：留在它上面，等它再显示并排好版（tabShownAndLaidOut(_:)）。
+    /// 一页只留一个：已经留着一个时，留更新的那次（编号大的），旧的丢弃。
+    private func keepPending(_ hold: ReadingHold, on tab: ChatTab) {
+        if let kept = tab.pendingReadingRestore {
+            guard kept.token < hold.token else { return discard(hold, on: tab, "这一页留着更新的一次") }
+            discard(kept, on: tab, "这一页有了更新的一次")
+        }
+        tab.pendingReadingRestore = hold
+        log(tab, "reading", "阅读位置：这一页没有显示，记下的位置留到它再显示并排好版时放回")
+    }
+
+    /// 丢弃的原因写进日志的样子。
+    private static func text(_ reason: ReadingContinuity.Reason) -> String {
+        switch reason {
+        case .reloaded: "页面重新加载过"
+        case .unknownAddress: "不知道记下时或现在的地址"
+        case .otherConversation: "换了对话"
+        case .leftConversation: "从对话到了新对话页"
+        case .otherNewChat: "换了新对话页"
+        case .notOneStep: "新对话页之后换了不止一次页面"
+        case .otherSpace: "新对话页到了别的空间的对话"
+        case .notChatPage: "不是聊天页面"
+        }
     }
 
     // MARK: - 设置：每个标签页都改
