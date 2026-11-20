@@ -80,8 +80,8 @@ final class HistoryNavigationTests: XCTestCase {
         XCTAssertNil(target(key: popup, event: nil), "菜单：弹窗是 key 窗口")
     }
 
-    /// 没有目标时（AppDelegate 在弹窗是 key 窗口时给 nil），侧键按在聊天窗口上被吃掉，什么都不做；
-    /// 按键原样放过（它本来就到不了这里：按键的窗口就是 key 窗口）。
+    /// 没有目标时（AppDelegate 在弹窗是 key 窗口时给 nil），侧键按在聊天窗口上被吃掉，什么都不做。
+    /// 聊天窗口里的按键也一样被吃掉、什么都不做（实际上到不了这里：按键的窗口就是 key 窗口）。
     func testNoTargetMeansNothingHappens() throws {
         let page = FakePage()
         let controller = ChatWindowController(webView: WKWebView(), toolbar: EmptyView(), diagnostics: Diagnostics(),
@@ -91,7 +91,7 @@ final class HistoryNavigationTests: XCTestCase {
         let number = try XCTUnwrap(controller.window).windowNumber
         XCTAssertTrue(controller.handleHistoryMouse(type: .otherMouseDown, button: 3, windowNumber: number))
         XCTAssertTrue(controller.handleHistoryMouse(type: .otherMouseUp, button: 3, windowNumber: number))
-        XCTAssertFalse(controller.handleHistoryKey(.back, isRepeat: false, windowNumber: number))
+        XCTAssertTrue(controller.handleHistoryKey(.back, isRepeat: false, windowNumber: number))
         XCTAssertEqual(resolves.count, 2)
         XCTAssertEqual(page.went, [])
     }
@@ -140,10 +140,12 @@ final class HistoryNavigationTests: XCTestCase {
     // MARK: - 顶部返回箭头
 
     /// 只在不是聊天页面、并且能后退时显示；聊天页面上不管能不能后退都不显示。
+    /// 不看登录状态：登录后才会去的非聊天页面（/gpts、分享页、/library）也显示。
     func testBackArrowShowsOnlyOffChatPagesWithSomewhereToGoBack() {
         let chatPages = ["https://chatgpt.com/", "https://chatgpt.com/c/abc", "https://chatgpt.com/g/g-1/c/2", "https://chatgpt.com/g/g-1"]
         let otherPages = ["https://chatgpt.com/pricing", "https://chatgpt.com/auth/login", "https://auth.openai.com/log-in",
-                          "https://openai.com/chatgpt/pricing/"]
+                          "https://openai.com/chatgpt/pricing/",
+                          "https://chatgpt.com/gpts", "https://chatgpt.com/share/abc-123", "https://chatgpt.com/library"]
         for url in chatPages {
             XCTAssertFalse(HistoryNavigation.showsBackButton(url: URL(string: url), canGoBack: true), url)
             XCTAssertFalse(HistoryNavigation.showsBackButton(url: URL(string: url), canGoBack: false), url)
@@ -201,7 +203,27 @@ final class HistoryNavigationTests: XCTestCase {
         XCTAssertNil(controller.historyShortcut(keyCode: bracket, characters: "[", flags: []), "打字")
     }
 
-    /// 按一下走一次，目标页面只解析一次；按住不放的重复按键只吃掉，不连着后退。
+    /// ⌘[ ⌘] 是应用的快捷键：聊天窗口里总是由应用处理。能走时走一次；走不了、重复按键时吃掉，什么都不做，
+    /// 不会因为能不能后退变成交给网页。别的窗口里的按键原样放过。
+    func testKeyRuleConsumesInTheChatWindowEvenWithNowhereToGo() {
+        for direction in [HistoryDirection.back, .forward] {
+            XCTAssertEqual(HistoryNavigation.keyAction(direction, inChatWindow: true, isRepeat: false, canGo: true),
+                           .navigate(direction))
+            XCTAssertEqual(HistoryNavigation.keyAction(direction, inChatWindow: true, isRepeat: false, canGo: false),
+                           .swallow, "走不了：吃掉，什么都不做")
+            XCTAssertEqual(HistoryNavigation.keyAction(direction, inChatWindow: true, isRepeat: true, canGo: true),
+                           .swallow, "重复按键只走第一次")
+            XCTAssertEqual(HistoryNavigation.keyAction(direction, inChatWindow: true, isRepeat: true, canGo: false), .swallow)
+            for isRepeat in [false, true] {
+                for canGo in [false, true] {
+                    XCTAssertEqual(HistoryNavigation.keyAction(direction, inChatWindow: false, isRepeat: isRepeat, canGo: canGo),
+                                   .pass, "别的窗口：原样放过")
+                }
+            }
+        }
+    }
+
+    /// 按一下走一次，目标页面只解析一次；按住不放的重复按键只吃掉，不连着后退，也不再解析目标页面。
     func testOneKeyPressGoesOnceAndRepeatsAreSwallowed() throws {
         let page = FakePage(canBack: true, canForward: true)
         let resolves = Counter()
@@ -211,17 +233,29 @@ final class HistoryNavigationTests: XCTestCase {
         XCTAssertEqual(resolves.count, 1)
         for _ in 0..<3 { XCTAssertTrue(controller.handleHistoryKey(.back, isRepeat: true, windowNumber: number)) }
         XCTAssertEqual(page.went, [.back], "重复按键不再后退")
+        XCTAssertEqual(resolves.count, 1)
         XCTAssertTrue(controller.handleHistoryKey(.forward, isRepeat: false, windowNumber: number))
         XCTAssertEqual(page.went, [.back, .forward])
     }
 
-    /// 走不了时不处理：按键原样交给网页（菜单项也是灰的），和没有这个功能时一样。
-    func testAKeyWithNowhereToGoIsLeftToThePage() throws {
+    /// 走不了时（菜单项是灰的）按键照样被应用吃掉，什么都不做，不交给网页；按住不放也一样。
+    func testAKeyWithNowhereToGoIsConsumedAndDoesNothing() throws {
         let page = FakePage(canBack: false, canForward: false)
-        let (controller, number) = try makeController(page: page)
-        XCTAssertFalse(controller.handleHistoryKey(.back, isRepeat: false, windowNumber: number))
-        XCTAssertFalse(controller.handleHistoryKey(.forward, isRepeat: false, windowNumber: number))
+        let resolves = Counter()
+        let (controller, number) = try makeController(page: page, resolves: resolves)
+        for direction in [HistoryDirection.back, .forward] {
+            XCTAssertFalse(HistoryNavigation.isAvailable(direction, on: page), "菜单项是灰的")
+            XCTAssertTrue(controller.handleHistoryKey(direction, isRepeat: false, windowNumber: number))
+            for _ in 0..<3 { XCTAssertTrue(controller.handleHistoryKey(direction, isRepeat: true, windowNumber: number)) }
+        }
         XCTAssertEqual(page.went, [])
+        XCTAssertEqual(resolves.count, 2, "每次按下解析一次，重复按键不解析")
+        // 只有一个方向走得了时，另一个方向照样吃掉。
+        page.canBack = true
+        XCTAssertTrue(controller.handleHistoryKey(.forward, isRepeat: false, windowNumber: number))
+        XCTAssertEqual(page.went, [])
+        XCTAssertTrue(controller.handleHistoryKey(.back, isRepeat: false, windowNumber: number))
+        XCTAssertEqual(page.went, [.back])
     }
 
     /// 登录弹窗等别的窗口里的按键不碰聊天窗口的页面，也不去解析它。
