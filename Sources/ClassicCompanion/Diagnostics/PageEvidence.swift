@@ -25,8 +25,9 @@ struct TabEvidenceTarget: EvidenceTarget {
     func measureMedia() async -> String { await tab.adapter.measureMedia() }
     func webMediaState() async -> String { await tab.adapter.webMediaState() }
     func experimentSetRate(_ rate: Double) async -> String { await tab.adapter.experimentSetRate(rate) }
-    func setAllMediaPlaybackSuspended(_ suspended: Bool) async { await tab.runtime.webView.setAllMediaPlaybackSuspended(suspended) }
-    func pauseAllMediaPlayback() async { await tab.runtime.webView.pauseAllMediaPlayback() }
+    /// 暂停、挂起经适配器（有时限、关闭以后不做，见 ChatGPTAdapter.mediaRequest(_:)），不直接等网页视图。
+    func setAllMediaPlaybackSuspended(_ suspended: Bool) async { await tab.adapter.setAllMediaPlaybackSuspended(suspended) }
+    func pauseAllMediaPlayback() async { await tab.adapter.pauseAllMediaPlayback() }
 }
 
 /// 证据采集和媒体实验的步骤，原来写在 AppDelegate 里，步骤和顺序不变。

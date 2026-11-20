@@ -34,6 +34,8 @@ final class ChatTab {
     /// 上一次读到的这一页的网页媒体状态（每秒读选中的那一页，ChatTabs.mediaTick()；只用来写“变了”的日志）。
     /// 每页一份：切换标签页后第一次读到的和换上来的这一页自己上次的比，不和换走的那一页的比。
     var mediaState = "none"
+    /// 每秒读媒体状态的那一次还没结束（ChatTabs.mediaTick()）：这时到点的不再读，不叠着读。
+    var mediaReadInFlight = false
 
     /// 这个标签页的日志带的标签：就是它的运行时的（正式运行时是 id；测试里单独建的运行时不带，是 nil）。
     /// ChatTabs 为这个标签页写日志时用它（见 TabLog）。

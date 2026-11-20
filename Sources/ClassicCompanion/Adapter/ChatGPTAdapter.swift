@@ -50,13 +50,15 @@ final class ChatGPTAdapter {
     }
 
     /// 关闭（关闭标签页时由 ChatTabs.close(_:) 调用，和它的网页运行时一起）。之后：
-    /// - 不再在网页里跑脚本（run 直接按没有结果返回），不再读网页媒体状态（webMediaState 返回 "closed"）：
+    /// - 不再在网页里跑脚本（run 直接按没有结果返回），不再向 WebKit 发媒体请求（webMediaState 返回 "closed"，暂停、挂起不做）：
     ///   进行中的多步操作（读朗读证据、测量、实验、页面里的新对话）剩下的步骤不再碰这个网页，马上返回；
+    /// - 正在等 WebKit 回答的媒体请求马上按 "closed" 结束（不等回答、不等时限），等它们的调用方马上往下走、不再拿着标签页；
     /// - 进行中的脚本返回、出错或超时都不写日志，探测结果不写进诊断（probe）；
     /// - 页面里的新对话点完入口后不再等页面变化（openNewChatInPage）。
     /// 已经在网页里跑着的脚本不取消（没有取消的办法），它返回或超时以后什么都不做。关两遍没关系。
     func close() {
         isClosed = true
+        for waiter in mediaWaiters { finish(waiter, "closed") }
     }
 
     var isEnabled: Bool { settings.webEnhancements }
@@ -263,10 +265,114 @@ final class ChatGPTAdapter {
     }
 
     /// WebKit 层面的媒体播放状态（覆盖未挂载到 DOM 的媒体；不涉及页面内部对象）。关闭以后不读，返回 "closed"。
+    /// 有时限（见 mediaRequest(_:)）：mediaTimeout 秒内 WebKit 没回答返回 "timeout"，等的时候关闭了马上返回 "closed"。
+    /// 已经交给 WebKit、还没回答的读状态请求只有一个：那时再读不再交一次，等那一次的回答（各自的时限照算）。
+    /// 所以 WebKit 一直不回答时，每秒读一次也只有一个请求在 WebKit 那里等着。
     func webMediaState() async -> String {
+        await mediaRequest(.state)
+    }
+
+    /// 全部暂停（媒体实验）。有时限，关闭以后不做，同 webMediaState()。返回 "ok"、"timeout" 或 "closed"。
+    @discardableResult
+    func pauseAllMediaPlayback() async -> String {
+        await mediaRequest(.pauseAll)
+    }
+
+    /// 全部挂起或恢复（媒体实验）。有时限，关闭以后不做，同 webMediaState()。返回 "ok"、"timeout" 或 "closed"。
+    @discardableResult
+    func setAllMediaPlaybackSuspended(_ suspended: Bool) async -> String {
+        await mediaRequest(.suspendAll(suspended))
+    }
+
+    // MARK: - WebKit 的媒体请求（有时限）
+
+    /// 交给 WebKit 的媒体请求：读媒体状态、全部暂停、全部挂起或恢复。
+    enum MediaRequest: Equatable {
+        case state, pauseAll, suspendAll(Bool)
+
+        var name: String {
+            switch self {
+            case .state: "读媒体状态"
+            case .pauseAll: "全部暂停"
+            case .suspendAll(let suspended): suspended ? "全部挂起" : "全部恢复"
+            }
+        }
+    }
+
+    /// 把一个媒体请求交给 WebKit，WebKit 回答时调用 done（读状态时带上状态，别的是 nil）。正式运行就是 WKWebView
+    /// 带回调的那三个方法；只有测试换它（换成不回答、或由测试决定什么时候回答的替身）。WebKit 可能一直不回答
+    /// （网页进程卡住），所以等的地方都有时限（mediaTimeout）。
+    var sendMediaRequest: @MainActor (WKWebView, MediaRequest, @escaping @MainActor (WKMediaPlaybackState?) -> Void) -> Void = {
+        web, request, done in
+        switch request {
+        case .state: web.requestMediaPlaybackState(completionHandler: { done($0) })
+        case .pauseAll: web.pauseAllMediaPlayback(completionHandler: { done(nil) })
+        case .suspendAll(let suspended): web.setAllMediaPlaybackSuspended(suspended, completionHandler: { done(nil) })
+        }
+    }
+    /// 等 WebKit 回答媒体请求最多多久（秒），到了按 "timeout" 结束、不再等。只有测试换它。
+    var mediaTimeout: TimeInterval = 2.5
+    /// 正在等回答的调用（每次调用一个），回答、到时限、关闭哪个先到就用哪个结束（finish），结束时拿掉。
+    private var mediaWaiters: [MediaWaiter] = []
+    /// 有一个读状态的请求已经交给 WebKit、还没回答。
+    private var stateRequestPending = false
+
+    /// 交一个媒体请求、等它结束：WebKit 的回答（读状态是状态的名字，别的是 "ok"）、"timeout"（mediaTimeout 秒内没回答）
+    /// 或 "closed"（关闭以后，或等的时候关闭了）。每次调用正好结束一次。
+    /// 谁拿着什么：等的人（MediaWaiter）只在 mediaWaiters 里；交给 WebKit 的回调和到时限的那一次只弱引用适配器和等的人，
+    /// 网页视图只在交出去的那一刻用一下。所以 WebKit 一直不回答，回调也不拿着适配器、网页视图和标签页；
+    /// 调用方最多等到时限，关闭时马上不等了。回答迟到（已经到时限、已经关闭）什么都不做。
+    private func mediaRequest(_ request: MediaRequest) async -> String {
         guard !isClosed else { return "closed" }
-        guard let webView else { return "no-webview" }
-        switch await webView.requestMediaPlaybackState() {
+        guard webView != nil else { return "no-webview" }
+        return await withCheckedContinuation { continuation in
+            let waiter = MediaWaiter(request, continuation)
+            mediaWaiters.append(waiter)
+            let timeout = mediaTimeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self, weak waiter] in
+                MainActor.assumeIsolated {
+                    guard let self, let waiter, self.finish(waiter, "timeout") else { return }
+                    if request != .state { self.log("adapter", "WebKit \(request.name)没有在 \(timeout) 秒内回答，不再等") }
+                }
+            }
+            send(request, for: waiter)
+        }
+    }
+
+    /// 把请求交给 WebKit（同步：网页视图只在这里用一下）。读状态时已经有一个在等：不再交，waiter 等那一个的回答。
+    private func send(_ request: MediaRequest, for waiter: MediaWaiter) {
+        guard let webView else {
+            finish(waiter, "no-webview")
+            return
+        }
+        if request == .state {
+            guard !stateRequestPending else { return }
+            stateRequestPending = true
+        }
+        sendMediaRequest(webView, request) { [weak self, weak waiter] state in
+            guard let self, !self.isClosed else { return }
+            guard request == .state else {
+                if let waiter { self.finish(waiter, "ok") }
+                return
+            }
+            self.stateRequestPending = false
+            let value = Self.describe(state)
+            for waiting in self.mediaWaiters where waiting.request == .state { self.finish(waiting, value) }
+        }
+    }
+
+    /// 结束一个还在等的调用（返回 value）。已经结束过的不再结束，返回 false。
+    @discardableResult
+    private func finish(_ waiter: MediaWaiter, _ value: String) -> Bool {
+        guard let index = mediaWaiters.firstIndex(where: { $0 === waiter }) else { return false }
+        mediaWaiters.remove(at: index)
+        waiter.continuation.resume(returning: value)
+        return true
+    }
+
+    private static func describe(_ state: WKMediaPlaybackState?) -> String {
+        guard let state else { return "unknown" }
+        switch state {
         case .none: return "none"
         case .playing: return "playing"
         case .paused: return "paused"
@@ -274,6 +380,9 @@ final class ChatGPTAdapter {
         @unknown default: return "unknown"
         }
     }
+
+    /// 测试看：正在等回答的媒体请求有几个。
+    var pendingMediaRequests: Int { mediaWaiters.count }
 
     // MARK: - 执行
 
@@ -315,5 +424,17 @@ final class ChatGPTAdapter {
     private func decode(_ json: String) -> [String: Any]? {
         guard let data = json.data(using: .utf8) else { return nil }
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+}
+
+/// 一次媒体请求的调用方在等的（ChatGPTAdapter.mediaRequest(_:)）：由适配器的 finish 结束，正好一次。
+@MainActor
+private final class MediaWaiter {
+    let request: ChatGPTAdapter.MediaRequest
+    let continuation: CheckedContinuation<String, Never>
+
+    init(_ request: ChatGPTAdapter.MediaRequest, _ continuation: CheckedContinuation<String, Never>) {
+        self.request = request
+        self.continuation = continuation
     }
 }

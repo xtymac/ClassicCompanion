@@ -814,11 +814,16 @@ final class ChatTabs {
     /// “变了”是和这一页自己上次读到的比（ChatTab.mediaState）：切换标签页后不会写出“换走的那一页的状态 → 这一页的状态”。
     /// 读完时它已经不在这组里就都不做（不显示、不写日志、不改记下的状态）：读到的是一个已经不在的标签页，
     /// 下一秒就读到选中的那个。
+    /// 不叠着读：这个标签页上一次还没读完（mediaReadInFlight）就不读，等下一秒。读有时限（正式运行时适配器的 webMediaState：
+    /// WebKit 2.5 秒不回答就是 "timeout"，关闭时马上是 "closed"），所以一次读最多占着几秒，读完就放开、不再拿着标签页。
     func mediaTick() {
         let tab = selected
+        guard !tab.mediaReadInFlight else { return }
+        tab.mediaReadInFlight = true
         Task { [weak self] in
             guard let self else { return }
             let state = await self.mediaState(tab.adapter)
+            tab.mediaReadInFlight = false
             guard self.holds(tab) else { return }
             self.diagnostics.recordWebMediaState(state, tab: tab.logTag)
             if state != tab.mediaState {
