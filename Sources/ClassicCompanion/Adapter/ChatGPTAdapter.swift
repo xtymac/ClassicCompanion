@@ -69,24 +69,22 @@ final class ChatGPTAdapter {
     // MARK: - 能力
 
     /// 关闭以后什么都不做；等脚本时关闭了，结果不写进诊断。
+    /// 每次写进诊断的都是这个标签页的一份完整的快照（freshCapabilities）：带上它的标识（报告里那一段带它的标签），
+    /// 不是聊天页面、探测失败时也不留上一次探测（可能是别的标签页的）的计数，免得把别的标签页的数和这个标签页的标签写在一起。
     func probe() async {
         guard !isClosed else { return }
         guard isEnabled, onChatPage else {
-            diagnostics.capabilities.pageKind = onChatPage ? "chat（网页增强已关闭）" : pageKindDescription()
-            diagnostics.capabilities.location = Redactor.describe(webView?.url)
-            diagnostics.capabilities.checkedAt = Date()
+            diagnostics.capabilities = freshCapabilities(onChatPage ? "chat（网页增强已关闭）" : pageKindDescription())
             return
         }
         let result = await run(AdapterScripts.probe)
         guard !isClosed else { return }
         guard let json = result,
               let obj = decode(json) else {
-            diagnostics.capabilities.pageKind = "chat（探测失败/超时）"
+            diagnostics.capabilities = freshCapabilities("chat（探测失败/超时）")
             return
         }
-        var c = diagnostics.capabilities
-        c.pageKind = "chat"
-        c.location = Redactor.describe(webView?.url)
+        var c = freshCapabilities("chat")
         c.inputFound = obj["inputFound"] as? Bool ?? false
         c.inputFocused = obj["inputFocused"] as? Bool ?? false
         c.messageCount = obj["messageCount"] as? Int ?? 0
@@ -97,8 +95,27 @@ final class ChatGPTAdapter {
         if let hits = obj["hits"] as? [String: String] {
             c.selectorHits = hits.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
         }
-        c.checkedAt = Date()
         diagnostics.capabilities = c
+    }
+
+    /// 这一刻这个标签页的一份新的能力快照：页面类型 kind、位置（Redactor）、检查时间、它的标识；别的都是初始值。
+    /// 最近一次回答提取另外记（recordExtraction，带它自己的标签页），照原样留着。
+    private func freshCapabilities(_ kind: String) -> Diagnostics.PageCapabilities {
+        var c = Diagnostics.PageCapabilities()
+        c.pageKind = kind
+        c.location = Redactor.describe(webView?.url)
+        c.checkedAt = Date()
+        c.tab = log.tab
+        c.lastExtraction = diagnostics.capabilities.lastExtraction
+        c.extractionTab = diagnostics.capabilities.extractionTab
+        return c
+    }
+
+    /// 记下最近一次回答提取的结果（只有块数、耗时、状态，没有正文），连同这个标签页的标识。关闭以后不记。
+    private func recordExtraction(_ result: String) {
+        guard !isClosed else { return }
+        diagnostics.capabilities.lastExtraction = result
+        diagnostics.capabilities.extractionTab = log.tab
     }
 
     private func pageKindDescription() -> String {
@@ -161,7 +178,7 @@ final class ChatGPTAdapter {
         let gen = generation
         let started = Date()
         guard let json = await run(AdapterScripts.extract), let obj = decode(json) else {
-            diagnostics.capabilities.lastExtraction = "超时/脚本失败"
+            recordExtraction("超时/脚本失败")
             return .unavailable("无法读取页面（超时）")
         }
         guard gen == generation else { return .unavailable("页面已切换，请重试") }
@@ -171,7 +188,7 @@ final class ChatGPTAdapter {
         case "ok":
             guard let path = obj["path"] as? String, let ids = obj["ids"] as? String,
                   let raw = obj["blocks"] as? [[String: Any]] else {
-                diagnostics.capabilities.lastExtraction = "格式错误"
+                recordExtraction("格式错误")
                 return .unavailable("无法识别回答结构")
             }
             let blocks: [AnswerBlock] = raw.compactMap { b in
@@ -181,12 +198,12 @@ final class ChatGPTAdapter {
             }
             let notices = blocks.filter { $0.kind == .notice }.count
             // 只记录块数量与耗时，不记录正文
-            diagnostics.capabilities.lastExtraction = "ok：文本块 \(blocks.count - notices)，提示 \(notices)，\(ms)ms"
+            recordExtraction("ok：文本块 \(blocks.count - notices)，提示 \(notices)，\(ms)ms")
             log("adapter", "回答提取 ok：文本块 \(blocks.count - notices)，提示 \(notices)，\(ms)ms")
             return .ok(AnswerRef(generation: gen, path: path, ids: ids), blocks)
         default:
             let reason = obj["reason"] as? String
-            diagnostics.capabilities.lastExtraction = status + (reason.map { "(\($0))" } ?? "")
+            recordExtraction(status + (reason.map { "(\($0))" } ?? ""))
             log("adapter", "回答提取未完成：\(status)\(reason.map { "(\($0))" } ?? "")")
             return .unavailable(Self.describe(status: status, reason: reason))
         }

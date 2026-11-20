@@ -32,20 +32,21 @@ struct TabEvidenceTarget: EvidenceTarget {
 /// 证据采集和媒体实验的步骤，原来写在 AppDelegate 里，步骤和顺序不变。
 /// target 是开始时绑定的那个标签页的（ChatTabs 传开始这一刻选中的那个），每一步都对它做。
 /// 每次等完先问 isHeld：那个标签页已经不在这组里就不再往下做，已经写进诊断的留着。写报告文件由调用方在之后做。
-/// 实验的 tab 是那个标签页的标识，实验那一行日志带上它的标签（nil 不带，见 Diagnostics.recordExperiment）。
+/// tab 是那个标签页的标识：写进诊断的结构证据、速率测量、实验记录都记下它（报告里那一行带它的标签，见 Diagnostics.reportTag），
+/// 实验那一行日志也带上它的标签（nil 不带，见 Diagnostics.recordExperiment）。
 @MainActor
 enum PageEvidence {
     static func collect(from target: some EvidenceTarget, measure: Bool, into diagnostics: Diagnostics,
-                        isHeld: () -> Bool) async {
+                        tab: TabID?, isHeld: () -> Bool) async {
         await target.probe()
         guard isHeld() else { return }
         let evidence = await target.readAloudEvidence()
         guard isHeld() else { return }
-        diagnostics.readAloudEvidence = evidence
+        diagnostics.recordReadAloudEvidence(evidence, tab: tab)
         guard measure else { return }
         let measured = await target.measureMedia()
         guard isHeld() else { return }
-        diagnostics.mediaMeasurement = measured
+        diagnostics.recordMediaMeasurement(measured, tab: tab)
     }
 
     static func runExperiment(_ kind: ExperimentKind, on target: some EvidenceTarget, diagnostics: Diagnostics,
@@ -76,7 +77,7 @@ enum PageEvidence {
         case .measure:
             let measured = await target.measureMedia()
             guard isHeld() else { return }
-            diagnostics.mediaMeasurement = measured
+            diagnostics.recordMediaMeasurement(measured, tab: tab)
             diagnostics.recordExperiment("测量：\(diagnostics.mediaMeasurement)", tab: tab)
         }
     }
