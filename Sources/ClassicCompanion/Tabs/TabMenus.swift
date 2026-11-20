@@ -180,9 +180,11 @@ final class TabMenus: NSObject, NSMenuItemValidation, NSMenuDelegate {
         perform(.newTab, "新建标签页") { _ = $0.newTab() }
     }
 
-    /// 菜单栏图标的菜单：窗口没显示时 newTab() 先找回窗口（D9）；到上限时也能点，newTab() 找回窗口、显示到上限的提示。
+    /// 菜单栏图标的菜单：不管窗口没显示（D9）、最小化、还是显示着但在别的窗口和应用后面，newTab 都先把窗口找回、带到前面
+    /// （bringingWindowForward，第 3 阶段之后用户定）；到上限时也能点，同样先带到前面、再显示到上限的提示。
+    /// 文件菜单的那一项和 ⌘T 不带到前面（newTab(_:)、TabKeys）。
     @objc func statusNewTab(_ sender: Any?) {
-        perform(.statusNewTab, "新建标签页（菜单栏图标）") { _ = $0.newTab() }
+        perform(.statusNewTab, "新建标签页（菜单栏图标）") { _ = $0.newTab(bringingWindowForward: true) }
     }
 
     @objc func reopenClosedTab(_ sender: Any?) {
