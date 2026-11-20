@@ -84,7 +84,7 @@ final class TabSelectTests: XCTestCase {
 
     /// 在 t1 上开始切模式（记下 t1 的阅读位置），网页还在排版时切换到 t2：窗口显示 t2 时先结束切模式，
     /// 那时选中的已经是 t2，所以 t1 的位置留在 t1 上，不放回到正要藏起的 t1（先显示、后改选中项的话会放回）。
-    /// 再切回 t1：窗口显示 t1 之后放回那一次。
+    /// 再切回 t1：它离开时还没排好（切模式被先结束），窗口先补排版（3.5）；排好之后放回那一次（补排版前不再记）。
     func testTheSelectionChangesBeforeTheWindowEndsAModeSwitch() throws {
         let rig = make()
         rig.t[0].runtime.onURLChange?(chat)
@@ -105,7 +105,11 @@ final class TabSelectTests: XCTestCase {
         ])
 
         rig.tabs.select(rig.t[0])
-        XCTAssertEqual(calls.list, ["记下 1", "放回 1（窗口显示着它）"], "窗口显示 t1 之后放回")
+        XCTAssertTrue(rig.controller.isCatchingUp)
+        XCTAssertEqual(calls.list, ["记下 1"], "补排版前不再记，排好之前不放回")
+        XCTAssertEqual(layout.prepared, ["1", "1"])
+        layout.prepares[1]()
+        XCTAssertEqual(calls.list, ["记下 1", "放回 1（窗口显示着它）"], "窗口显示 t1、排好之后放回")
         XCTAssertEqual(calls.tokens, [1, 1])
         XCTAssertNil(rig.t[0].pendingReadingRestore)
         XCTAssertEqual(rig.lines(since: mark).filter { !$0.hasPrefix("[window]") }.suffix(2), [
@@ -114,7 +118,8 @@ final class TabSelectTests: XCTestCase {
         ])
     }
 
-    /// t1 留着阅读位置时在后台换了对话（或者重新提交）：当场丢弃；再切回 t1 时什么都不放回。
+    /// t1 留着阅读位置时在后台换了对话（或者重新提交）：当场丢弃；再切回 t1 时不放回那一次。
+    /// 切回时 t1 离开时还没排好，窗口补排版（3.5）：补排版前记下新的一次（换过的页面现在的位置），排好时放回的是这一次。
     func testAPendingPositionOfATabThatNavigatedMeanwhileIsNotRestoredOnReturn() throws {
         for commits in [false, true] {
             let rig = make()
@@ -132,11 +137,15 @@ final class TabSelectTests: XCTestCase {
             }
             XCTAssertEqual(calls.list, ["记下 1", "丢弃 1"], "后台换页面当场丢弃（提交=\(commits)）")
             rig.tabs.select(rig.t[0])
-            XCTAssertEqual(calls.list, ["记下 1", "丢弃 1"], "切回来不放回（提交=\(commits)）")
+            XCTAssertEqual(calls.list, ["记下 1", "丢弃 1", "记下 1"], "切回来不放回，补排版前记下新的（提交=\(commits)）")
+            layout.prepares[1]()
+            XCTAssertEqual(calls.list, ["记下 1", "丢弃 1", "记下 1", "放回 1（窗口显示着它）"])
+            XCTAssertEqual(calls.tokens, [1, 1, 2, 2], "放回的是新的那次，丢弃的那次不放回（提交=\(commits)）")
         }
     }
 
-    /// 两次切模式之间切换：t1 那次迟到的排版完成不结束 t2 上开始的那一次；t2 那次照常放回 t2，t1 留着的切回时放回 t1。
+    /// 两次切模式之间切换：t1 那次迟到的排版完成不结束 t2 上开始的那一次；t2 那次照常放回 t2，
+    /// t1 留着的切回时放回 t1（t1 离开时还没排好，3.5 起先补排版，排好时放回）。
     func testALateLayoutOfTheOutgoingTabDoesNotEndTheNextTabsModeSwitch() {
         let rig = make()
         rig.t[0].runtime.onURLChange?(chat)
@@ -157,6 +166,9 @@ final class TabSelectTests: XCTestCase {
         XCTAssertFalse(rig.controller.isChangingLayout)
         XCTAssertEqual(calls.list, ["记下 1", "记下 2", "放回 2（窗口显示着它）"])
         rig.tabs.select(rig.t[0])
+        XCTAssertEqual(layout.prepared, ["1", "2", "1"])
+        XCTAssertEqual(calls.list, ["记下 1", "记下 2", "放回 2（窗口显示着它）"])
+        layout.prepares[2]()
         XCTAssertEqual(calls.list, ["记下 1", "记下 2", "放回 2（窗口显示着它）", "放回 1（窗口显示着它）"])
         XCTAssertEqual(calls.tokens, [1, 2, 2, 1])
     }

@@ -100,6 +100,7 @@ final class ChatTabs {
         windowController.onWillChangeLayout = { [weak self] in self?.holdReadingPositionForLayout() }
         windowController.onDidChangeLayout = { [weak self] in self?.restoreReadingPositionAfterLayout() }
         // 切模式时的快照和按目标大小排版：窗口这一刻显示着的页面，也就是这一刻选中的标签页。
+        // 切换标签页后的补排版也用这个排版（窗口在显示换上来的页面以后调用，那时选中的已经是它）。
         windowController.onSnapshotPage = { [weak self] done in
             guard let self else { return done(nil) }
             self.selected.runtime.snapshotPage(done)
@@ -191,6 +192,8 @@ final class ChatTabs {
     /// 网页脚本返回或超时。
     /// 阅读位置：留着等再显示的那一次丢掉（pendingReadingRestore）；排版中记下的留在 readingHolds 里（记下和放回按先后
     /// 一一配对，不能拿掉一条），到时因为这一页不在这组里而作废。都不碰网页：运行时已经关闭，网页随标签页一起释放。
+    /// 补排版：只有显示着的标签页会补排版，tab 不选中，它显示时开始的那次在切换走时已经作废（窗口不再调用它的 laidOut），
+    /// 迟到的排版完成和时限也不再做事（窗口按那一次的身份核对）。
     func close(_ tab: ChatTab) {
         guard holds(tab) else { return }
         precondition(!isSelected(tab), "关选中的标签页要先切换到别的标签页（select(_:)）")
@@ -314,25 +317,42 @@ final class ChatTabs {
     /// 1. 先改选中项（list）。窗口在下一步结束进行中的切模式时说“排版结束”，那时选中的已经是 tab：
     ///    换下去的那一页排版前记下的阅读位置留在它自己身上（D2），不放回到正要藏起的那一页。
     /// 2. 写一行“选中”（带 tab 的标签，没有地址和标题）：之后窗口不带标签的行就能对上是哪一页。
-    /// 3. 窗口显示 tab 的页面和网页视图，并投上它的状态（ChatWindowController.display(_:webView:)：遮挡、提示、颜色；
-    ///    换下去的网页视图藏起、固定在离开时的大小；淡出层去掉；键盘焦点交给 tab 的网页视图）。
+    /// 3. 窗口显示 tab 的页面和网页视图，并投上它的状态（ChatWindowController.display(_:webView:beforeCatchUp:laidOut:)：
+    ///    遮挡、提示、颜色；换下去的网页视图藏起、固定在离开时的大小；淡出层去掉；键盘焦点交给 tab 的网页视图）。
+    ///    tab 的网页视图离开时排好版的大小或缩放和现在不同时，窗口先盖住它补排版：在它变大小之前记下它的阅读位置
+    ///    （holdBeforeCatchUp(_:)），补排版结束时再告诉这里（laidOut）。
+    ///    tab 按现在的窗口大小排好版时（不用补排版就在窗口显示它的最后一步，要补就在补排版结束时；每次显示正好一次）：
+    ///    它留着的阅读位置这时放回或丢弃（tabShownAndLaidOut(_:)）。补排版还没结束就又切换走了：这一次不算，留着的继续留着，
+    ///    等它下一次显示并排好版。
     /// 4. 聚焦（D5，和唤醒一样）：之前排着的聚焦都作废（代号加一：A → B → A 时 A 换走前排下的那次也不再聚焦）；
     ///    窗口是 key 窗口才给 tab 排一次（focusInputSoon(for:)，80ms 后）。
     /// 5. 可恢复的对话地址跟着选中的：tab 现在的地址是可以恢复的对话就记下；不是就不改（还留着之前记下的）。
-    /// 6. tab 又显示、已经按现在的窗口大小排好版：它留着的阅读位置这时放回或丢弃（tabShownAndLaidOut(_:)）。
-    ///    3.5 起换上来的网页视图可能要先补排版，这一步要改到补排版完成以后（见下面的 3.5 那一步）。
     /// 不改的：tab 和换下去的那一页自己的状态（页面加载状态、路径、媒体状态、排着的任务）；进行中的、开始时绑定了某一页的操作
     /// （新对话、读媒体状态、证据采集、媒体实验）照样只对它们那一页做；换下去的那一页之后的事件只改它自己的状态。
     func select(_ tab: ChatTab) {
         guard holds(tab), !isSelected(tab) else { return }
         _ = list.select(tab.id)
         log(tab, "tabs", "选中")
-        windowController.display(tab.page, webView: tab.runtime.webView)
+        windowController.display(tab.page, webView: tab.runtime.webView,
+                                 beforeCatchUp: { holdBeforeCatchUp(tab) },
+                                 laidOut: { [weak self, weak tab] in
+                                     guard let self, let tab else { return }
+                                     self.tabShownAndLaidOut(tab)
+                                 })
         focusGeneration += 1
         if windowIsKey() { focusInputSoon(for: tab) }
         if let restorable = NavigationPolicy.restorableConversationURL(tab.url) { saveLastConversation(restorable) }
-        // 3.5：换上来的网页视图要先按现在的窗口大小补排版时，改成补排版完成后再调用这一步（排好时窗口告诉 ChatTabs）。
-        tabShownAndLaidOut(tab)
+    }
+
+    /// 换上来的 tab 要补排版：窗口在它的网页视图还藏着、还是离开时的大小时调用（排版变化之前）。
+    /// tab 没有留着的阅读位置：这时记下一次，留在它上面（pendingReadingRestore），补排版结束、它排好版时和别的留着的一样
+    /// 放回（tabShownAndLaidOut(_:)，照连续性规则）；补排版没结束就又切换走了，也和别的留着的一样继续留着。
+    /// 已经留着一次（离开前切模式记下、离开时还没放回的；或者上一次补排版没结束就切换走了）：不再记——
+    /// 留着的那次是它离开后第一次排版变化之前的位置（计划 4.2），后来的那次只会是已经变过的位置。
+    /// 不写日志（平常的记下也不写）；放回时写“又显示并排好版”那一行。
+    private func holdBeforeCatchUp(_ tab: ChatTab) {
+        guard tab.pendingReadingRestore == nil else { return }
+        tab.pendingReadingRestore = ReadingHold(tab: tab, token: holdReadingPosition(tab.runtime))
     }
 
     // MARK: - 对选中的标签页做的操作
@@ -429,8 +449,9 @@ final class ChatTabs {
         put(hold, backOn: tab, verdict)
     }
 
-    /// 切换标签页（select(_:)）在窗口显示 tab 之后调用（3.5 起改到补排版完成以后）：tab 又显示了（是选中的、
-    /// 窗口显示的是它的网页视图），并且已经按现在的窗口大小排好版（要补排版的排完了，或者大小没变不用排）。
+    /// 切换标签页（select(_:)）在 tab 按现在的窗口大小排好版时调用（窗口的 laidOut：不用补排版时在窗口显示它的最后一步，
+    /// 要补排版时在补排版结束时）：tab 又显示了（是选中的、窗口显示的是它的网页视图），并且已经按现在的窗口大小排好版
+    /// （要补排版的排完了、到时限了、或者被切模式、拖边、隐藏窗口先结束了；或者大小和缩放都没变不用排）。
     /// 它有留着的阅读位置（pendingReadingRestore）就在这时按规则放回或丢弃；没有就什么都不做。
     /// tab 不是选中的（不在这组里的也不会是选中的）：什么都不做，留着的继续留着。
     func tabShownAndLaidOut(_ tab: ChatTab) {
@@ -504,9 +525,13 @@ final class ChatTabs {
         tabs.forEach { $0.runtime.applyEnhancementScripts() }
     }
 
-    /// 页面缩放：每个标签页都改。
+    /// 页面缩放：每个标签页都改（藏着的也改；再显示时缩放和离开时不同，窗口先补排版）。
+    /// 阅读位置：一般由运行时自己在改缩放前后记下、马上放回（WebRuntime.setPageZoom(_:keepingReadingPosition:)，原来的做法，
+    /// 只有一个标签页时总是这样）。留着阅读位置等再显示并排好版的标签页（不显示的；或显示着、还在补排版的）例外：只改缩放，
+    /// 不自己记下、放回——网页里那份记录是它和留着的那次共用的，马上放回会在 1.1 秒后放手，之后放回留着的那次就找不到了
+    /// （3.2 记下的问题）。留着的那次在它排好版时照常放回（tabShownAndLaidOut(_:)）。
     func setPageZoom(_ zoom: Double) {
-        tabs.forEach { $0.runtime.setPageZoom(zoom) }
+        tabs.forEach { $0.runtime.setPageZoom(zoom, keepingReadingPosition: $0.pendingReadingRestore == nil) }
     }
 
     /// 允许其他应用读取网页内容：每个标签页都改。

@@ -431,6 +431,29 @@ final class ReadingHoldScriptTests: XCTestCase {
         XCTAssertEqual(restored, first)
     }
 
+    /// 留着一次没放回（像不显示的标签页留着的那次）时改页面缩放。对照（3.2 记下的问题）：运行时自己记下、马上放回，
+    /// 自己那次和留着的共用一份记录，放回后 1.1 秒放手，留着的那次就放回不了了。
+    /// 不自己记下、放回（ChatTabs 给留着阅读位置的标签页这样改）：过了那段时间，留着的那次照样放得回去。
+    func testAZoomWithoutItsOwnHoldLeavesAnEarlierHoldRestorable() async throws {
+        for keeping in [true, false] {
+            let (r, _) = try await runtime(fixture())
+            try await scroll(r.webView, to: 1000)
+            let first = try await row(r.webView)
+            let pending = r.holdReadingPosition()
+            let holds = r.readingHolds
+            r.setPageZoom(1.25, keepingReadingPosition: keeping)
+            XCTAssertEqual(r.webView.pageZoom, 1.25)
+            XCTAssertEqual(r.readingHolds, keeping ? holds + 1 : holds)
+            try await Task.sleep(for: .milliseconds(1500))
+            try await scroll(r.webView, to: 3000)
+            try await expect(r.webView, "restore(\(pending))", is: keeping ? "none" : "restored")
+            if !keeping {
+                let restored = try await row(r.webView)
+                XCTAssertEqual(restored, first)
+            }
+        }
+    }
+
     /// 关闭以后不碰网页：之后的丢弃、放回（含要确认的）都不做，记下照样发编号但网页里什么都没记，也不写日志。
     func testAClosedRuntimeLeavesThePageAlone() async throws {
         let (r, diagnostics) = try await runtime(fixture())
