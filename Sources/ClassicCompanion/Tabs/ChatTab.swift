@@ -39,8 +39,8 @@ final class ChatTab {
     var logTag: TabID? { runtime.log.tab }
 
     /// 正式运行时建一个标签页：先建网页运行时（不自己看网络：网络状态由 ChatTabs 登记到全应用共用的那个上），
-    /// 再建适配器，两者写的日志都带上标识 id 的标签。启动时的那个由 AppDelegate 这样建；以后新增的也这样建
-    /// （交给 ChatTabs.add(_:)，标识由它从列表里发）。
+    /// 再建适配器，两者写的日志都带上标识 id 的标签。启动时的那个由 AppDelegate 这样建；新增的（ChatTabs.newTab()）也这样建：
+    /// AppDelegate 把同一个建法交给 ChatTabs（makeTab），标识由 ChatTabs.add(_:) 从列表里发。
     static func make(id: TabID, diagnostics: Diagnostics, settings: AppSettings) -> ChatTab {
         let runtime = WebRuntime(diagnostics: diagnostics, settings: settings, watchesNetwork: false, tab: id)
         let adapter = ChatGPTAdapter(webView: runtime.webView, diagnostics: diagnostics, settings: settings, tab: id)

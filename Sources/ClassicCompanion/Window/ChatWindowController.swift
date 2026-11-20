@@ -671,10 +671,11 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
 
     /// 新标签页：页面 p 开始第一次加载的遮挡，样子是新标签页的（页面底色加小进度圈，没有图标和应用名）。
     /// 规则、时限、上限和启动画面完全相同（beginCover(for:kind:)）。
-    /// 用法（3.6）：建好标签页、还没显示时对它的页面调用，再开始加载；切换的入口（ChatTabs.select(_:)）之后把它的遮挡投到窗口上。
+    /// 用法（ChatTabs.newTab()）：建好标签页、还没显示时对它的页面调用，再开始加载；切换的入口（ChatTabs.select(_:)）之后
+    /// 把它的遮挡投到窗口上。
     /// p 不显示时窗口一点不变（遮挡那层和样子、启动保护的窗口部分、日志），p 的启动保护和计时照常开始；
     /// p 显示着时和启动画面一样马上盖上，样子是新标签页的。p 已经关闭时什么都不做。
-    /// 应用里现在没有地方调用（新增标签页的入口在 3.6）。
+    /// 应用里还没有地方调用 newTab()。
     func beginNewTabCover(for p: PageLoadState) {
         beginCover(for: p, kind: .newTab)
     }
