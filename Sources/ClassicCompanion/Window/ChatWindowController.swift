@@ -80,7 +80,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private let webContainer: NSView
     /// 显示着的网页视图铺满 webContainer 的四条约束（换下去时要停掉它们）。
     private var webFill: [NSLayoutConstraint]
-    /// 藏在 webContainer 里的网页视图（切换标签页时换下去的）：把它固定在离开时的位置、大小的约束，和它离开时排好版的大小、缩放。
+    /// 藏在 webContainer 里的网页视图（切换标签页时换下去的；在后台打开的标签页加载前放进来的，见 addHiddenWebView(_:)）：
+    /// 把它固定在离开时（放进来时）的位置、大小的约束，和它那时排好版的大小、缩放。
     /// 再显示时、关闭标签页时（removeHiddenWebView(_:)）拿掉。容器持有这些网页视图，直到它们再显示或被拿出来。
     private var hiddenWebViews: [ObjectIdentifier: HiddenWebView] = [:]
     private let diagnostics: Diagnostics
@@ -1118,6 +1119,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// - 切模式的排版没接上（onPrepareLayout 是 nil，切模式也就直接切换）：没法等，不补。
     /// - 从没在这个窗口里显示过（不在藏着的里面：新标签页第一次显示）：不补。它的第一次加载有自己的遮挡（新标签页的遮挡），
     ///   那块盖到加载完成；补排版不和那块遮挡掺在一起。
+    ///   例外是在后台打开的标签页（⌘ 点击链接）：它加载前就按当时的大小藏进了容器（addHiddenWebView(_:)），
+    ///   第一次显示时和别的藏着的一样比；要补时补排版那块和它第一次加载的遮挡同时在，各按自己的规则结束。
     /// - 离开时没排好（那时正在切模式或补排版，被这次切换先结束了）：补，哪怕大小没变。
     /// - 离开时排好版的大小和现在的容器大小不同（藏着时切过模式、拖过边）：补。
     /// - 缩放和离开时不同（藏着时改了页面缩放，缩放每页都改）：补。
@@ -1268,9 +1271,32 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         view.isHidden = true
     }
 
-    /// 关闭标签页时（ChatTabs.close(_:)）：view 藏在容器里（它的页面显示过、又换下去了）就拿出来，窗口不再持有它，
-    /// 标签页放手后它就能释放。从没显示过的不在容器里；显示着的那个不算藏着（关闭显示着的标签页时 ChatTabs.closeTab(_:)
-    /// 先换上邻居，它就藏进了容器）：什么都不做。
+    /// 在后台打开的标签页（⌘ 点击链接，ChatTabs.openLink(_:from:_:)）还没加载、从没显示过的网页视图 view：放进容器、藏起，
+    /// 和切换走的网页视图一样（D3，hideInContainer）固定在容器现在的大小，并记作按这个大小和它现在的缩放排好了版。
+    /// 为什么（3.5 记下的缺口）：不放进来，它在窗口外面没有大小，第一次加载就在零大小或别的大小上排版，第一次显示时
+    /// 又因为“从没显示过”不补排版。放进来以后它从第一次加载起就在窗口里、按窗口现在的大小排版；第一次显示（display）时
+    /// 和别的藏着的网页视图一样拿它比：之后窗口变过大小或改过缩放就补排版，没变就不补。
+    /// 正在切模式（容器固定在目标大小、网页还没排好）：记作“不知道”，第一次显示时补排版（和切模式中换下去的一样）。
+    /// view 已经在容器里（显示着的、藏着的）：什么都不做。不改显示的页面、显示的网页视图、键盘焦点、页面底色的观察，不写日志。
+    /// 之后：第一次显示时 display 把它放上来（putOnDisplay 拿掉固定大小的约束）；关闭时 removeHiddenWebView(_:) 拿出来。
+    func addHiddenWebView(_ view: WKWebView) {
+        guard view !== webView, hiddenWebViews[ObjectIdentifier(view)] == nil else { return }
+        // 先把还没做的排版做完，容器现在的大小才是真的（和 display 换网页视图之前一样）。
+        webContainer.superview?.layoutSubtreeIfNeeded()
+        let size = webContainer.bounds.size
+        // 先藏起再放进去：放进去的那一刻它在显示着的网页视图上面。
+        view.isHidden = true
+        view.translatesAutoresizingMaskIntoConstraints = false
+        webContainer.addSubview(view)
+        hideInContainer(view, fill: [], size: size,
+                        laidOut: layoutChange == nil ? LaidOut(size: size, zoom: view.pageZoom) : nil)
+        // 马上变成这个大小（不等下一轮排版）：开始加载时它已经是窗口的大小。
+        webContainer.layoutSubtreeIfNeeded()
+    }
+
+    /// 关闭标签页时（ChatTabs.close(_:)）：view 藏在容器里（它的页面显示过、又换下去了；或者在后台打开、加载前放进来的，
+    /// addHiddenWebView(_:)）就拿出来，窗口不再持有它，标签页放手后它就能释放。从没显示过、也不是在后台打开的不在容器里；
+    /// 显示着的那个不算藏着（关闭显示着的标签页时 ChatTabs.closeTab(_:) 先换上邻居，它就藏进了容器）：什么都不做。
     func removeHiddenWebView(_ view: WKWebView) {
         guard let hidden = hiddenWebViews.removeValue(forKey: ObjectIdentifier(view)) else { return }
         NSLayoutConstraint.deactivate(hidden.fixed)

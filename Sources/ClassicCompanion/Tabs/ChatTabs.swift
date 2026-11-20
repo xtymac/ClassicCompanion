@@ -9,10 +9,11 @@ import CompanionCore
 ///
 /// 这里有一组标签页（tabs，按从左到右）和选中的那个（selected）。顺序、选中项和标识都由 list（TabList）决定。
 /// 换选中的只经 select(_:)（切换标签页：先改选中项，再让窗口显示它，再做跟着它的事）。新增标签页只经 newTab()，
-/// 关闭标签页只经 closeTab(_:)（closeSelectedTab()），重新打开最近关闭的只经 reopenClosedTab()。
+/// 关闭标签页只经 closeTab(_:)（closeSelectedTab()），重新打开最近关闭的只经 reopenClosedTab()，
+/// ⌘ 点击聊天链接在新标签页打开只经 openLink(_:from:_:)（3.12，网页运行时交来）。
 /// 开始时只有启动时的那一个，它就是选中的、窗口显示着的。应用里调用这些入口的是按键（3.10，handleKey(_:_:)：⌘T、⇧⌘T、
-/// ⌘W、⇧⌘W、切换的键）和菜单（3.11，TabMenus：同样的入口，不经 handleKey）；还没有标签栏（阶段 4）。
-/// 不用这些键和菜单项时一直只有启动时的那一个，和原来一样。
+/// ⌘W、⇧⌘W、切换的键）、菜单（3.11，TabMenus：同样的入口，不经 handleKey）和 ⌘ 点击聊天链接（3.12）；还没有标签栏（阶段 4）。
+/// 不用这些键、菜单项和 ⌘ 点击时一直只有启动时的那一个，和原来一样。
 ///
 /// 规则：事件属于发出它的标签页，接线时就绑定那个标签页，处理时明确传着它，不在中途拿“现在选中的”来代替。
 /// - 标签页自己的状态（页面加载状态、lastPath、适配器的代号、它自己的日志）不管选没选中都照常改。
@@ -375,6 +376,12 @@ final class ChatTabs {
             guard let self, let tab else { return false }
             return self.isSelected(tab)
         }
+        // ⌘ 点击、⇧⌘ 点击聊天链接（3.12）：来源就是这个标签页，打不打开、放在哪由 openLink(_:from:_:) 定。
+        // 这一组或 tab 已经释放：什么都不做（运行时那边导航照样取消）。
+        tab.runtime.onOpenLinkInTab = { [weak self, weak tab] url, opening in
+            guard let self, let tab else { return }
+            self.openLink(url, from: tab, opening)
+        }
     }
 
     /// ⌘R 和提示里的“重新加载”（窗口的按钮）：按下这一刻选中的标签页重新加载。提示显示的是窗口显示着的页面的状态，
@@ -563,8 +570,8 @@ final class ChatTabs {
 
     /// 第一次有多个标签页时的提示（3.11）：现在多于一个标签页、还没记下显示过（tipRecord），就请窗口显示它（showHint）。
     /// 窗口真正显示过它（TabHintPresenter 的规则：窗口在屏幕上连续 0.5 秒，或用户点了它的关闭按钮）才记下；
-    /// 显示不出来（窗口没显示、被挡住、还没显示过就被到上限的提示换掉）不记，下次新增、重新打开时再显示。
-    /// 新增、重新打开都经 open 调用；以后别的让标签页多起来的入口（3.12、标签栏）也要调用它。
+    /// 显示不出来（窗口没显示、被挡住、还没显示过就被到上限的提示换掉）不记，下次新增、重新打开、⌘ 点击链接打开时再显示。
+    /// 新增、重新打开经 open 调用，⌘ 点击链接打开经 openLink 调用（3.12）；以后别的让标签页多起来的入口（标签栏）也要调用它。
     func offerSeveralTabsTip() {
         guard tabs.count > 1, !tipRecord.severalTabsTipShown else { return }
         showHint(.severalTabs) { [weak self] in self?.tipRecord.severalTabsTipShown = true }
@@ -616,6 +623,75 @@ final class ChatTabs {
     private func reinsertClosedTab(_ make: (TabID) -> ChatTab) -> (tab: ChatTab, url: URL?)? {
         guard case .reopened(let id, let url) = list.reopen(select: false) else { return nil }
         return (adopt(id, make), url)
+    }
+
+    // MARK: - ⌘ 点击链接在新标签页打开（3.12）
+
+    /// ⌘ 点击、⇧⌘ 点击聊天链接：新建一个标签页加载 url，放在 source 的紧右边（D12，TabList.insert(rightOf:)）。
+    /// opening 是 .background（⌘）时留在后台、不切换过去；.foreground（⇧⌘）时切换过去（只经 select(_:)）。
+    /// 返回打开的那一个；不打开时返回 nil。
+    /// 应用里由网页运行时调用（onOpenLinkInTab，wire(_:) 接上，source 就是点击所在的标签页）。什么链接算、修饰键怎么看由运行时问
+    /// ChatLinkClick 定；这里只管打不打开、怎么打开。不管打不打开，source 的导航都已经由运行时取消：网页看到的是点了没跳转，
+    /// 也不交给浏览器。不找回窗口、不激活应用。
+    ///
+    /// 不打开（列表、选中项、窗口、焦点、记下的对话地址都不变，不建网页）：
+    /// - source 不在这组里（关闭了、拿掉了）：什么都不做，不写日志（关闭的运行时先取消导航，本来到不了这里）。
+    /// - ChatLinkClick.refusal(_:) 说不打开：写一行“[tabs] 不打开 ⌘ 点击的链接：原因”（⇧⌘ 写 ⇧⌘；带 source 的标签，没有地址）。
+    ///   原因按先后：点击来自不显示的标签页、窗口没有显示、有应用级的模态框、启动画面还在、已到上限（N 个）。
+    ///   已到上限时再请窗口显示到上限的提示（showHint(.limit)，和按键、菜单的是同一个，不出声）。
+    ///
+    /// 打开的顺序：
+    /// 1. 放进这组：TabList.insert(rightOf:)（source 的紧右边，不选中）→ adopt（建法是 makeTab，和新增的一样建的时候就照现在的设置；
+    ///    接好线——它不是选中的，所以从第一刻起网页的对话框排着、弹窗不开（3.9）；登记到网络状态）。
+    ///    写一行（带它的标签：第几个、现在几个，没有地址）。
+    /// 2. 只有 ⌘（后台）：它的网页视图放进窗口的容器、藏起，固定在容器现在的大小（ChatWindowController.addHiddenWebView(_:)）。
+    ///    在加载之前：它从第一次加载起就按窗口现在的大小排版，第一次显示时和别的藏着的网页视图一样比大小和缩放，变了就补排版
+    ///    （3.5 记下的缺口：不这样做，它在窗口外面没有大小，第一次显示时又不补）。窗口显示的页面、网页视图、焦点都不变。
+    ///    ⇧⌘ 在第 5 步马上切换过去，和新增标签页一样不先放进来（第一次显示不补排版）。
+    /// 3. 它的页面开始新标签页的遮挡（ChatWindowController.beginNewTabCover(for:)；它不显示，只改它自己的状态）。
+    /// 4. 加载 url（WebRuntime.load(_:)：“[nav] 加载”那一行经 Redactor，没有对话 id）。在遮挡之后：第一次加载从一开始就有遮挡盖着，
+    ///    和新增标签页一样。不选中也照常加载：是它自己的页面；它之后的事件只改它自己的状态（窗口、聚焦、记下的对话地址不跟着它）。
+    /// 5. 只有 ⇧⌘：切换过去（select(_:)）。聚焦（窗口是 key 窗口才聚焦）、记下可恢复的对话地址由 select 照常做
+    ///    （这时它还没有地址，记下的不改；加载后报出对话地址时按平常的规则记）。
+    /// 6. 第一次有多个标签页的提示（offerSeveralTabsTip()）。
+    @discardableResult
+    func openLink(_ url: URL, from source: ChatTab, _ opening: ChatLinkClick.Opening) -> ChatTab? {
+        guard holds(source) else { return nil }
+        let click = opening == .foreground ? "⇧⌘" : "⌘"
+        let situation = ChatLinkClick.Situation(sourceSelected: isSelected(source), windowShown: windowIsVisible(),
+                                                appModal: windowController.isAppModal(), launchScreenUp: isLaunchScreenUp,
+                                                atCapacity: list.isFull)
+        if let refusal = ChatLinkClick.refusal(situation) {
+            log(source, "tabs", "不打开 \(click) 点击的链接：\(refusalText(refusal))")
+            if refusal == .atCapacity { showHint(.limit(capacity: list.capacity), nil) }
+            return nil
+        }
+        guard let makeTab else { preconditionFailure("打开链接的标签页要有建法（AppDelegate 交进来）") }
+        guard case .added(let id) = list.insert(rightOf: source.id) else {
+            preconditionFailure("上面看过来源在这组里、没到上限")
+        }
+        let tab = adopt(id, makeTab)
+        let position = (tabs.firstIndex { $0 === tab } ?? 0) + 1
+        log(tab, "tabs", opening == .foreground
+            ? "⇧⌘ 点击链接，打开并切换过去（第 \(position) 个，现在 \(tabs.count) 个）"
+            : "⌘ 点击链接，在后台打开（第 \(position) 个，现在 \(tabs.count) 个）")
+        if opening == .background { windowController.addHiddenWebView(tab.runtime.webView) }
+        windowController.beginNewTabCover(for: tab.page)
+        tab.runtime.load(url)
+        if opening == .foreground { select(tab) }
+        offerSeveralTabsTip()
+        return tab
+    }
+
+    /// 不打开 ⌘ 点击的链接的原因写进日志的样子。
+    private func refusalText(_ refusal: ChatLinkClick.Refusal) -> String {
+        switch refusal {
+        case .sourceNotSelected: "点击来自不显示的标签页"
+        case .windowNotShown: "窗口没有显示"
+        case .appModal: "有应用级的模态框"
+        case .launchScreen: "启动画面还在"
+        case .atCapacity: "已到上限（\(list.capacity) 个）"
+        }
     }
 
     // MARK: - 按键（3.10）

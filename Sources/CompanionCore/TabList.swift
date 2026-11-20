@@ -11,7 +11,7 @@ public struct TabID: Hashable, Sendable {
 ///
 /// - 列表里至少有一个标签页，总有一个选中项。开始时只有启动时的那一个。
 /// - 上限默认 4 个（可用性决定，不是内存上限）。到上限时新增和重新打开都被拒绝，调用方显示上限提示。
-/// - 新增放在最右。
+/// - 新增放在最右。⌘ 点击、⇧⌘ 点击聊天链接打开的放在来源标签页的紧右边（D12，`insert(rightOf:)`）。
 /// - 关闭选中的标签页后选右边的邻居，没有就选左边。
 /// - 只剩一个标签页时不关闭，由调用方处理（⌘W 隐藏窗口，不释放该页）。
 /// - 上一个 / 下一个到头绕回；⌘1–⌘4 选第 N 个，⌘9 选最后一个。
@@ -74,12 +74,21 @@ public struct TabList: Equatable, Sendable {
 
     // MARK: 新增
 
-    /// ⌘T（`select: true`）：加在最右并选中。
-    /// ⌘ 点击聊天链接在后台打开（`select: false`），⇧⌘ 点击打开并选中。
-    /// 计划没写 ⌘ 点击打开的标签页放在哪，先和 ⌘T 一样放最右（浏览器多放在当前标签页右边，待定）。
+    /// ⌘T（`select: true`）：加在最右并选中。`select: false`：加在最右、选中项不变（ChatTabs 新增标签页时用：
+    /// 先放进来，再经自己的切换入口选中）。⌘ 点击链接打开的不放这里，见 `insert(rightOf:)`。
     public mutating func append(select: Bool = true) -> AddResult {
         guard !isFull else { return .atCapacity }
         return .added(insert(at: tabs.count, select: select))
+    }
+
+    /// ⌘ 点击、⇧⌘ 点击聊天链接打开的标签页（D12）：放在来源 `source`（点击所在的标签页）的紧右边，不放最右；选中项不变。
+    /// ⌘ 就这样留在后台；⇧⌘ 由调用方之后经自己的切换入口选中它（ChatTabs.select(_:)），这里从不选中。
+    /// 从同一个标签页连着 ⌘ 点击几次，每个新的都紧挨着来源，先开的被往右挤（最新的离来源最近）。放在哪只有这一条规则。
+    /// 已到上限时是 `.atCapacity`，列表不变。`source` 不在列表里（已经关了）时是 nil，列表不变、不发标识。
+    public mutating func insert(rightOf source: TabID) -> AddResult? {
+        guard let index = tabs.firstIndex(of: source) else { return nil }
+        guard !isFull else { return .atCapacity }
+        return .added(insert(at: index + 1, select: false))
     }
 
     private mutating func insert(at index: Int, select: Bool) -> TabID {

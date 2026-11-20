@@ -24,6 +24,12 @@ import Testing
         return nil
     }
 
+    /// `insert(rightOf:)` 放进来的标识（到上限、来源不在时是 nil）。
+    func inserted(_ result: TabList.AddResult?) -> TabID? {
+        if case .added(let id)? = result { return id }
+        return nil
+    }
+
     func reopened(_ result: TabList.ReopenResult) -> (id: TabID, url: URL)? {
         if case .reopened(let id, let url) = result { return (id, url) }
         return nil
@@ -506,5 +512,109 @@ import Testing
         #expect(full.reopen(select: false) == .atCapacity)
         #expect(full == kept, "不打开，记录留着")
         #expect(full.recentlyClosed.latest?.url == conversation(1))
+    }
+
+    // MARK: ⌘ 点击链接打开的放在哪（D12）
+
+    /// 放在来源的紧右边，不放最右；选中项不变。来源在最左、中间、最右，选中的是来源或别的都一样。
+    @Test(arguments: 0..<3) func insertRightOfPutsTheNewTabRightNextToTheSource(sourceIndex: Int) throws {
+        for chosen in 0..<3 {
+            var l = list(3, capacity: 5)
+            _ = l.select(l.tabs[chosen])
+            let before = l.tabs, selected = l.selected
+            let source = before[sourceIndex]
+            let new = try #require(inserted(l.insert(rightOf: source)))
+            var expected = before
+            expected.insert(new, at: sourceIndex + 1)
+            #expect(l.tabs == expected, "来源第 \(sourceIndex) 个，选中第 \(chosen) 个")
+            #expect(l.selected == selected, "不选中")
+            #expect(!before.contains(new))
+        }
+    }
+
+    /// 只有一个标签页：放在它右边，不选中。
+    @Test func insertRightOfTheOnlyTab() throws {
+        var l = TabList()
+        let first = l.selected
+        let new = try #require(inserted(l.insert(rightOf: first)))
+        #expect(l.tabs == [first, new])
+        #expect(l.selected == first)
+    }
+
+    /// 从同一个来源连着打开：每个新的都紧挨着来源，先开的被往右挤（最新的离来源最近），来源右边原来的那些一直在最后。
+    @Test func repeatedInsertsStackNextToTheSource() throws {
+        var l = list(3, capacity: 6)
+        let ids = l.tabs
+        _ = l.select(ids[1])
+        let a = try #require(inserted(l.insert(rightOf: ids[1])))
+        let b = try #require(inserted(l.insert(rightOf: ids[1])))
+        let c = try #require(inserted(l.insert(rightOf: ids[1])))
+        #expect(l.tabs == [ids[0], ids[1], c, b, a, ids[2]])
+        #expect(l.selected == ids[1])
+        #expect(Set([a, b, c]).count == 3)
+    }
+
+    /// 和 `append(select: false)` 只差位置：同一个标识、同样的个数和选中项，记录不动（不记、不消耗）。
+    @Test func insertRightOfMatchesBackgroundAppendExceptThePosition() throws {
+        var a = list(3)
+        _ = a.close(a.tabs[1], url: conversation(1))
+        var b = a
+        let records = a.recentlyClosed
+        let put = try #require(inserted(a.insert(rightOf: a.tabs[0])))
+        let appended = try #require(added(b.append(select: false)))
+        #expect(put == appended)
+        #expect(Set(a.tabs) == Set(b.tabs))
+        #expect(a.selected == b.selected)
+        #expect(a.recentlyClosed == records && b.recentlyClosed == records)
+        #expect(a.tabs.firstIndex(of: put) == 1 && b.tabs.firstIndex(of: appended) == 2)
+    }
+
+    /// 已到上限：`.atCapacity`，列表、选中项、记录、下一个标识都不变。
+    @Test func insertRightOfAtCapacityChangesNothing() throws {
+        var l = list(4)
+        _ = l.close(l.tabs[1], url: conversation(1))
+        _ = try #require(added(l.append()))
+        #expect(l.isFull)
+        let before = l
+        for source in before.tabs {
+            #expect(l.insert(rightOf: source) == .atCapacity)
+            #expect(l == before)
+        }
+        _ = l.close(l.tabs[0], url: home)
+        let next = try #require(inserted(l.insert(rightOf: l.tabs[0])))
+        #expect(!before.tabs.contains(next))
+    }
+
+    /// 来源不在列表里（已经关了）：nil，列表不变，也不发标识（下一个发的和没调用过一样）。到上限时也先看来源。
+    @Test func insertRightOfAMissingSourceIsNil() throws {
+        var l = list(3)
+        let gone = l.tabs[1]
+        _ = l.close(gone, url: home)
+        let before = l
+        #expect(l.insert(rightOf: gone) == nil)
+        #expect(l == before)
+        var other = before
+        let next = try #require(added(l.append()))
+        let expected = try #require(added(other.append()))
+        #expect(next == expected, "没有消耗标识")
+
+        var full = list(4)
+        let closed = full.tabs[0]
+        _ = full.close(closed, url: home)
+        _ = try #require(added(full.append()))
+        #expect(full.insert(rightOf: closed) == nil)
+    }
+
+    /// 标识不复用：插进来的和关掉过的、在列表里的都不同。
+    @Test func insertRightOfNeverReusesIdentifiers() throws {
+        var l = list(3)
+        var seen = Set(l.tabs)
+        _ = l.close(l.tabs[2], url: home)
+        for _ in 0..<2 {
+            let new = try #require(inserted(l.insert(rightOf: l.tabs[0])))
+            #expect(!seen.contains(new))
+            seen.insert(new)
+        }
+        #expect(Set(l.tabs).count == l.tabs.count)
     }
 }
