@@ -56,7 +56,8 @@ final class ChatWindow: NSPanel {
     }
 }
 
-/// 单窗口，窗口里一次显示一个 WebView（可以换成另一个，见 replaceWebView）。Quick / Full 通过调整同一窗口尺寸切换，不迁移 WebView。
+/// 单窗口，窗口里一次显示一个 WebView（切换标签页时换成那一页的，见 display(_:webView:beforeCatchUp:laidOut:)；
+/// 不显示的标签页的网页视图藏在容器里，见 hiddenWebViews）。Quick / Full 通过调整同一窗口尺寸切换，不迁移 WebView。
 @MainActor
 final class ChatWindowController: NSWindowController, NSWindowDelegate {
     enum Mode { case quick, full }
@@ -703,11 +704,11 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
 
     /// 新标签页：页面 p 开始第一次加载的遮挡，样子是新标签页的（页面底色加小进度圈，没有图标和应用名）。
     /// 规则、时限、上限和启动画面完全相同（beginCover(for:kind:)）。
-    /// 用法（ChatTabs.newTab()）：建好标签页、还没显示时对它的页面调用，再开始加载；切换的入口（ChatTabs.select(_:)）之后
-    /// 把它的遮挡投到窗口上。
+    /// 用法（ChatTabs.newTab()、reopenClosedTab()、openLink(_:from:_:)）：建好标签页、还没显示时对它的页面调用，再开始加载；
+    /// 要显示它时切换的入口（ChatTabs.select(_:)）把它的遮挡投到窗口上（⌘ 点击在后台打开的可能一直不显示，遮挡只在它自己的状态里结束）。
     /// p 不显示时窗口一点不变（遮挡那层和样子、启动保护的窗口部分、日志），p 的启动保护和计时照常开始；
     /// p 显示着时和启动画面一样马上盖上，样子是新标签页的。p 已经关闭时什么都不做。
-    /// 应用里调用 newTab()、reopenClosedTab() 的是 ⌘T、⇧⌘T（3.10，ChatTabs.handleKey(_:_:)）。
+    /// 应用里调用这几个入口的是 ⌘T、⇧⌘T（3.10，ChatTabs.handleKey(_:_:)）、菜单（3.11，TabMenus）和 ⌘ 点击聊天链接（3.12）。
     func beginNewTabCover(for p: PageLoadState) {
         beginCover(for: p, kind: .newTab)
     }
@@ -764,7 +765,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
                         + "最多到 \(Int(launchScreenCap)) 秒）")
     }
 
-    /// 显示着的页面加载完、加载失败时调用（AppDelegate）。
+    /// 显示着的页面加载完、加载失败时调用（测试用；应用里由 ChatTabs.wire(_:) 接到带页的 endLaunchScreen(_:for:)）。
     func endLaunchScreen(_ outcome: String) {
         endLaunchScreen(outcome, for: page)
     }
@@ -801,7 +802,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         launchCover.isHidden = !p.isCovered
     }
 
-    /// 显示着的页面的主框架提交时调用（AppDelegate.onMainFrameCommitted，在“提示可以收起”之前）。
+    /// 显示着的页面的主框架提交时调用（测试用；应用里由 ChatTabs.wire(_:) 在运行时报提交时调用带页的 pageDidCommit(_:)）。
     func pageDidCommit() {
         pageDidCommit(page)
     }
@@ -898,7 +899,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         diagnostics.log("appearance", "启动保护：网页加载完成前不跟随页面底色（保持\(Self.shade(appearance.background))）")
     }
 
-    /// 显示着的页面加载完成时调用（AppDelegate.onMainFrameLoaded，每次都调用）。报的颜色是显示着的网页视图此刻报的。
+    /// 显示着的页面加载完成时调用（测试用；应用里由 ChatTabs.wire(_:) 每次加载完成调用带页的
+    /// pageDidFinishLoading(_:reportedColor:)）。报的颜色是显示着的网页视图此刻报的。
     func pageDidFinishLoading() {
         pageDidFinishLoading(page, reportedColor: webView.underPageBackgroundColor)
     }

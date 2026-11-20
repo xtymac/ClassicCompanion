@@ -168,8 +168,8 @@ final class ChatTabs {
     /// 启动画面还在：这组里有页面的启动画面（启动时的那种遮挡）还盖着，到时限后还在等提交也算
     /// （ChatWindowController.coversWithLaunchScreen(_:)）。只有启动时的那个标签页会有：启动画面只在启动时开始一次
     /// （beginLaunchScreen()）。新标签页的遮挡不算，窗口那层显不显示也不看（看的是页面自己的遮挡状态）。
-    /// 计划 4.3“启动画面还在的时候不能新增标签页”：新增标签页的入口 newTab() 在它为 true 时不加
-    /// （以后的菜单置灰、按键不响应也看它）。
+    /// 计划 4.3“启动画面还在的时候不能新增标签页”：新增、重新打开的入口（open(_:place:line:)）在它为 true 时不加，
+    /// ⌘ 点击链接（openLink(_:from:_:)）不打开，菜单项置灰也看它（TabMenus）。
     var isLaunchScreenUp: Bool {
         tabs.contains { windowController.coversWithLaunchScreen($0.page) }
     }
@@ -184,7 +184,8 @@ final class ChatTabs {
     }
 
     /// list 刚放进去、不选中的标识 id：用 make 建标签页，放进 tabs 里和 list 一样的位置，接好线，登记到网络状态。
-    /// 加在最右（add(_:)）和放回原位置（reinsertClosedTab(_:)）都经这里：放在哪由 list 定，tabs 照抄 list 的位置，
+    /// 加在最右（add(_:)）、放回原位置（reinsertClosedTab(_:)）和放在来源页右边（openLink(_:from:_:)）都经这里：
+    /// 放在哪由 list 定，tabs 照抄 list 的位置，
     /// 两者顺序总是一样。make 运行的那一会儿 list 已经有它、tabs 还没有；这时这里的代码都不运行（make 只建标签页）。
     private func adopt(_ id: TabID, _ make: (TabID) -> ChatTab) -> ChatTab {
         let tab = make(id)
@@ -221,7 +222,7 @@ final class ChatTabs {
 
     // MARK: - 关闭标签页
 
-    /// 关闭标签页 tab（3.7）。应用里经 closeSelectedTab() 由 ⌘W 调用（3.10）；菜单在 3.11、标签栏在阶段 4 接上。
+    /// 关闭标签页 tab（3.7）。应用里经 closeSelectedTab() 由 ⌘W（3.10）和菜单里的“关闭标签页”（3.11）调用；标签栏在阶段 4 接上。
     ///
     /// - tab 不在这组里（关过了、不是这组的）：什么都不做（不隐藏窗口、不写日志），所以关两遍是安全的。
     /// - 只有一个标签页（它就是选中的）：不关、不释放，页面留着；和原来的 ⌘W 一样隐藏窗口（hideWindow("⌘W")，
@@ -267,7 +268,7 @@ final class ChatTabs {
         close(tab)
     }
 
-    /// 关闭选中的标签页（⌘W，handleKey(_:_:)）：closeTab(_:) 按下这一刻选中的那个。
+    /// 关闭选中的标签页（⌘W，handleKey(_:_:)；菜单里的“关闭标签页”，TabMenus）：closeTab(_:) 按下这一刻选中的那个。
     func closeSelectedTab() {
         closeTab(selected)
     }
@@ -449,8 +450,9 @@ final class ChatTabs {
     // MARK: - 切换标签页
 
     /// 切换到标签页 tab：它成为选中的、窗口显示它。tab 已经是选中的、不在这组里（没加进来、关闭了、拿掉了）：什么都不做。
-    /// 新增标签页（newTab()）经这里换上新的那一页；关闭显示着的标签页（closeTab(_:)）先经这里换上邻居；
-    /// 切换的键（⌃Tab ⌃⇧Tab ⇧⌘] ⇧⌘[ ⌘1–⌘4 ⌘9，handleKey(_:_:)）直接经这里换。
+    /// 新增、重新打开标签页（newTab()、reopenClosedTab()）和 ⇧⌘ 点击在前台打开（openLink(_:from:_:)）经这里换上新的那一页；
+    /// 关闭显示着的标签页（closeTab(_:)）先经这里换上邻居；切换的键（⌃Tab ⌃⇧Tab ⇧⌘] ⇧⌘[ ⌘1–⌘4 ⌘9，handleKey(_:_:)）
+    /// 和窗口菜单（selectNextTab()、selectPreviousTab()）直接经这里换。
     ///
     /// 顺序：
     /// 1. 先改选中项（list）。窗口在下一步结束进行中的切模式时说“排版结束”，那时选中的已经是 tab：
