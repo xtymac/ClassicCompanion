@@ -846,6 +846,164 @@ final class TabDialogTests: XCTestCase {
 
     // MARK: - 弹窗
 
+    /// tab 开着的一个弹窗：真的网页视图，代理是 tab 的运行时（和 createWebViewWith 开的一样），放进一个从不显示的窗口，
+    /// 记作 tab 的弹窗（adoptPopupForTesting）；打开本地 html（对话地址，不联网），里面有一个文件输入框。
+    /// 窗口在不在屏幕上由 screen 定（替身：测试里的窗口从不显示）。
+    private func popup(on tab: ChatTab, _ screen: PopupScreen) async throws -> (web: WKWebView, window: NSWindow) {
+        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: tab.runtime.webView.configuration)
+        web.navigationDelegate = tab.runtime
+        web.uiDelegate = tab.runtime
+        let window = NSWindow(contentRect: web.frame, styleMask: [.titled, .closable], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        window.contentView = web
+        tab.runtime.adoptPopupForTesting(window)
+        tab.runtime.popupWindowIsOnScreen = { [weak window] shown in shown === window && screen.on }
+        web.loadHTMLString("<html><body><input type=file id=f></body></html>", baseURL: chat)
+        try await waitUntil(5) { web.url == chat && !web.isLoading }
+        XCTAssertEqual(web.url, chat)
+        return (web, window)
+    }
+
+    /// 弹窗的网页里 js 的结果（和 pageValue 一样，最多等 seconds 秒，没返回就是 nil）。
+    private func popupValue(_ web: WKWebView, _ js: String, within seconds: Double = 1) async throws -> String? {
+        var result: String?
+        var done = false
+        Task {
+            result = (try? await web.evaluateJavaScript(js, in: nil, contentWorld: .page)).map { "\($0)" }
+            done = true
+        }
+        try await waitUntil(seconds) { done }
+        return result
+    }
+
+    /// 不选中的 2 开着的弹窗，窗口在屏幕上：弹窗的网页里的提示框、确认框、文件选择都马上显示（不排着，不等 2 被选中），
+    /// 网页拿到回答接着往下跑；每个写一行（只有种类，带 2 的标签）。2 自己的网页的对话框照原来排着，
+    /// 弹窗的不排在它后面。弹窗的窗口不在屏幕上（藏起、最小化）：和 2 自己的一样排着，2 被选中时显示。
+    func testAPopupOnScreenShowsItsDialogsAtOnceWhileItsTabIsInTheBackground() async throws {
+        let rig = make()
+        let c = try await capture()
+        let b = rig.add()
+        let desk = DialogDesk()
+        desk.install(on: rig.first, "1")
+        desk.install(on: b, "2")
+        let screen = PopupScreen()
+        let (web, _) = try await popup(on: b, screen)
+        XCTAssertFalse(b.runtime.isSelectedTab())
+        let answers = Answers()
+        askAlert(b, "2 自己的", c, answers)
+        try await waitUntil { b.runtime.heldDialogCount == 1 }
+        let mark = rig.mark()
+
+        _ = try await popupValue(web,
+            "setTimeout(() => { alert('弹窗提示'); window.r = String(confirm('弹窗确认')); }, 0); 0")
+        try await waitUntil { desk.presented.count == 2 }
+        // 网页停着等回答时脚本不返回：不等它（规则坏了时测试不卡住）。
+        _ = try await popupValue(web, "document.getElementById('f').click(); 0")
+        try await waitUntil { desk.presented.count == 3 }
+        let r = try await popupValue(web, "String(window.r)")
+        XCTAssertEqual(r, "true", "弹窗的网页拿到确认框的回答")
+        XCTAssertEqual(desk.presented, ["2 提示框 chatgpt.com 弹窗提示", "2 确认框 chatgpt.com 弹窗确认",
+                                        "2 文件选择 多选=false 文件夹=false"])
+        XCTAssertEqual(b.runtime.heldDialogCount, 1, "2 自己的还排着，弹窗的没排在它后面")
+        XCTAssertEqual(answers.list, [])
+        XCTAssertEqual(dialogLines(rig, since: mark), [
+            "[web] 弹窗的提示框：弹窗在屏幕上，马上显示（标签页不显示） 【标签2】",
+            "[web] 弹窗的确认框：弹窗在屏幕上，马上显示（标签页不显示） 【标签2】",
+            "[web] 弹窗的文件选择：弹窗在屏幕上，马上显示（标签页不显示） 【标签2】",
+        ])
+
+        screen.on = false
+        let hidden = rig.mark()
+        _ = try await popupValue(web, "setTimeout(() => { alert('藏起时'); window.after = 1; }, 0); 0")
+        try await waitUntil { b.runtime.heldDialogCount == 2 }
+        try await pause(0.2)
+        XCTAssertEqual(desk.presented.count, 3, "窗口不在屏幕上：排着")
+        XCTAssertEqual(dialogLines(rig, since: hidden), ["[web] 网页的提示框排着等显示（排着 2 个） 【标签2】"])
+
+        rig.tabs.select(b)
+        try await waitUntil { desk.presented.count == 5 }
+        XCTAssertEqual(Array(desk.presented.suffix(2)), ["2 提示框 chatgpt.com 2 自己的", "2 提示框 chatgpt.com 藏起时"],
+                       "2 被选中时按到达的先后显示")
+        try await waitUntil { answers.list.count == 1 }
+        let after = try await popupValue(web, "String(window.after)")
+        XCTAssertEqual(after, "1")
+    }
+
+    /// 选中的 1 开着的弹窗、窗口在屏幕上：弹窗的对话框马上显示，不写日志（和原来一样）。
+    func testAPopupOnScreenOfTheSelectedTabShowsItsDialogsAtOnceWithoutALine() async throws {
+        let rig = make()
+        let desk = DialogDesk()
+        desk.install(on: rig.first, "1")
+        let (web, _) = try await popup(on: rig.first, PopupScreen())
+        let mark = rig.mark()
+        _ = try await popupValue(web, "setTimeout(() => { alert('弹窗提示') }, 0); 0")
+        try await waitUntil { desk.presented.count == 1 }
+        XCTAssertEqual(desk.presented, ["1 提示框 chatgpt.com 弹窗提示"])
+        XCTAssertEqual(dialogLines(rig, since: mark), [])
+    }
+
+    /// 弹窗的对话框显示着（等用户回答）时关闭它的标签页 2：叫它收起，测试之后给的回答不算，网页拿到取消（确认框 false），
+    /// 正好一次；关闭那一行写上取消的种类和个数、关掉 1 个弹窗；弹窗的窗口关掉了。关闭以后弹窗再来的马上按取消回答、不显示。
+    func testClosingTheTabCancelsItsPopupsShownDialogAndClosesThePopup() async throws {
+        let rig = make()
+        let b = rig.add()
+        let desk = DialogDesk()
+        desk.install(on: b, "2")
+        desk.answersAtOnce = false
+        let (web, window) = try await popup(on: b, PopupScreen())
+        var closed = 0
+        let observer = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window,
+                                                              queue: nil) { _ in MainActor.assumeIsolated { closed += 1 } }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        _ = try await popupValue(web, "setTimeout(() => { window.r = String(confirm('弹窗确认')); }, 0); 0")
+        try await waitUntil { desk.presented.count == 1 }
+        let mark = rig.mark()
+
+        rig.tabs.closeTab(b)
+        XCTAssertEqual(desk.dismissed, ["2 确认框 chatgpt.com 弹窗确认"])
+        XCTAssertEqual(closed, 1, "弹窗的窗口关掉了")
+        desk.answer(.confirmed(true))
+        var r: String?
+        let deadline = Date().addingTimeInterval(3)
+        while r != "false", Date() < deadline {
+            r = try await popupValue(web, "String(window.r)", within: 0.2)
+            try await pause(0.02)
+        }
+        XCTAssertEqual(r, "false", "按取消回答")
+        XCTAssertEqual(dialogLines(rig, since: mark),
+                       ["[web] 关闭网页：停止加载，关掉 1 个弹窗，网页的对话框按取消处理（确认框 1 个） 【标签2】"])
+
+        desk.answersAtOnce = true
+        _ = try await popupValue(web, "setTimeout(() => { window.s = String(confirm('关闭以后')); }, 0); 0")
+        var s: String?
+        while s != "false", Date() < deadline.addingTimeInterval(2) {
+            s = try await popupValue(web, "String(window.s)", within: 0.2)
+            try await pause(0.02)
+        }
+        XCTAssertEqual(s, "false")
+        XCTAssertEqual(desk.presented.count, 1, "关闭以后不显示")
+    }
+
+    /// 标签页换到后台时，它开着的弹窗照旧开着（不关），对话框跟着弹窗的窗口走（见上面）；换回来也一样。
+    /// 只有关闭这个标签页时才关掉。
+    func testAPopupStaysOpenWhenItsTabGoesToTheBackground() async throws {
+        let rig = make()
+        let b = rig.add()
+        let (_, window) = try await popup(on: rig.first, PopupScreen())
+        var closed = 0
+        let observer = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window,
+                                                              queue: nil) { _ in MainActor.assumeIsolated { closed += 1 } }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        rig.tabs.select(b)
+        rig.tabs.select(rig.first)
+        rig.tabs.select(b)
+        XCTAssertEqual(closed, 0)
+        let mark = rig.mark()
+        rig.tabs.closeTab(rig.first)
+        XCTAssertEqual(closed, 1)
+        XCTAssertTrue(rig.lines(since: mark).contains("[web] 关闭网页：停止加载，关掉 1 个弹窗 【标签1】"), "\(rig.lines(since: mark))")
+    }
+
     /// 不选中的标签页要开弹窗（聊天地址，原来会开一个登录弹窗那样的窗口）：不开，返回 nil，应用的窗口数不变，
     /// 写一行（带它的标签，没有地址）。选中的那条路会真的开窗口，这里不走。
     func testABackgroundTabsPopupIsNotOpened() async throws {
@@ -866,6 +1024,12 @@ final class TabDialogTests: XCTestCase {
 }
 
 // MARK: - 替身
+
+/// 测试里弹窗的窗口在不在屏幕上（替身）。
+@MainActor
+private final class PopupScreen {
+    var on = true
+}
 
 /// 回调被调用的记录。
 @MainActor
