@@ -29,6 +29,9 @@ final class ChatTab {
     /// （ChatTabs.tabShownAndLaidOut(_:)）再放回。一页最多一个（新的顶掉旧的，旧的丢弃）。
     /// 连续性规则说丢弃时（这一页在后台换了页面、提交过）当场丢弃并清掉网页里的；关闭标签页时丢掉（不碰网页）。
     var pendingReadingRestore: ReadingHold?
+    /// 上一次读到的这一页的网页媒体状态（每秒读选中的那一页，ChatTabs.mediaTick()；只用来写“变了”的日志）。
+    /// 每页一份：切换标签页后第一次读到的和换上来的这一页自己上次的比，不和换走的那一页的比。
+    var mediaState = "none"
 
     /// 这个标签页的日志带的标签：就是它的运行时的（正式运行时是 id；测试里单独建的运行时不带，是 nil）。
     /// ChatTabs 为这个标签页写日志时用它（见 TabLog）。

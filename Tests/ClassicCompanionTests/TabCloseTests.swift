@@ -7,7 +7,7 @@ import CompanionCore
 @testable import ClassicCompanion
 
 /// 关闭标签页的收尾（ChatTabs.close(_:)）。两个标签页：B 是启动时的那个，选中、窗口显示着；A 由 ChatTabs.add 加进来，从不显示。
-/// 关的是 A（不选中的；关选中的要先切换，切换入口以后做）。核对：
+/// 关的是 A（不选中的；关选中的要先切换，见 3.7）。核对：
 /// - 收尾的每一步：运行时和页面状态进入关闭态、排着的聚焦取消、列表和 tabs 一起拿掉、从网络状态去掉、回调断开；
 /// - 关闭以后 A 不再加载：定时重试、网络变化、窗口显示后都不加载；
 /// - A 晚到的失败、提交、加载完成、提示、地址变化（经运行时，或经关闭前就拿到的回调，或直接带 A 的页面交给窗口）
@@ -59,7 +59,11 @@ final class TabCloseTests: XCTestCase {
     func testClosingABackgroundTabTearsDownEachPart() throws {
         let rig = makeRig()
         let a = rig.a, b = rig.b
+        // 不选中的标签页请求聚焦什么都不排（focusInputSoon(for:)），所以在 A 选中时请求，再只换回选中项
+        // （测试的接缝：真正的切换 select(_:) 会取消它），让 A 不选中时还排着一次。
+        rig.tabs.selectForTesting(a)
         rig.tabs.focusInputSoon(for: a)
+        rig.tabs.selectForTesting(b)
         let focus = try XCTUnwrap(a.focusTask)
         XCTAssertEqual(rig.network.registeredCount, 2)
         let before = rig.snapshot(), markA = rig.diagnosticsA.entries.count
@@ -207,7 +211,11 @@ final class TabCloseTests: XCTestCase {
             c.runtime.load(chat)
             rig.fail(c.runtime)
             XCTAssertTrue(c.runtime.hasScheduledRetry)
+            // 在 C 选中时请求聚焦，再只换回选中项（测试的接缝，不取消它）：C 不选中时还排着一次。
+            rig.tabs.selectForTesting(c)
             rig.tabs.focusInputSoon(for: c)
+            rig.tabs.selectForTesting(rig.b)
+            XCTAssertNotNil(c.focusTask)
             c.runtime.onURLChange?(chat)
             c.runtime.onURLChange?(other)
             rig.tabs.close(c)
