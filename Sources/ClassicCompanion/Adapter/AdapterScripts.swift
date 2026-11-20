@@ -4,6 +4,8 @@
 
 enum AdapterScripts {
     /// 等网页按目标宽度画好一帧，放回阅读位置，再画一帧。窗口放大时用户看到的第一帧就该是新排版。
+    /// 这里放回的只是路径没变的那份记录（`__ccReadingHold.restore()` 不带编号）；排版期间换过页面的，由原生在排版结束后
+    /// 按连续性规则决定放回、请网页确认还是丢弃（ChatTabs 的阅读位置一节）。
     /// 通过 callAsyncJavaScript 运行，width 是调用时传入的 CSS 像素宽度。只读窗口宽度，不碰页面内容。
     /// 返回每一段的毫秒数和可滚动高度，写进诊断日志，用来查动画前的等待花在哪里（用户 2026-11-08）。只有数字。
     static let layoutReadyScript = """
@@ -435,11 +437,28 @@ enum AdapterScripts {
       };
       // 缩放和窗口大小变化都会重新排版：scrollTop 不变时，读到的内容就跳走了。记下视口里的一块内容，排版后放回原来的高度。
       // 只用位置，不读正文。用户自己滚动或按键时立刻放手。
+      // 原生每次记下都带一个编号（同一个网页视图里不重复，见 WebRuntime.holdReadingPosition()）：放回、丢弃都按编号，
+      // 只动那一次记下的。编号、记下时的路径和那一问一答的标识只留在这个隔离世界里，不返回、不进日志。
       let hold = null;
+      // 显示着（有布局盒子）。ChatGPT 换页面后旧内容可能藏着留在页面里（2026-11 实测），连着但不显示；
+      // 已经不在页面上的元素也没有布局盒子，所以这一条也管“还连着”。
+      const shown = el => el.getClientRects().length > 0;
       const contentAt = (s, box) => {
         for (const fy of [0.25, 0.4, 0.55, 0.1, 0.7]) for (const fx of [0.5, 0.25, 0.75]) {
           const el = document.elementFromPoint(box.left + box.width * fx, box.top + box.height * fy);
           if (el && el !== s && s.contains(el) && el.getBoundingClientRect().height < box.height) return el;
+        }
+        return null;
+      };
+      // 记下时视口里的一问一答：最外层的 [data-turn-key]（2026-11 登录后的页面实测，每个是一问一答）。
+      // 取最外层：一问一答里面的部分（例如正在生成的回答）会重画，外层留着。
+      // 只用来在“新对话页拿到对话地址”时确认还是同一段对话（见 confirmed）。
+      const TURN = '[data-turn-key]';
+      const turnAt = box => {
+        for (const fy of [0.25, 0.4, 0.55, 0.1, 0.7, 0.85]) for (const fx of [0.5, 0.25, 0.75]) {
+          let t = document.elementFromPoint(box.left + box.width * fx, box.top + box.height * fy)?.closest(TURN);
+          for (let up = t?.parentElement?.closest(TURN); up; up = up.parentElement?.closest(TURN)) t = up;
+          if (t) return t;
         }
         return null;
       };
@@ -451,43 +470,88 @@ enum AdapterScripts {
         window.removeEventListener('touchmove', releaseHold, { capture: true });
         window.removeEventListener('keydown', releaseHold, true);
       };
+      // 离开这份文档（整页导航；进返回缓存也算）：记下的都不再有用，放手，回来时也不沿用。
+      window.addEventListener('pagehide', releaseHold);
       const applyHold = () => {
         if (!hold) return;
         const { s, el, ratio } = hold;
-        if (!s.isConnected || (el && !el.isConnected)) return releaseHold();
+        if (!shown(s) || (el && !shown(el))) return releaseHold();
         if (!el) return s.scrollTo({ top: s.scrollHeight, behavior: 'instant' });
         const box = s.getBoundingClientRect();
         const off = el.getBoundingClientRect().top - box.top - ratio * box.height;
         if (Math.abs(off) >= 1) s.scrollTo({ top: s.scrollTop + off, behavior: 'instant' });
       };
+      // 记下的还在原处：同一个路径，滚动区和那块内容都还在页面上、显示着。
+      const inPlace = () => !!hold && hold.path === location.pathname && shown(hold.s) && (!hold.el || shown(hold.el));
+      // 新对话页拿到对话地址（/ → /c/<id>）时确认还是记下时那段对话：记下时视口里的那一问一答还是同一个元素、
+      // 还显示着、还在同一个滚动区里、标识（data-turn-key）没变。
+      // 记下时视口里没有一问一答（空的新对话页、或认不出结构）就确认不了。确认不了的都按换了对话处理。
+      // 确认了以后记下的那块内容不在了，放回时照样放手（put 返回 none）。
+      const confirmed = () => {
+        const { s, turn, turnKey } = hold;
+        return !!turn && shown(turn) && s.contains(turn) && turn.getAttribute('data-turn-key') === turnKey;
+      };
+      const put = () => {
+        hold.timers.forEach(clearTimeout);
+        applyHold();
+        if (!hold) return 'none';
+        hold.timers = [60, 160, 320, 640, 1000].map(ms => setTimeout(applyHold, ms));
+        hold.timers.push(setTimeout(releaseHold, 1100));
+        return 'restored';
+      };
+      // 丢掉编号 token 那一次：别的编号还在用这份记录时只去掉这一个，都没了才放手。
+      const drop = token => {
+        if (!hold || !hold.owners.has(token)) return false;
+        hold.owners.delete(token);
+        if (!hold.owners.size) releaseHold();
+        return true;
+      };
       window.__ccReadingHold = {
-        // 连续操作时沿用第一次记下的内容，误差不会累积。el 为空表示停在对话底部。
-        save() {
-          if (hold) return true;
+        // token：原生给的编号（测试和旧调用可以不给）。连续操作时沿用第一次记下的内容，误差不会累积，这次的编号也记在它上面；
+        // 只沿用还在原处的（inPlace）：换过页面、内容已不在的旧记录先放手，不沿用到别的页面上。el 为空表示停在对话底部。
+        save(token) {
+          if (inPlace()) {
+            if (token !== undefined) hold.owners.add(token);
+            return true;
+          }
+          releaseHold();
           const s = scroller();
           if (!s) return false;
           const box = s.getBoundingClientRect();
-          const el = s.scrollHeight - s.clientHeight - s.scrollTop < 4 ? null : contentAt(s, box);
-          if (!el && s.scrollHeight - s.clientHeight - s.scrollTop >= 4) return false;
-          hold = { s, el, ratio: el ? (el.getBoundingClientRect().top - box.top) / box.height : 0, timers: [] };
+          const atBottom = s.scrollHeight - s.clientHeight - s.scrollTop < 4;
+          const el = atBottom ? null : contentAt(s, box);
+          if (!el && !atBottom) return false;
+          const turn = turnAt(box);
+          hold = {
+            s, el, ratio: el ? (el.getBoundingClientRect().top - box.top) / box.height : 0, timers: [],
+            path: location.pathname, owners: new Set(token === undefined ? [] : [token]),
+            turn, turnKey: turn ? turn.getAttribute('data-turn-key') : null,
+          };
           window.addEventListener('wheel', releaseHold, { capture: true, passive: true });
           window.addEventListener('touchmove', releaseHold, { capture: true, passive: true });
           window.addEventListener('keydown', releaseHold, true);
           return true;
         },
-        // 网页排版比窗口慢，排版稳定前再放回几次。
-        restore() {
-          if (!hold) return;
-          hold.timers.forEach(clearTimeout);
-          applyHold();
-          if (!hold) return;
-          hold.timers = [60, 160, 320, 640, 1000].map(ms => setTimeout(applyHold, ms));
-          hold.timers.push(setTimeout(releaseHold, 1100));
+        // 网页排版比窗口慢，排版稳定前再放回几次。返回 restored（放回了）、unconfirmed（确认不了，这一次已丢掉）、
+        // none（没有这一次记下的，或记下的内容已不在、放手了）。
+        // 不带编号（排好版时的 layoutReadyScript）：只在路径没变时放回；路径变了留给原生按连续性规则决定（放回、确认或丢弃）。
+        // 带编号：原生已经决定放回，只放回这一次记下的；check 为真时先确认还是同一段对话，确认不了就丢掉这一次。
+        restore(token, check) {
+          if (token === undefined) return hold && hold.path === location.pathname ? put() : 'none';
+          if (!hold || !hold.owners.has(token)) return 'none';
+          if (check && !confirmed()) { drop(token); return 'unconfirmed'; }
+          return put();
+        },
+        // 丢掉编号 token 那一次记下的（原生按连续性规则判定它已不属于现在的页面）。更新的记录（别的编号）不动。
+        // 返回有没有这一次记下的。
+        discard(token) {
+          return drop(token);
         },
       };
       window.__ccRemoveEscape = () => {
         for (const [t, type, fn, cap] of listeners) t.removeEventListener(type, fn, cap);
         releaseHold();
+        window.removeEventListener('pagehide', releaseHold);
         delete window.__ccReadingHold;
         clearTimeout(resizeTimer);
         delete window.__ccRemoveEscape;

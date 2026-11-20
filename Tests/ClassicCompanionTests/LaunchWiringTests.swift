@@ -298,15 +298,29 @@ final class LaunchWiringTests: XCTestCase {
         ])
     }
 
-    /// 排版变化前后：记下、放回都给这个标签页，次数和顺序照窗口的回调，套着的也一样；中间换了页面也照样放回。
-    func testLayoutChangesHoldAndRestoreOnThisTab() {
-        let rig = makeRig()
+    /// 记下、放回、丢弃阅读位置换成时间线上的记录（“记下阅读位置”“放回阅读位置 1”“放回阅读位置 2 要网页确认”“丢弃阅读位置 3”），
+    /// 编号从 1 起。
+    private func recordReadingPosition(_ rig: Rig) {
+        var count = 0
         rig.tabs.holdReadingPosition = { [weak rig] runtime in
             rig?.timeline.append(runtime === rig?.tab.runtime ? "记下阅读位置" : "记下别的")
+            count += 1
+            return count
         }
-        rig.tabs.restoreReadingPosition = { [weak rig] runtime in
-            rig?.timeline.append(runtime === rig?.tab.runtime ? "放回阅读位置" : "放回别的")
+        rig.tabs.restoreReadingPosition = { [weak rig] runtime, token, confirm in
+            rig?.timeline.append((runtime === rig?.tab.runtime ? "放回阅读位置" : "放回别的") + " \(token)" + (confirm ? " 要网页确认" : ""))
         }
+        rig.tabs.discardReadingPosition = { [weak rig] runtime, token in
+            rig?.timeline.append((runtime === rig?.tab.runtime ? "丢弃阅读位置" : "丢弃别的") + " \(token)")
+        }
+    }
+
+    /// 排版变化前后：记下、放回都给这个标签页，次数和顺序照窗口的回调，套着的也一样；放回的是那一次的编号。
+    /// 中间换了页面（3.2 起）：记下时还没有地址、之后有了对话地址，连续性规则说丢弃：两次都在换页面那一刻丢弃
+    /// （网页里按编号丢掉，各写一行日志），排版结束时不再放回。阶段 2 时照样放回，那是临时例外。
+    func testLayoutChangesHoldAndRestoreOnThisTab() {
+        let rig = makeRig()
+        recordReadingPosition(rig)
         rig.controller.onWillChangeLayout?()
         rig.controller.onDidChangeLayout?()
         rig.controller.onWillChangeLayout?()
@@ -314,10 +328,59 @@ final class LaunchWiringTests: XCTestCase {
         rig.tab.runtime.onURLChange?(chat)
         rig.controller.onDidChangeLayout?()
         rig.controller.onDidChangeLayout?()
+        let dropped = "[reading] 阅读位置：丢弃排版前记下的位置（不知道记下时或现在的地址）"
         XCTAssertEqual(rig.lines, [
-            "记下阅读位置", "放回阅读位置", "记下阅读位置", "记下阅读位置",
+            "记下阅读位置", "放回阅读位置 1", "记下阅读位置", "记下阅读位置",
             "记下对话地址 https://chatgpt.com/c/abc", "[nav] 页面变化 https://chatgpt.com/c/<id>",
-            "放回阅读位置", "放回阅读位置",
+            "丢弃阅读位置 2", dropped, "丢弃阅读位置 3", dropped,
+        ])
+    }
+
+    /// 只有一个标签页时，3.2 唯一有意的变化：切模式、拖边途中选中的页面换了对话，旧位置不再放回。
+    /// 换到别的对话：当场丢弃（网页里丢掉、写一行日志），排版结束时什么都不做。只变 query：照常放回，不写日志。
+    func testTheOnlyTabDropsThePositionWhenItChangesConversationDuringALayoutChange() {
+        let rig = makeRig()
+        rig.tab.runtime.onURLChange?(chat)
+        recordReadingPosition(rig)
+        rig.timeline = []
+        rig.controller.onWillChangeLayout?()
+        rig.tab.runtime.onURLChange?(URL(string: "https://chatgpt.com/c/abc?model=x")!)
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(rig.lines, ["记下阅读位置", "记下对话地址 https://chatgpt.com/c/abc", "放回阅读位置 1"])
+
+        rig.timeline = []
+        rig.controller.onWillChangeLayout?()
+        rig.tab.runtime.onURLChange?(URL(string: "https://chatgpt.com/c/def")!)
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(rig.lines, [
+            "记下阅读位置", "记下对话地址 https://chatgpt.com/c/def", "[nav] 页面变化 https://chatgpt.com/c/<id>",
+            "丢弃阅读位置 2", "[reading] 阅读位置：丢弃排版前记下的位置（换了对话）",
+        ])
+        XCTAssertNil(rig.tab.pendingReadingRestore, "只有一个标签页，它总是选中的，没有留着的")
+    }
+
+    /// 只有一个标签页：新对话页在排版途中拿到对话地址（/ → /c/…）：放回，但要网页确认（确认不了网页自己丢掉）。
+    /// 排版途中整页重新加载（提交）：丢弃。
+    func testTheOnlyTabAsksThePageToConfirmANewChatThatGotItsAddressAndDropsAfterAReload() {
+        let rig = makeRig()
+        rig.tab.runtime.onURLChange?(WebRuntime.homeURL)
+        recordReadingPosition(rig)
+        rig.timeline = []
+        rig.controller.onWillChangeLayout?()
+        rig.tab.runtime.onURLChange?(chat)
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(rig.lines, [
+            "记下阅读位置", "记下对话地址 https://chatgpt.com/c/abc", "[nav] 页面变化 https://chatgpt.com/c/<id>",
+            "放回阅读位置 1 要网页确认",
+        ])
+
+        rig.timeline = []
+        rig.controller.onWillChangeLayout?()
+        rig.tab.runtime.webView(rig.tab.runtime.webView, didCommit: nil)
+        XCTAssertEqual(rig.tab.mainFrameCommits, 1)
+        rig.controller.onDidChangeLayout?()
+        XCTAssertEqual(rig.lines.filter { $0.contains("阅读位置") }, [
+            "记下阅读位置", "丢弃阅读位置 2", "[reading] 阅读位置：丢弃排版前记下的位置（页面重新加载过）",
         ])
     }
 

@@ -48,6 +48,8 @@ final class WebRuntime: NSObject {
     private var lastRequestedURL: URL?
     /// 已经关闭（close()）。之后不再发起任何加载、不再排重试，网页的导航事件和弹窗请求都不理，回调已经断开。不会改回。
     private(set) var isClosed = false
+    /// 记下过几次阅读位置，就是最近一次的编号（见 holdReadingPosition()）。
+    private var readingHolds = 0
     /// 排着一次定时自动重试（测试和诊断用）。
     var hasScheduledRetry: Bool { retryTimer != nil }
 
@@ -171,9 +173,9 @@ final class WebRuntime: NSObject {
 
     func setPageZoom(_ zoom: Double) {
         guard webView.pageZoom != zoom else { return }
-        holdReadingPosition()
+        let hold = holdReadingPosition()
         webView.pageZoom = zoom
-        restoreReadingPosition()
+        restoreReadingPosition(hold)
         log("zoom", "页面缩放 \(Int(zoom * 100))%")
     }
 
@@ -206,12 +208,51 @@ final class WebRuntime: NSObject {
         Int((points / zoom).rounded())
     }
 
-    func holdReadingPosition() {
-        webView.evaluateJavaScript("window.__ccReadingHold?.save(); 0", in: nil, in: .defaultClient) { _ in }
+    /// 网页里记下正在读的内容（AdapterScripts 里的 __ccReadingHold），返回这一次的编号：之后按编号放回
+    /// （restoreReadingPosition(_:confirmingContinuation:)）或丢弃（discardReadingPosition(_:)），只动这一次记下的。
+    /// 编号在这个运行时里从 1 起往上数，不重复。关闭以后不碰网页（编号照发，网页里什么都没记下）。
+    @discardableResult
+    func holdReadingPosition() -> Int {
+        readingHolds += 1
+        let token = readingHolds
+        guard !isClosed else { return token }
+        webView.evaluateJavaScript("window.__ccReadingHold?.save(\(token)); 0", in: nil, in: .defaultClient) { _ in }
+        return token
     }
 
-    func restoreReadingPosition() {
-        webView.evaluateJavaScript("window.__ccReadingHold?.restore(); 0", in: nil, in: .defaultClient) { _ in }
+    /// 放回编号 token 那一次记下的阅读位置。
+    /// confirmingContinuation：新对话页拿到对话地址时（ReadingContinuity 的 confirmOnPage），先让网页确认记下时看着的
+    /// 那段对话还在原处，确认不了网页就丢掉这一次、不放回。确认的结果写一行日志（只有结果，没有内容）。
+    /// 关闭以后什么都不做（不碰网页、不写日志）。
+    func restoreReadingPosition(_ token: Int, confirmingContinuation: Bool = false) {
+        guard !isClosed else { return }
+        guard confirmingContinuation else {
+            webView.evaluateJavaScript("window.__ccReadingHold?.restore(\(token)); 0", in: nil, in: .defaultClient) { _ in }
+            return
+        }
+        webView.evaluateJavaScript("window.__ccReadingHold?.restore(\(token), true) ?? 'none'",
+                                   in: nil, in: .defaultClient) { [weak self] result in
+            MainActor.assumeIsolated {
+                guard let self, !self.isClosed else { return }
+                self.log("reading", Self.confirmationLine((try? result.get()) as? String))
+            }
+        }
+    }
+
+    /// 丢掉编号 token 那一次记下的阅读位置（它已不属于这一页现在显示的内容）：网页里不再留着，之后再记下也不会沿用它。
+    /// 同一份记录被更新的编号沿用着时，只去掉这一个编号，不动更新的。关闭以后什么都不做。
+    func discardReadingPosition(_ token: Int) {
+        guard !isClosed else { return }
+        webView.evaluateJavaScript("window.__ccReadingHold?.discard(\(token)); 0", in: nil, in: .defaultClient) { _ in }
+    }
+
+    /// 网页确认的结果（__ccReadingHold.restore(编号, true) 的返回值）写成的日志。
+    nonisolated static func confirmationLine(_ result: String?) -> String {
+        switch result {
+        case "restored": "阅读位置：网页确认记下时看着的那段对话还在，放回"
+        case "unconfirmed": "阅读位置：网页确认不了还是同一段对话，丢弃"
+        default: "阅读位置：网页里已经没有这次记下的位置"
+        }
     }
 
     func setPageAccessibilityAllowed(_ allowed: Bool) {
@@ -379,7 +420,8 @@ final class WebRuntime: NSObject {
     /// 不再转给窗口、不再排计时。所以下面停止加载引起的取消（-999）不会再排一次重试。
     /// 然后：取消排着的重试；停止加载；断开六个回调（接线的闭包持有页面状态，断开后不再驱动它）；
     /// 停掉地址观察和消息桥；关掉这个页面开的弹窗。
-    /// 关闭以后网页自己发起的导航、新窗口、提示框、确认框、文件选择也都按取消处理（见各代理方法）。
+    /// 关闭以后网页自己发起的导航、新窗口、提示框、确认框、文件选择也都按取消处理（见各代理方法）；
+    /// 记下、放回、丢弃阅读位置也不再碰网页。
     /// 关两遍：第二遍什么都不做。
     /// 不做的：从共用的网络状态上去掉（登记是 ChatTabs 做的，去掉也由它做）；从窗口拿掉网页视图（窗口只显示选中的标签页，
     /// 关的不是选中的）；取消进行中的网页脚本（新对话、证据采集、媒体状态由 ChatTabs 在 holds 检查处停下，见 ChatTabs.close(_:)）。
