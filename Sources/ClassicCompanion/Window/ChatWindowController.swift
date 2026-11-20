@@ -80,9 +80,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private let webContainer: NSView
     /// 显示着的网页视图铺满 webContainer 的四条约束（换下去时要停掉它们）。
     private var webFill: [NSLayoutConstraint]
-    /// 藏在 webContainer 里的网页视图（切换标签页时换下去的）和把它固定在离开时的位置、大小的约束。
+    /// 藏在 webContainer 里的网页视图（切换标签页时换下去的）：把它固定在离开时的位置、大小的约束，和它离开时排好版的大小、缩放。
     /// 再显示时、关闭标签页时（removeHiddenWebView(_:)）拿掉。容器持有这些网页视图，直到它们再显示或被拿出来。
-    private var hiddenWebViews: [ObjectIdentifier: [NSLayoutConstraint]] = [:]
+    private var hiddenWebViews: [ObjectIdentifier: HiddenWebView] = [:]
     private let diagnostics: Diagnostics
     private var previousApp: NSRunningApplication?
     private var screenObserver: Any?
@@ -128,9 +128,17 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 两个都接上才生效，否则窗口直接切换。
     var onSnapshotPage: ((@escaping @MainActor (NSImage?) -> Void) -> Void)?
     var onPrepareLayout: ((NSSize, @escaping @MainActor () -> Void) -> Void)?
-    /// 网页很忙时不能让窗口一直不动：到时限就直接切换。
+    /// 网页很忙时不能让窗口一直不动：到时限就直接切换。切换标签页后的补排版（catchUp）也最多等这么久。
     var layoutWaitLimit: TimeInterval = 1.5
     private var layoutChange: LayoutChange?
+    /// 进行中的补排版（切换标签页时换上来的网页视图离开时的大小或缩放和现在不同，见 display(_:webView:beforeCatchUp:laidOut:)）。
+    private var catchUp: CatchUp?
+    /// 有一次补排版在进行（测试和诊断用）。
+    var isCatchingUp: Bool { catchUp != nil }
+    /// 补排版时盖着网页的那块（测试用），没在补排版时是 nil。
+    var catchUpCoverView: NSView? { catchUp?.cover }
+    /// 那块的底色（测试用）。
+    var catchUpCoverBackground: NSColor? { catchUp?.cover.fill }
     private var frozenPage: NSView?
     var isShowingFrozenPage: Bool { frozenPage != nil }
     /// 盖着网页的那块（旧画面加页面底色）的位置和底色，测试和诊断用。
@@ -483,6 +491,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     func show(mode newMode: Mode?) {
         guard let window else { return }
         finishLayoutChange(animated: false)
+        finishCatchUp("显示窗口或切模式")
         rememberQuickPosition()
         let front = NSWorkspace.shared.frontmostApplication
         if front?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
@@ -578,6 +587,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     func hide(reason: String) {
         guard let window, window.isVisible else { return }
         finishLayoutChange(animated: false)
+        finishCatchUp("隐藏窗口")
         diagnostics.log("window", "隐藏：\(reason)")
         rememberQuickPosition()
         window.orderOut(nil)
@@ -969,6 +979,11 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         loadProblemCover.appearance = appearance.nsAppearance
         // 窗口底色和网页一致：切换、调整大小时新露出的地方不闪白。
         window?.backgroundColor = appearance.background ?? .windowBackgroundColor
+        // 补排版时盖着网页的那块是窗口此刻的页面底色：补排版中采用了新颜色（换上来的页面的颜色等到了），它跟着换。
+        if let cover = catchUp?.cover {
+            cover.fill = window?.backgroundColor ?? .windowBackgroundColor
+            cover.needsDisplay = true
+        }
     }
 
     // MARK: - 页面关闭
@@ -998,47 +1013,146 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - 切换显示的页面（切换标签页）
 
     /// 切换标签页的入口（ChatTabs.select(_:) 调用，选中项已经先改好）：窗口改为显示页面 p 和它的网页视图 newWebView，
-    /// 并把 p 自己的状态投到窗口上。p 已经是显示着的页面、或已经关闭（关闭的页面不再显示：它的状态停在关闭时，投上来窗口就停住了）：
-    /// 什么都不做。
+    /// 并把 p 自己的状态投到窗口上；newWebView 离开时排好版的大小或缩放和现在不同，先盖住、等它按现在的大小排好再揭开（补排版）。
+    /// p 已经是显示着的页面、或已经关闭（关闭的页面不再显示：它的状态停在关闭时，投上来窗口就停住了）：什么都不做，
+    /// beforeCatchUp 和 laidOut 都不调用。
     ///
     /// 没有 replaceWebView 那个“页面加载状态已停下来”的前提：状态是每个页面自己的，跟着页面一起换，
     /// 所以换到、换走还盖着遮挡、还在加载、有提示、在等颜色的页面都是正常的。剩下的前提只有两条：p 没有关闭（上面）；
     /// newWebView 就是 p 的网页视图（窗口分不出来，由调用方保证：ChatTab 的 page 和运行时的网页视图都是常量）。
     ///
+    /// 两个回调都属于这一次显示：
+    /// - beforeCatchUp：要补排版时调用一次，在 newWebView 还藏着、还是离开时的大小时（第 4 步里、放上来之前），
+    ///   调用方在这时记下它的阅读位置（排版变化之前）。不补排版就不调用。
+    /// - laidOut：p 按现在的窗口大小排好版时调用，每次显示正好一次：不用补排版就在最后一步当场调用；要补排版就在补排版结束时
+    ///   （网页排好、到时限、或者窗口要变大小、隐藏而先结束它，见 finishCatchUp(_:)）。补排版还没结束就又换了显示的页面
+    ///   （再调用这里），这一次就作废，laidOut 不再调用：p 已经不显示了。
+    ///
     /// 顺序：
-    /// 1. 进行中的切模式先结束（和隐藏、显示、拖边一样）。结束时窗口说“排版结束”（onDidChangeLayout）：选中项已经先改了，
+    /// 1. 记下换下去的页面这时是不是已经排好版：没有在切模式、也没有在补排版（这两样在下一步先结束，那时它的排版还没等完）。
+    /// 2. 进行中的切模式先结束（和隐藏、显示、拖边一样）。结束时窗口说“排版结束”（onDidChangeLayout）：选中项已经先改了，
     ///    所以换下去的那一页排版前记下的阅读位置留在它自己身上，等它再显示（不会放回到正要藏起的那一页）。
     ///    之后这次切模式的快照、排版完成和时限回调晚到都不起作用（layoutChange 已经不是它们那次）。
-    /// 2. 还在淡出的那层（启动画面的、提示的）是换下去的页面的：马上拿掉（D7），不盖在换上来的页面上。
-    /// 3. 换网页视图：newWebView 放进容器铺满、显示，键盘焦点交给它，Esc 判断和页面底色观察跟着换。
-    ///    换下去的网页视图留在容器里藏起，固定在离开时的大小（D3）：之后窗口变大小它也不重新排版；不拆掉，网页内容留着。
+    ///    进行中的补排版（换下去的页面的）作废：拿掉盖着的那块，不调用它的 laidOut；它迟到的排版完成和时限都不起作用。
+    /// 3. 还在淡出的那层（启动画面的、提示的）是换下去的页面的：马上拿掉（D7），不盖在换上来的页面上。
     ///    排着的颜色更新作废（取消，颜色代号加一）：换下去的页面排下的 150ms 更新和颜色等待到点时都不起作用。
-    /// 4. 显示的页面换成 p，p 的遮挡（applyCover，不重新开始，计时还是它自己开始时排下的）和提示（applyNotice）投上来。
+    /// 4. 换网页视图：先看 newWebView 要不要补排版（catchUpReason(for:)），要的话调用 beforeCatchUp。
+    ///    再把 newWebView 放进容器铺满、显示，键盘焦点交给它，Esc 判断和页面底色观察跟着换。
+    ///    换下去的网页视图留在容器里藏起，固定在离开时的大小（D3）：之后窗口变大小它也不重新排版；不拆掉，网页内容留着。
+    ///    同时记下它离开时排好版的大小和缩放（第 1 步说没排好的记作不知道），再显示时拿来比。
+    /// 5. 显示的页面换成 p，p 的遮挡（applyCover，不重新开始，计时还是它自己开始时排下的）和提示（applyNotice）投上来。
     ///    换下去的页面的遮挡、提示、颜色等待都留在它自己的状态里；它之后的事件和迟到的回调只改它自己的状态，不动窗口。
-    /// 5. 颜色（D4）：见 showPageColor(of:)。
-    /// 这里不写日志（切换的那一行由 ChatTabs.select(_:) 写；结束切模式、采用颜色照常写它们自己的行）。
-    ///
-    /// 换上来的网页视图按现在的容器大小排版：这里不补排版、不等它排好、不管它离开时是多大（每页的排版大小、切回来时先盖住
-    /// 补排版再揭开是 3.5 的事；那时补排版要放在第 4 步之后，排好时再告诉 ChatTabs，见 ChatTabs.select(_:) 里的 3.5 那一步）。
-    func display(_ p: PageLoadState, webView newWebView: WKWebView) {
+    /// 6. 颜色（D4）：见 showPageColor(of:)。
+    /// 7. 要补排版：开始补排版（beginCatchUp(_:laidOut:)：盖上窗口此刻的页面底色，newWebView 已经显示、在窗口里，
+    ///    这时才让网页按现在的大小排版，等它排好）。不用：当场调用 laidOut。
+    /// 不补排版时这里不写日志（切换的那一行由 ChatTabs.select(_:) 写；结束切模式、采用颜色照常写它们自己的行）；
+    /// 补排版的开始和结束各写一行（窗口的行，不带标签）。
+    func display(_ p: PageLoadState, webView newWebView: WKWebView,
+                 beforeCatchUp: () -> Void = {}, laidOut: @escaping @MainActor () -> Void = {}) {
         guard p !== page, !p.isClosed else { return }
+        let outgoingLaidOut = layoutChange == nil && catchUp == nil
         finishLayoutChange(animated: false)
+        dropCatchUp()
         dropFades()
         dropQueuedPageColor()
+        var reason: String?
         // newWebView 已经显示着：只在测试的接缝把显示的页面单独换过（setDisplayedPageForTesting）时会这样，不用换网页视图。
         if newWebView !== webView {
-            // 先把还没做的排版做完，离开时的大小才是它现在真正的大小。
+            // 先把还没做的排版做完，离开时的大小才是它现在真正的大小，现在的容器大小也是真的。
             webContainer.layoutSubtreeIfNeeded()
             let old = webView, oldFill = webFill, leaveSize = old.frame.size
+            reason = catchUpReason(for: newWebView)
+            if reason != nil { beforeCatchUp() }
             putOnDisplay(newWebView)
             // 要在藏起旧网页之前交：藏起含第一响应者的视图时 AppKit 会把焦点交给别处。
             window?.makeFirstResponder(newWebView)
-            hideInContainer(old, fill: oldFill, size: leaveSize)
+            hideInContainer(old, fill: oldFill, size: leaveSize,
+                            laidOut: outgoingLaidOut ? LaidOut(size: leaveSize, zoom: old.pageZoom) : nil)
         }
         page = p
         applyCover(p)
         applyNotice(p)
         showPageColor(of: p)
+        if let reason {
+            beginCatchUp(reason, laidOut: laidOut)
+        } else {
+            laidOut()
+        }
+    }
+
+    /// 换上来的网页视图 view 要不要补排版；要的话返回原因（写日志用），不要是 nil。
+    /// - 切模式的排版没接上（onPrepareLayout 是 nil，切模式也就直接切换）：没法等，不补。
+    /// - 从没在这个窗口里显示过（不在藏着的里面：新标签页第一次显示）：不补。它的第一次加载有自己的遮挡（新标签页的遮挡），
+    ///   那块盖到加载完成；补排版不和那块遮挡掺在一起。
+    /// - 离开时没排好（那时正在切模式或补排版，被这次切换先结束了）：补，哪怕大小没变。
+    /// - 离开时排好版的大小和现在的容器大小不同（藏着时切过模式、拖过边）：补。
+    /// - 缩放和离开时不同（藏着时改了页面缩放，缩放每页都改）：补。
+    /// 别的发给每一页的设置（网页增强、网页无障碍、弹窗标题）不改网页排版的大小，不算。
+    private func catchUpReason(for view: WKWebView) -> String? {
+        guard onPrepareLayout != nil, let hidden = hiddenWebViews[ObjectIdentifier(view)] else { return nil }
+        guard let laidOut = hidden.laidOut else { return "离开时还没排好" }
+        if laidOut.size != webContainer.bounds.size { return "大小和离开时不同" }
+        if laidOut.zoom != view.pageZoom { return "缩放和离开时不同" }
+        return nil
+    }
+
+    // MARK: - 补排版（切换标签页时）
+    //
+    // 换上来的网页视图离开时排好版的大小或缩放和现在不同时：先盖住，让它按现在的大小排好，再揭开（计划 4.2）。
+    // 用的是切模式那一套：同一个排版入口（onPrepareLayout，网页里的 layoutReadyScript：等窗口宽度到位，画两帧，放回阅读位置，
+    // 再画两帧）、同一个时限（layoutWaitLimit，到时限就揭开）、同一种身份核对（每一次是一个新对象，回调到点时不是 catchUp
+    // 这一次就什么都不做）。和切模式不同的只有两样：窗口不动；盖的不是旧画面，是一块窗口此刻的页面底色（计划“补排版时盖页面底色”：
+    // 换上来的页面在这个大小上没有画过，旧画面是别的页面的；不加图标、不加进度圈，通常只有一两百毫秒）。
+    // 那块放在网页上面、提示和第一次加载的遮挡下面：页面的“无法连接”提示和第一次加载的遮挡照样看得见；两者互不影响，
+    // 各自按自己的规则结束（遮挡先结束时，淡出那层下面还是这块；这块先结束时，遮挡还盖着）。
+    // 网页排版要等 requestAnimationFrame，网页视图藏着时它不走：所以补排版在网页视图已经显示、放进窗口以后才开始。
+    // 进行中的补排版遇到别的排版变化先结束（算排好，调用 laidOut）：显示窗口或切模式（show(mode:)）、隐藏窗口、拖边、
+    // 换网页视图，和进行中的切模式一样。又换了显示的页面：作废（dropCatchUp()），不调用 laidOut。
+
+    /// 开始补排版：盖上那块，排下时限，再让网页按现在的容器大小排版。只在 display 的最后一步调用（那时页面颜色已经定了）。
+    private func beginCatchUp(_ reason: String, laidOut: @escaping @MainActor () -> Void) {
+        guard let prepare = onPrepareLayout, let container = webContainer.superview else { return laidOut() }
+        let cover = FrozenPageView()
+        cover.fill = window?.backgroundColor ?? .windowBackgroundColor
+        cover.setAccessibilityElement(false)
+        cover.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(cover, positioned: .above, relativeTo: webContainer)
+        NSLayoutConstraint.activate(Self.fill(cover, in: webContainer))
+        let change = CatchUp(cover: cover, laidOut: laidOut)
+        catchUp = change
+        diagnostics.log("window", "补排版：\(reason)，盖上页面底色等网页排好")
+        // 换上来的网页视图马上变成现在的大小（不等下一轮排版），网页早一点知道新大小。
+        container.layoutSubtreeIfNeeded()
+        DispatchQueue.main.asyncAfter(deadline: .now() + layoutWaitLimit) { [weak self, weak change] in
+            MainActor.assumeIsolated {
+                guard let self, let change, self.catchUp === change else { return }
+                self.finishCatchUp("超过时限")
+            }
+        }
+        prepare(webContainer.bounds.size) { [weak self, weak change] in
+            guard let self, let change, self.catchUp === change else { return }
+            self.finishCatchUp("网页排好")
+        }
+    }
+
+    /// 补排版结束、算排好了（网页排好、到时限，或者窗口要变大小、隐藏而先结束）：拿掉那块，写一行，调用这次显示的 laidOut。
+    /// 没有在补排版时什么都不做。
+    private func finishCatchUp(_ outcome: String) {
+        guard let change = endCatchUp(outcome) else { return }
+        change.laidOut()
+    }
+
+    /// 又换了显示的页面：进行中的补排版作废，拿掉那块，写一行，不调用 laidOut（那一页已经不显示）。
+    private func dropCatchUp() {
+        _ = endCatchUp("换了显示的页面")
+    }
+
+    private func endCatchUp(_ outcome: String) -> CatchUp? {
+        guard let change = catchUp else { return nil }
+        catchUp = nil
+        change.cover.removeFromSuperview()
+        diagnostics.log("window", "补排版结束：\(outcome)（\(Int(Date().timeIntervalSince(change.started) * 1000))ms）")
+        return change
     }
 
     /// 换上来的页面 p 的颜色（D4，display(_:webView:) 的最后一步；颜色代号已经加过一）。用的都是原来的规则：
@@ -1089,8 +1203,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private func putOnDisplay(_ newWebView: WKWebView) {
         backgroundObservation?.invalidate()
         backgroundObservation = nil
-        if let fixed = hiddenWebViews.removeValue(forKey: ObjectIdentifier(newWebView)) {
-            NSLayoutConstraint.deactivate(fixed)
+        if let hidden = hiddenWebViews.removeValue(forKey: ObjectIdentifier(newWebView)) {
+            NSLayoutConstraint.deactivate(hidden.fixed)
         }
         if newWebView.superview !== webContainer {
             newWebView.translatesAutoresizingMaskIntoConstraints = false
@@ -1106,24 +1220,25 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// 换下去的网页视图（D3）：留在容器里藏起，不拿掉（网页内容留着、不重建；藏起以后 WebKit 会不会放慢它，要真实页面看），
-    /// 固定在离开时的位置和大小 size（离开时排好的那个大小）：之后窗口变大小它也不跟着重新排版。再显示时（putOnDisplay）回到铺满。
-    /// 3.5 要的“每页排版大小”就是这个固定的大小：再显示时拿它和现在的容器大小比，决定要不要先盖住补排版。
-    private func hideInContainer(_ view: WKWebView, fill: [NSLayoutConstraint], size: NSSize) {
+    /// 固定在离开时的位置和大小 size：之后窗口变大小它也不跟着重新排版。再显示时（putOnDisplay）回到铺满。
+    /// laidOut 是这一页的排版大小（每页一份，3.5）：离开时排好版的大小和缩放；离开时还没排好（正在切模式或补排版）是 nil。
+    /// 再显示时拿它和那时的容器大小、缩放比，决定要不要先盖住补排版（catchUpReason(for:)）。
+    private func hideInContainer(_ view: WKWebView, fill: [NSLayoutConstraint], size: NSSize, laidOut: LaidOut?) {
         NSLayoutConstraint.deactivate(fill)
         let fixed = [view.topAnchor.constraint(equalTo: webContainer.topAnchor),
                      view.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor),
                      view.widthAnchor.constraint(equalToConstant: size.width),
                      view.heightAnchor.constraint(equalToConstant: size.height)]
         NSLayoutConstraint.activate(fixed)
-        hiddenWebViews[ObjectIdentifier(view)] = fixed
+        hiddenWebViews[ObjectIdentifier(view)] = HiddenWebView(fixed: fixed, laidOut: laidOut)
         view.isHidden = true
     }
 
     /// 关闭标签页时（ChatTabs.close(_:)）：view 藏在容器里（它的页面显示过、又换下去了）就拿出来，窗口不再持有它，
     /// 标签页放手后它就能释放。从没显示过的不在容器里；显示着的那个不算藏着（关闭显示着的标签页要先换走，3.7）：什么都不做。
     func removeHiddenWebView(_ view: WKWebView) {
-        guard let fixed = hiddenWebViews.removeValue(forKey: ObjectIdentifier(view)) else { return }
-        NSLayoutConstraint.deactivate(fixed)
+        guard let hidden = hiddenWebViews.removeValue(forKey: ObjectIdentifier(view)) else { return }
+        NSLayoutConstraint.deactivate(hidden.fixed)
         view.removeFromSuperview()
     }
 
@@ -1138,6 +1253,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     ///
     /// 进行中的模式切换先结束，和隐藏、显示、拖边一样：快照和排版都是旧网页的，
     /// 晚到的快照、排版完成和时限回调因为 layoutChange 已经不是它们那次而不起作用。
+    /// 进行中的补排版也先结束（算排好），理由一样。
     ///
     /// 显示的页面（page）不跟着换，它的加载状态不保存、不恢复、不重设，换过之后就当作新网页视图的。
     /// 所以前提是换的时候这些状态都已经停下来（pageStateIsSettled）；没停下来时记一行日志，调试版断言。
@@ -1148,6 +1264,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     func replaceWebView(with newWebView: WKWebView) {
         guard newWebView !== webView else { return }
         finishLayoutChange(animated: false)
+        finishCatchUp("换网页视图")
         let settled = pageStateIsSettled
         if !settled {
             diagnostics.log("window", "换网页视图时页面加载状态还没停下来：状态仍按窗口一份算，可能不属于新网页")
@@ -1183,8 +1300,10 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 只给测试用（调试版才有）：窗口不显示也开始一次切模式的排版变化，和显示着的窗口按切换键时一样走
     /// （排版变化前的回调、快照、拍好后窗口到 frame、网页排好或到时限才结束），只是不改模式、不显示窗口。
     /// 用来验证切换标签页时进行中的那次怎么结束、它迟到的快照和排版回调不动之后的那次。快照和排版没接上时什么都不做。
+    /// 和 show(mode:) 一样，开始之前先结束进行中的补排版（算排好）。
     func beginLayoutChangeForTesting(to frame: NSRect) {
         guard onSnapshotPage != nil, onPrepareLayout != nil else { return }
+        finishCatchUp("显示窗口或切模式")
         onWillChangeLayout?()
         guard let change = beginLayoutChange() else { return }
         change.frame = frame
@@ -1193,6 +1312,20 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
 
     /// 有一次切模式的排版变化在进行（测试用）。
     var isChangingLayout: Bool { layoutChange != nil }
+
+    /// 藏在容器里的网页视图离开时排好版的情况（测试用）。
+    enum HiddenLayout: Equatable {
+        /// 离开时按这个大小和缩放排好了版。
+        case laidOut(NSSize, CGFloat)
+        /// 离开时正在切模式或补排版，不知道排好没有。
+        case unknown
+    }
+
+    /// view 藏在容器里时它离开时排好版的情况；不藏在这里（从没显示过、正显示着、拿出来了）是 nil（测试用）。
+    func hiddenLayout(of view: WKWebView) -> HiddenLayout? {
+        guard let hidden = hiddenWebViews[ObjectIdentifier(view)] else { return nil }
+        return hidden.laidOut.map { .laidOut($0.size, $0.zoom) } ?? .unknown
+    }
     #endif
 
     /// 网页视图铺满 webContainer 的四条约束。
@@ -1458,7 +1591,10 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 切模式的缩放动画也会走这里；拖动中按 ⌃⌘F 也会改变模式。所以只认从小窗开始的手动拖动。
     func windowWillStartLiveResize(_ notification: Notification) {
         resizingByHand = !resizingForMode
-        if resizingByHand { finishLayoutChange(animated: false) }
+        if resizingByHand {
+            finishLayoutChange(animated: false)
+            finishCatchUp("拖边")
+        }
         dragStartedInQuick = mode == .quick && resizingByHand
         if resizingByHand { onWillChangeLayout?() }
     }
@@ -1514,7 +1650,34 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     var windowPlaced = false
 }
 
+/// 一次进行中的补排版（切换标签页时换上来的网页视图按现在的大小排版）：盖着网页的那块、开始的时刻，和排好时要调用的 laidOut。
+@MainActor private final class CatchUp {
+    let started = Date()
+    /// 盖着网页的那块：窗口此刻的页面底色，没有图片。
+    let cover: FrozenPageView
+    /// 排好（或到时限、被先结束）时调用一次；作废时（又换了显示的页面）不调用。
+    let laidOut: @MainActor () -> Void
+
+    init(cover: FrozenPageView, laidOut: @escaping @MainActor () -> Void) {
+        self.cover = cover
+        self.laidOut = laidOut
+    }
+}
+
+/// 藏在容器里的一个网页视图：把它固定在离开时的位置、大小的约束，和它离开时排好版的大小、缩放（离开时没排好是 nil）。
+private struct HiddenWebView {
+    let fixed: [NSLayoutConstraint]
+    let laidOut: LaidOut?
+}
+
+/// 网页视图排好版时的大小（点）和页面缩放。两样都一样，网页里的排版（CSS 像素的视口）才一样。
+private struct LaidOut {
+    let size: NSSize
+    let zoom: CGFloat
+}
+
 /// 切换时盖在网页上的旧画面，图片以外的部分是页面底色。只是一张图，点击穿过去。
+/// 补排版时盖的那块也是它，没有图片，只有页面底色。
 private final class FrozenPageView: NSImageView {
     var fill: NSColor = .windowBackgroundColor
 

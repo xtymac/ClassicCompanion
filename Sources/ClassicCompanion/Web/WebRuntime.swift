@@ -48,8 +48,8 @@ final class WebRuntime: NSObject {
     private var lastRequestedURL: URL?
     /// 已经关闭（close()）。之后不再发起任何加载、不再排重试，网页的导航事件和弹窗请求都不理，回调已经断开。不会改回。
     private(set) var isClosed = false
-    /// 记下过几次阅读位置，就是最近一次的编号（见 holdReadingPosition()）。
-    private var readingHolds = 0
+    /// 记下过几次阅读位置，就是最近一次的编号（见 holdReadingPosition()）。测试读它看运行时自己记下过没有。
+    private(set) var readingHolds = 0
     /// 排着一次定时自动重试（测试和诊断用）。
     var hasScheduledRetry: Bool { retryTimer != nil }
 
@@ -171,11 +171,13 @@ final class WebRuntime: NSObject {
         }
     }
 
-    func setPageZoom(_ zoom: Double) {
+    /// 改页面缩放（已经是这个缩放时什么都不做）。keepingReadingPosition：改之前记下阅读位置、改完马上放回（原来的做法）；
+    /// 为 false 时只改缩放，不碰网页里记下的阅读位置——这一页留着一次等它再显示并排好版时放回的（见 ChatTabs.setPageZoom(_:)）。
+    func setPageZoom(_ zoom: Double, keepingReadingPosition: Bool = true) {
         guard webView.pageZoom != zoom else { return }
-        let hold = holdReadingPosition()
+        let hold = keepingReadingPosition ? holdReadingPosition() : nil
         webView.pageZoom = zoom
-        restoreReadingPosition(hold)
+        if let hold { restoreReadingPosition(hold) }
         log("zoom", "页面缩放 \(Int(zoom * 100))%")
     }
 

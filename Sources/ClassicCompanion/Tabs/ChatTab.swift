@@ -6,7 +6,8 @@ import CompanionCore
 /// 这里只放东西，不做事：正式运行时用 make(id:diagnostics:settings:) 建（启动时的那个在 AppDelegate 里），
 /// 测试也可以把建好的运行时和适配器交给 init；lastPath 和 focusTask 由 ChatTabs 的 urlChanged、focusInputSoon 改，
 /// 和它们原来在 AppDelegate 里时一样。阅读位置要用的几样（url、mainFrameCommits、pendingReadingRestore）也由 ChatTabs 改。
-/// 应用里现在只有一个（启动时建的那个）。标题和排好版的大小以后再加。
+/// 应用里现在只有一个（启动时建的那个）。标题以后再加。排好版的大小不在这里：它跟着藏起的网页视图记在窗口里
+/// （ChatWindowController.hideInContainer，和把它固定在离开时大小的约束在一起），再显示时窗口拿它决定要不要补排版。
 @MainActor
 final class ChatTab {
     /// 由 TabList 发放（TabID 只能从那里来）。
