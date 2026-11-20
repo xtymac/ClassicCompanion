@@ -535,7 +535,7 @@ private final class NewTabRig {
         settings = AppSettings(defaults: defaults)
         appearance = PageAppearance(defaults: defaults)
         let list = TabList(capacity: capacity)
-        first = ChatTab.make(id: list.selected, diagnostics: diagnostics, settings: settings)
+        first = Self.pinColour(ChatTab.make(id: list.selected, diagnostics: diagnostics, settings: settings))
         // 顶部一条和正式的一样高度固定：用 EmptyView 时它没有高度，竖直方向的排版不确定，换遮挡的样子
         // （启动画面 ↔ 新标签页的遮挡，内容大小不同）就会让网页的位置变高变矮，切回时被当成“大小和离开时不同”。
         controller = ChatWindowController(webView: first.runtime.webView,
@@ -580,12 +580,25 @@ private final class NewTabRig {
         }
     }
 
+    /// 网页视图建好就设上页面底色（白色），这一组测试就和这个测试进程的外观无关。实测（窗口不显示；只在这个测试进程里设应用外观，
+    /// 不改系统设置）：
+    /// - WebKit 在进程里建第一个网页视图时，按那时应用的外观定下网页视图还没报颜色时的底色（深色是 #1E1E1E，浅色是白色），
+    ///   之后建的网页视图都用它，再改应用外观也不变；
+    /// - 网页视图放进窗口、有了大小以后 0.03–0.25 秒，它的空白页报出自己的底色：白色（没有加载任何网页）。
+    /// 浅色下前后都是白色，没有变化；深色下是一次变化：窗口观察着显示的网页视图，150ms 后采用，写一行
+    /// “[appearance] 页面底色：浅色”，窗口底色变白——和这里要测的事无关，却会落在“什么都不变”的核对里。
+    /// 设上底色以后 WebKit 不再报它自己的底色（设成什么颜色都一样）；测试自己再设，窗口照样观察得到。
+    private static func pinColour(_ tab: ChatTab) -> ChatTab {
+        tab.runtime.webView.underPageBackgroundColor = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
+        return tab
+    }
+
     /// 新增的建法：正式运行时的 ChatTab.make，加载请求只记下来，记的时候写上它的遮挡、选中的是谁、窗口显示的是谁。
     private func build(_ id: TabID) -> ChatTab {
         let name = "\(id.rawValue)"
         made.append(id.rawValue)
         timeline.append("建 \(name)")
-        let tab = ChatTab.make(id: id, diagnostics: diagnostics, settings: settings)
+        let tab = Self.pinColour(ChatTab.make(id: id, diagnostics: diagnostics, settings: settings))
         tab.runtime.loadRequest = { [weak self, weak tab] request in
             guard let self, let tab else { return }
             let url = request.url!
