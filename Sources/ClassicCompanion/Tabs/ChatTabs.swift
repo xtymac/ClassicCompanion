@@ -297,6 +297,8 @@ final class ChatTabs {
     ///    （NavigationPolicy.restorableConversationURL）才记，去掉查询参数，连同它这时的位置；新对话页、登录页、
     ///    还没有地址的、查询参数里带临时聊天参数的（不管路径）都不记。只在内存里，最多 10 条，不去重。这里不写地址（只有 closeTab 那一行，没有地址）。
     /// 8. 从共用的网络状态上去掉（tabLeft）。
+    /// 9. 告诉诊断它关闭了（Diagnostics.tabClosed(_:)）：它关闭前写进诊断的（页面能力、媒体状态、证据、实验记录）留着，
+    ///    报告里那一行写“已关闭的标签N”。
     ///
     /// 不取消的（没有取消的办法）：进行中的新对话、证据采集和媒体实验、每秒的媒体状态、页面变化后的媒体日志、正在等页面结果的聚焦。
     /// 它们正在等的那一步返回后在 holds 检查处停下（不加载、不聚焦、不写诊断和日志）；适配器已经关闭，剩下的步骤也不再碰网页。
@@ -318,6 +320,7 @@ final class ChatTabs {
         precondition(result == .closed(selectionChanged: false), "不选中的标签页从列表里拿掉，选中项不变")
         tabs.removeAll { $0 === tab }
         tabLeft(tab)
+        diagnostics.tabClosed(tab.logTag)
         onTabsChanged?()
     }
 
@@ -815,7 +818,7 @@ final class ChatTabs {
             guard let self else { return }
             let state = await self.mediaState(tab.adapter)
             guard self.holds(tab) else { return }
-            self.diagnostics.webMediaState = state
+            self.diagnostics.recordWebMediaState(state, tab: tab.logTag)
             if state != tab.mediaState {
                 self.log(tab, "media", "WebKit 媒体状态 \(tab.mediaState) → \(state)（窗口可见=\(self.windowController.window?.isVisible ?? false)）")
                 tab.mediaState = state
@@ -824,10 +827,12 @@ final class ChatTabs {
     }
 
     /// 采集证据（诊断窗口、命令行通知）：对开始这一刻选中的标签页做，每一步都对它做，中途换了选中的也不跟着换；
-    /// 它不在这组里了就不再往下做。写报告文件由调用方在这之后做。
+    /// 它不在这组里了就不再往下做。写进诊断的都记下是它的（报告里那一行带它的标签）。写报告文件由调用方在这之后做。
     func collectEvidence(measure: Bool) async {
         let tab = selected
-        await PageEvidence.collect(from: evidenceTarget(tab), measure: measure, into: diagnostics) { self.holds(tab) }
+        await PageEvidence.collect(from: evidenceTarget(tab), measure: measure, into: diagnostics, tab: tab.logTag) {
+            self.holds(tab)
+        }
     }
 
     /// 媒体实验（诊断窗口）：和采集证据一样，对开始这一刻选中的标签页做；日志里的实验行带它的标签。
