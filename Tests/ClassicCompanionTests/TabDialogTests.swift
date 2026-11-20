@@ -551,6 +551,169 @@ final class TabDialogTests: XCTestCase {
         XCTAssertEqual(dialogLines(rig, since: mark).count, 1)
     }
 
+    // MARK: - 关显示着的标签页：先取消它的对话框，再处理邻居（用户 11-20 的裁定）
+
+    /// 2 选中：它放出来的提示框正显示着（等用户），后面还排着一个确认框；邻居 1 排着一个确认框（1 不选中时来的）。关 2：
+    /// - 切换到 1 的途中（记下 1 的对话地址那一刻：select 的这一步在放出 1 排着的对话框之前）：2 的对话框已经按取消处理——
+    ///   排着的拿走了、显示着的叫它收起了，这时还一个都没回答；1 的还排着；
+    /// - 之后的几轮里：2 排着的确认框先按取消回答（false），1 的确认框才显示；
+    /// - 2 显示着的提示框等用户点掉以后按取消回答（结束）。收起只叫一次，每个回调各一次，关闭那一行照样写上种类和个数。
+    /// 旧的顺序（先切换、再关闭）在那一刻 2 还没取消，1 的确认框先显示。
+    func testClosingTheSelectedTabCancelsItsDialogsBeforeTheNeighboursAreReleased() async throws {
+        let rig = make()
+        let c = try await capture()
+        let b = rig.add()
+        let desk = DialogDesk()
+        desk.install(on: rig.first, "1")
+        desk.install(on: b, "2")
+        desk.answersAtOnce = false
+        let answers = Answers()
+        desk.onPresent = { answers.list.append("显示 \($0)") }
+        // 切回 1 时记下它的对话地址：select 在放出 1 排着的对话框之前调用这个替身，测试在那一刻看一眼。
+        rig.first.runtime.onURLChange?(chat)
+        askAlert(b, "放出来显示着", c, answers)
+        try await waitUntil { b.runtime.heldDialogCount == 1 }
+        rig.tabs.select(b)
+        try await waitUntil { desk.presented.count == 1 }
+        askConfirm(b, "还排着", c, answers)
+        try await waitUntil { b.runtime.heldDialogCount == 1 }
+        askConfirm(rig.first, "邻居的", c, answers)
+        try await waitUntil { rig.first.runtime.heldDialogCount == 1 }
+        XCTAssertEqual(answers.list, ["显示 2 提示框 chatgpt.com 放出来显示着"])
+        let mark = rig.mark()
+        var atRelease: [String] = []
+        rig.onStub = { what in
+            guard what == "记下对话地址" else { return }
+            atRelease.append("2 已取消=\(b.runtime.dialogsCancelled) 2 排着=\(b.runtime.heldDialogCount) 收起=\(desk.dismissed) "
+                             + "1 排着=\(rig.first.runtime.heldDialogCount) 回答=\(answers.list.count)")
+        }
+
+        rig.tabs.closeTab(b)
+        rig.onStub = nil
+        XCTAssertEqual(atRelease, ["2 已取消=true 2 排着=0 收起=[\"2 提示框 chatgpt.com 放出来显示着\"] 1 排着=1 回答=1"])
+        try await waitUntil { answers.list.count == 3 }
+        try await pause(0.2)
+        XCTAssertEqual(answers.list, ["显示 2 提示框 chatgpt.com 放出来显示着", "确认框 false", "显示 1 确认框 chatgpt.com 邻居的"],
+                       "2 的回答先于 1 的显示")
+        desk.answer(.done)
+        try await waitUntil { answers.list.count == 4 }
+        desk.answer(.confirmed(true))
+        try await waitUntil { answers.list.count == 5 }
+        try await pause(0.3)
+        XCTAssertEqual(Array(answers.list.suffix(2)), ["提示框结束", "确认框 true"], "2 的提示框按取消结束；1 的拿到用户的回答")
+        XCTAssertEqual(answers.list.count, 5, "各一次")
+        XCTAssertEqual(desk.dismissed, ["2 提示框 chatgpt.com 放出来显示着"], "收起只叫一次")
+        XCTAssertEqual(dialogLines(rig, since: mark), [
+            "[web] 关闭网页：停止加载，网页的对话框按取消处理（提示框 1 个、确认框 1 个） 【标签2】",
+            "[web] 显示排着的确认框（还排着 0 个） 【标签1】",
+        ])
+    }
+
+    /// 1、2、3，3 在最右（关掉后选左边的 2）。3 排着一个确认框，邻居 2 排着一个提示框。同一轮里选中 3（放出它的确认框，
+    /// 还没显示）又关掉 3：3 的确认框按取消回答一次，不显示，不放回去排着；2 的提示框在它之后才显示。关闭那一行算上放出来的那一个。
+    func testAReleasedButNotYetShownDialogOfTheClosingTabIsCancelledBeforeTheNeighboursIsShown() async throws {
+        let rig = make()
+        let c = try await capture()
+        let left = rig.add(), b = rig.add()
+        let desk = DialogDesk()
+        desk.install(on: rig.first, "1")
+        desk.install(on: left, "2")
+        desk.install(on: b, "3")
+        let answers = Answers()
+        desk.onPresent = { answers.list.append("显示 \($0)") }
+        askConfirm(b, "放出来的", c, answers)
+        try await waitUntil { b.runtime.heldDialogCount == 1 }
+        askAlert(left, "邻居的", c, answers)
+        try await waitUntil { left.runtime.heldDialogCount == 1 }
+        let mark = rig.mark()
+
+        rig.tabs.select(b)
+        XCTAssertEqual(b.runtime.heldDialogCount, 0, "放出来了，还没显示")
+        rig.tabs.closeTab(b)
+        XCTAssertTrue(rig.tabs.selected === left)
+        try await waitUntil { answers.list.count == 3 }
+        try await pause(0.3)
+        XCTAssertEqual(answers.list, ["确认框 false", "显示 2 提示框 chatgpt.com 邻居的", "提示框结束"])
+        XCTAssertEqual(b.runtime.heldDialogCount, 0, "没有放回去排着")
+        XCTAssertFalse(desk.presented.contains { $0.hasPrefix("3 ") }, "\(desk.presented)")
+        XCTAssertEqual(dialogLines(rig, since: mark), ["[web] 关闭网页：停止加载，网页的对话框按取消处理（确认框 1 个） 【标签3】",
+                                                       "[web] 显示排着的提示框（还排着 0 个） 【标签2】"])
+    }
+
+    /// 取消点之后、关闭之前（WebRuntime.cancelDialogs() 之后还没 close()；closeTab 里这两步之间是切换到邻居）：
+    /// - 放出来还没显示的那一个醒来时这一页已经不是选中的、也没有关闭：按取消回答（false），不放回去排着、不显示、不写日志；
+    /// - 这一页再来的提示框、确认框、文件选择（再选中它也一样）：马上按取消回答，不排着、不显示、不写日志；
+    /// - 之后关闭：不再回答，关闭那一行写的是取消那一刻的种类和个数，只写一次。
+    func testAfterTheCancelPointEveryRequestOfThePageIsAnsweredAsCancelledOnce() async throws {
+        let rig = make()
+        let c = try await capture()
+        let b = rig.add()
+        let desk = DialogDesk()
+        desk.install(on: rig.first, "1")
+        desk.install(on: b, "2")
+        let answers = Answers()
+        askConfirm(b, "放出来的", c, answers)
+        try await waitUntil { b.runtime.heldDialogCount == 1 }
+        let mark = rig.mark()
+
+        rig.tabs.select(b)
+        b.runtime.cancelDialogs()
+        rig.tabs.select(rig.first)
+        XCTAssertTrue(b.runtime.dialogsCancelled)
+        XCTAssertFalse(b.runtime.isClosed)
+        try await waitUntil { answers.list.count == 1 }
+        try await pause(0.3)
+        XCTAssertEqual(answers.list, ["确认框 false"])
+        XCTAssertEqual(b.runtime.heldDialogCount, 0, "不放回去排着")
+        rig.tabs.select(b)
+        try await pause(0.2)
+        XCTAssertEqual(desk.presented, [], "再选中也不显示")
+
+        askAlert(b, "取消以后", c, answers)
+        try await waitUntil { answers.list.count == 2 }
+        askConfirm(b, "取消以后", c, answers)
+        try await waitUntil { answers.list.count == 3 }
+        askOpenPanel(b, c, answers)
+        try await waitUntil { answers.list.count == 4 }
+        try await pause(0.2)
+        XCTAssertEqual(answers.list, ["确认框 false", "提示框结束", "确认框 false", "文件选择 nil"])
+        XCTAssertEqual(desk.presented, [])
+        XCTAssertEqual(b.runtime.heldDialogCount, 0)
+        XCTAssertEqual(dialogLines(rig, since: mark), [], "取消、取消以后来的都不写日志")
+
+        rig.tabs.select(rig.first)
+        rig.tabs.closeTab(b)
+        try await pause(0.2)
+        XCTAssertEqual(answers.list.count, 4, "关闭时不再回答")
+        XCTAssertEqual(dialogLines(rig, since: mark), ["[web] 关闭网页：停止加载，网页的对话框按取消处理（确认框 1 个） 【标签2】"])
+    }
+
+    /// 取消点那一刻显示着的文件选择（2 选中，马上显示的，开着）：取消时叫它收起；还没关闭时面板给了文件，网页拿到的也是 nil，
+    /// 一次。之后关闭不再叫它收起、不再回答。
+    func testAPanelShownAtTheCancelPointIsAnsweredAsCancelledBeforeTheClose() async throws {
+        let rig = make()
+        let c = try await capture()
+        let b = rig.add()
+        let desk = DialogDesk()
+        desk.install(on: b, "2")
+        desk.answersAtOnce = false
+        let answers = Answers()
+        rig.tabs.select(b)
+        askOpenPanel(b, c, answers)
+        try await waitUntil { desk.presented.count == 1 }
+
+        b.runtime.cancelDialogs()
+        XCTAssertEqual(desk.dismissed, ["2 文件选择 多选=true 文件夹=false"])
+        XCTAssertFalse(b.runtime.isClosed)
+        desk.answer(.files([URL(fileURLWithPath: "/tmp/丁.txt")]))
+        try await waitUntil { answers.list.count == 1 }
+        XCTAssertEqual(answers.list, ["文件选择 nil"], "还没关闭也按取消")
+        rig.tabs.closeTab(b)
+        try await pause(0.2)
+        XCTAssertEqual(desk.dismissed.count, 1, "关闭时不再收起")
+        XCTAssertEqual(answers.list, ["文件选择 nil"], "各一次")
+    }
+
     /// 关闭以后来的（3.1 的规则不变）：三种都马上按取消回答，各一次，不显示、不写日志、不排着。
     func testRequestsAfterCloseAreCancelledAtOnceWithoutALine() async throws {
         let rig = make()

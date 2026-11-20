@@ -77,6 +77,13 @@ final class WebRuntime: NSObject {
     private var shownDialogs: [ShownDialog] = []
     /// 排着等显示的网页对话框有几个（测试和诊断用）。
     var heldDialogCount: Int { heldDialogs.count }
+    /// 这一页的网页对话框已经按取消处理（cancelDialogs()）：之后这一页的对话框一律马上按取消回答，不显示、不排着；
+    /// 已经放出来、还没显示的，醒来时也按取消回答，不再放回去排着。不会改回。
+    /// 关闭（close()）一定先进入它；关闭显示着的标签页时 ChatTabs.closeTab(_:) 在切换到邻居之前就进入（用户 11-20 的裁定：
+    /// 先取消旧页面的对话框请求，再处理邻居），那时这一页还没关闭。
+    private(set) var dialogsCancelled = false
+    /// cancelDialogs() 那一刻按取消处理的种类和个数（“提示框 1 个、文件选择 1 个”，没有就是空的），写进关闭那一行。
+    private var cancelledDialogs = ""
 
     /// 消息桥白名单
     private static let allowedMessageTypes: Set<String> = ["escape"]
@@ -451,7 +458,7 @@ final class WebRuntime: NSObject {
     /// 不再转给窗口、不再排计时。所以下面停止加载引起的取消（-999）不会再排一次重试。
     /// 然后：取消排着的重试；停止加载；断开六个回调（接线的闭包持有页面状态，断开后不再驱动它）；
     /// 停掉地址观察和消息桥；关掉这个页面开的弹窗；网页的对话框按取消处理（cancelDialogs()：排着的不再显示，
-    /// 显示着的文件选择收起，每一个都按取消回答 WebKit，各正好一次）。
+    /// 显示着的文件选择收起，每一个都按取消回答 WebKit，各正好一次；关闭显示着的标签页时 ChatTabs 已经先做过，这里不再做）。
     /// 关闭以后网页自己发起的导航、新窗口、提示框、确认框、文件选择、媒体采集也都按取消处理（见各代理方法）；
     /// 记下、放回、丢弃阅读位置也不再碰网页。关闭之前发出、之后才返回的网页脚本（加载完成后的 Esc 脚本、渲染自检、
     /// 排版、确认阅读位置、读浏览器标识）回来时什么都不写。所以关闭以后这个运行时只写关闭的那一行；
@@ -482,7 +489,9 @@ final class WebRuntime: NSObject {
         let popups = popupWindows
         popupWindows = []
         popups.forEach { $0.close() }
-        let dialogs = cancelDialogs()
+        // 已经取消过（关闭显示着的标签页时，切换到邻居之前）就不再做，那时取消的种类和个数照样写进这一行。
+        cancelDialogs()
+        let dialogs = cancelledDialogs
         log("web", "关闭网页：停止加载\(hadRetry ? "，取消排着的自动重试" : "")\(popups.isEmpty ? "" : "，关掉 \(popups.count) 个弹窗")"
                    + (dialogs.isEmpty ? "" : "，网页的对话框按取消处理（\(dialogs)）"))
     }
@@ -688,12 +697,14 @@ extension WebRuntime: WKDownloadDelegate {
 // MARK: - UI 代理：新窗口、文件选择、JS 对话框、媒体权限
 
 /// 关闭以后（isClosed）：不开新窗口，提示框、确认框、文件选择都按取消处理（不显示），媒体采集照样拒绝、不写日志。
+/// 对话框按取消处理从 dialogsCancelled 起（关闭一定先进入它；关闭显示着的标签页时更早，在切换到邻居之前）。
 ///
 /// 网页的对话框（提示框、确认框、文件选择）属于这个页面（这个标签页），按 runDialog(_:cancel:present:) 的规则显示：
 /// - 这一页是选中的（isSelectedTab）、没有排着的：马上显示，和原来一样（只有一个页面时总是这样，窗口隐藏、最小化时也是）。
 /// - 不是选中的：排在这一页上（heldDialogs，按到达的先后），什么都不显示，写一行（只有种类和个数）；
 ///   这一页被选中、窗口显示它以后（ChatTabs.select(_:) 最后调用 showHeldDialogs()）一次放出一个，显示完再放下一个。
-/// - 排着时、显示着时这一页关闭：按取消回答（提示框：结束；确认框：false；文件选择：nil）。
+/// - 排着时、放出来还没显示时、显示着时这一页的对话框按取消处理了（cancelDialogs()，关闭时）：按取消回答
+///   （提示框：结束；确认框：false；文件选择：nil）。
 /// 每个请求 WebKit 的回调都正好调用一次：代理方法每次调用正好返回一次，返回时由 WebKit 的接口调用回调。
 /// 排着的不设上限，个数不会自己一直涨：提示框、确认框让发出它的网页停下等回答，一个网页一次只有一个在等；
 /// 文件选择 WebKit 一个网页一次只发一个（两样都有测试实测，TabDialogTests）。一个标签页排着的最多是它的网页和它开着的
@@ -803,15 +814,17 @@ extension WebRuntime: WKUIDelegate {
     // MARK: 网页的对话框：排着、放出来、取消
 
     /// 网页的一个对话框按这一页的规则走一遍，返回给 WebKit 的回答：
-    /// - 已经关闭：cancel，不显示（3.1 的规则）。
+    /// - 这一页的对话框已经按取消处理（dialogsCancelled：关闭了，或者正在关闭、还没切换到邻居）：cancel，不显示、不排着、
+    ///   不写日志（3.1 的规则）。
     /// - 这一页是选中的，没有排着的，也没有放出来还没显示完的：马上显示（present），和原来一样，不写日志。
     /// - 不然排在这一页上（写一行“排着等显示”），等放出来（waitForTurn(_:)）再显示（写一行“显示排着的”）；
-    ///   等着时关闭：cancel，不显示。
-    /// - 显示着时关闭：close() 调用这一次的 dismiss（能收起的收起），present 返回后按 cancel 回答（不管用户选了什么）。
+    ///   等着时按取消处理了：cancel，不显示。
+    /// - 显示着时按取消处理了：cancelDialogs() 调用这一次的 dismiss（能收起的收起），present 返回后按 cancel 回答
+    ///   （不管用户选了什么）。
     /// 放出来的那一个显示完，放下一个（showHeldDialogs()）。present 最多调用一次；这个函数每次调用正好返回一次。
     private func runDialog<Answer>(_ kind: WebDialogKind, cancel: Answer,
                                    present: (ShownDialog) async -> Answer) async -> Answer {
-        guard !isClosed else { return cancel }
+        guard !dialogsCancelled else { return cancel }
         var held: HeldDialog?
         if !isSelectedTab() || !heldDialogs.isEmpty || dialogTurn != nil {
             let waiting = HeldDialog(kind)
@@ -829,16 +842,20 @@ extension WebRuntime: WKUIDelegate {
             dialogTurn = nil
             showHeldDialogs()
         }
-        return isClosed ? cancel : answer
+        return dialogsCancelled ? cancel : answer
     }
 
-    /// 排着的 held 等到放出来。返回 true：该显示了（这时它是 dialogTurn，这一页是选中的、没关闭）；false：关闭了，按取消。
-    /// 继续它的只有两处，各正好一次：showHeldDialogs() 放出它（先把它设成 dialogTurn）、close() 取消它（先进入关闭态）。
-    /// 放出来以后、真的显示之前（下一轮）这一页又不是选中的了（又切换走了）：放回最前面接着等，不写日志。
+    /// 排着的 held 等到放出来。返回 true：该显示了（这时它是 dialogTurn，这一页是选中的、对话框没有按取消处理）；
+    /// false：按取消处理了（关闭，或正在关闭），按取消回答。
+    /// 继续它的只有两处，各正好一次：showHeldDialogs() 放出它（先把它设成 dialogTurn）、cancelDialogs() 取消它
+    /// （先进入 dialogsCancelled）。
+    /// 放出来以后、真的显示之前（下一轮）：先看按取消处理了没有——关闭显示着的标签页时，放出来的那一个醒来时这一页已经
+    /// 不是选中的，要按取消回答，不能当作“又切换走了”放回去排着；没有按取消处理、这一页又不是选中的了（又切换走了）：
+    /// 放回最前面接着等，不写日志。
     private func waitForTurn(_ held: HeldDialog) async -> Bool {
         while true {
             await withCheckedContinuation { held.waiting = $0 }
-            if isClosed { return false }
+            if dialogsCancelled { return false }
             if isSelectedTab() { return true }
             if dialogTurn === held { dialogTurn = nil }
             heldDialogs.insert(held, at: 0)
@@ -847,18 +864,23 @@ extension WebRuntime: WKUIDelegate {
 
     /// 放出排着的第一个：它在之后的一轮里显示（这一轮的切换、关闭先做完），显示之前再看一次这一页还是不是选中的、关没关闭。
     /// 调用的地方：ChatTabs.select(_:) 的最后一步（这一页被选中、窗口显示了它）；放出来的那一个显示完时（runDialog）。
-    /// 关闭了、这一页不是选中的、已经放出一个还没显示完、没有排着的：什么都不做。
+    /// 对话框按取消处理了（关闭、正在关闭）、这一页不是选中的、已经放出一个还没显示完、没有排着的：什么都不做。
     func showHeldDialogs() {
-        guard !isClosed, isSelectedTab(), dialogTurn == nil, !heldDialogs.isEmpty else { return }
+        guard !dialogsCancelled, isSelectedTab(), dialogTurn == nil, !heldDialogs.isEmpty else { return }
         let next = heldDialogs.removeFirst()
         dialogTurn = next
         next.resume()
     }
 
-    /// 关闭时（close()，已经进入关闭态）：排着的都继续（看到已经关闭，按取消回答），放出来还没显示的到时也按取消回答，
-    /// 显示着的调用 dismiss（文件选择收起；模态框收不起，用户点掉以后按取消回答）。
-    /// 返回写进关闭那一行的种类和个数（“提示框 1 个、文件选择 1 个”，没有就是空的）：只有种类和个数，没有网页的文字和文件名。
-    private func cancelDialogs() -> String {
+    /// 这一页的网页对话框都按取消处理，之后来的也是（进入 dialogsCancelled，不会改回）：
+    /// 排着的都继续（看到已经按取消处理，按取消回答），放出来还没显示的醒来时也按取消回答（不放回去排着），
+    /// 显示着的调用 dismiss（文件选择收起；模态框收不起，用户点掉以后按取消回答）。每一个都正好回答一次。
+    /// 只做一次：再调用什么都不做。调用的地方：close()（总是）；ChatTabs.closeTab(_:) 关显示着的标签页时，在切换到邻居之前
+    /// （先取消这一页的，邻居排着的对话框才放出来）。不写日志：取消的种类和个数（“提示框 1 个、文件选择 1 个”，只有种类和
+    /// 个数，没有网页的文字和文件名）记在 cancelledDialogs，由 close() 写进关闭那一行，只写一次。
+    func cancelDialogs() {
+        guard !dialogsCancelled else { return }
+        dialogsCancelled = true
         let waiting = heldDialogs
         heldDialogs = []
         var kinds = waiting.map(\.kind)
@@ -868,7 +890,7 @@ extension WebRuntime: WKUIDelegate {
         kinds += shownDialogs.map(\.kind)
         waiting.forEach { $0.resume() }
         shownDialogs.forEach { $0.dismiss?() }
-        return WebDialogKind.allCases.compactMap { kind in
+        cancelledDialogs = WebDialogKind.allCases.compactMap { kind in
             let count = kinds.filter { $0 == kind }.count
             return count == 0 ? nil : "\(kind.name) \(count) 个"
         }.joined(separator: "、")
@@ -967,7 +989,8 @@ final class ShownDialog {
     }
 }
 
-/// 排着等显示的一个网页对话框：等着的那一刻的续体。放出来（showHeldDialogs()）或关闭（close()）时继续，每次等正好继续一次。
+/// 排着等显示的一个网页对话框：等着的那一刻的续体。放出来（showHeldDialogs()）或按取消处理（cancelDialogs()，关闭时）时继续，
+/// 每次等正好继续一次。
 @MainActor
 fileprivate final class HeldDialog {
     let kind: WebDialogKind
