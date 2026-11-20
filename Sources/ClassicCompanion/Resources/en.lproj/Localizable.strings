@@ -64,6 +64,10 @@
 "hotkey.reject.used" = "%1$@ is used to %2$@. Choose another one.";
 "hotkey.reject.common" = "%@ is a common shortcut. Choose another one.";
 "purpose.hideWindow" = "hide the window";
+"purpose.nextTab" = "switch to the next tab";
+"purpose.previousTab" = "switch to the previous tab";
+"purpose.reopenTab" = "reopen the last closed tab";
+"purpose.hideWindowKeepTabs" = "hide the window and keep all tabs";
 "purpose.quitApp" = "quit the app";
 "purpose.minimizeWindow" = "minimize the window";
 "purpose.hideApp" = "hide the app";
