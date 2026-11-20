@@ -95,15 +95,24 @@ public struct TabList: Equatable, Sendable {
     /// 关闭 `id`。`url` 是它此刻的地址：普通对话地址连同关闭时的位置记入最近关闭，别的不记。
     /// 关的是选中项时选右边的邻居，没有就选左边。
     /// 关的不是选中项（例如标签栏上的关闭按钮）时选中项不变：计划只写了前一种，这里取不打扰当前标签页的读法。
+    /// 关闭后选哪个只有一条规则，见 `selectionAfterClosing(_:)`。
     public mutating func close(_ id: TabID, url: URL?) -> CloseResult {
         guard let index = tabs.firstIndex(of: id) else { return .notFound }
-        guard tabs.count > 1 else { return .onlyTab }
+        guard let next = selectionAfterClosing(id) else { return .onlyTab }
         tabs.remove(at: index)
         recentlyClosed.record(url: url, index: index)
         guard id == selected else { return .closed(selectionChanged: false) }
-        // 移除后原来右边的邻居落在 index；关的是最右一个时取左边。
-        selected = tabs[min(index, tabs.count - 1)]
+        selected = next
         return .closed(selectionChanged: true)
+    }
+
+    /// 关闭 `id` 以后选中的是哪一个，列表不改：关的是选中项时是右边的邻居，没有就左边；关的不是选中项时还是现在的选中项。
+    /// 只剩这一个、或 `id` 不在列表里（`close` 不关）时是 nil。`close` 用的就是这里的规则。
+    /// 调用方要先切换到下一个、再关闭时用（关闭显示着的标签页：先让窗口换上邻居，选中项一直指着还在的标签页，再关它）。
+    public func selectionAfterClosing(_ id: TabID) -> TabID? {
+        guard let index = tabs.firstIndex(of: id), tabs.count > 1 else { return nil }
+        guard id == selected else { return selected }
+        return index + 1 < tabs.count ? tabs[index + 1] : tabs[index - 1]
     }
 
     // MARK: 选择。返回值是选中项有没有变，没变时调用方什么都不用做。

@@ -8,9 +8,10 @@ import CompanionCore
 /// 和改设置时每个标签页都要跟着改的几样也在这里，AppDelegate 只调用。
 ///
 /// 这里有一组标签页（tabs，按从左到右）和选中的那个（selected）。顺序、选中项和标识都由 list（TabList）决定。
-/// 换选中的只经 select(_:)（切换标签页：先改选中项，再让窗口显示它，再做跟着它的事）。新增标签页只经 newTab()。
-/// 应用里现在仍只有启动时的那一个，它就是选中的、窗口显示着的；还没有标签栏、菜单和按键，应用里没有地方调用 select(_:)
-/// 和 newTab()。
+/// 换选中的只经 select(_:)（切换标签页：先改选中项，再让窗口显示它，再做跟着它的事）。新增标签页只经 newTab()，
+/// 关闭标签页只经 closeTab(_:)（closeSelectedTab()）。
+/// 应用里现在仍只有启动时的那一个，它就是选中的、窗口显示着的；还没有标签栏、菜单和按键，应用里没有地方调用 select(_:)、
+/// newTab() 和 closeTab(_:)。
 ///
 /// 规则：事件属于发出它的标签页，接线时就绑定那个标签页，处理时明确传着它，不在中途拿“现在选中的”来代替。
 /// - 标签页自己的状态（页面加载状态、lastPath、适配器的代号、它自己的日志）不管选没选中都照常改。
@@ -21,7 +22,7 @@ import CompanionCore
 /// 不再回来读“现在选中的”。等完先看它还在不在这组里，不在就不做；会被更新的请求取代的（聚焦）还看代号。
 /// 后台的事从不改前台。设置（网页增强、页面缩放、网页无障碍、弹窗标题）每个标签页都改。
 /// 每个标签页的运行时在这组里时都登记在共用的网络状态上（NetworkStatus 只通知，重试与否由各页自己的恢复规则决定），
-/// 离开这组时去掉（tabLeft(_:)）。关闭标签页的收尾见 close(_:)：先让它的运行时和页面状态进入关闭态，再拿掉。
+/// 离开这组时去掉（tabLeft(_:)）。关闭标签页的收尾见 close(_:)：先让它的运行时、适配器和页面状态进入关闭态，再拿掉。
 /// 这里写的某个标签页的日志（页面变化、媒体状态、实验）带那个标签页的标签（TabLog，见 log(_:_:_:)）；窗口的日志不带
 /// （例外：不显示的页面的遮挡结束时窗口写的那一行带那一页的标签，见 ChatWindowController.endLaunchScreen(_:for:)）。
 /// 选中的标签页和窗口显示着的页面要一致：启动时建窗口传的就是启动的那个标签页的 page；之后 select(_:) 两边一起换
@@ -194,46 +195,100 @@ final class ChatTabs {
         network.remove(tab.runtime)
     }
 
-    // MARK: - 关闭标签页的收尾
+    // MARK: - 关闭标签页
+
+    /// 关闭标签页 tab（3.7，只有接口：应用里还没有地方调用。⌘W 在 3.10、菜单在 3.11、标签栏在阶段 4 接上），只有测试调用。
+    ///
+    /// - tab 不在这组里（关过了、不是这组的）：什么都不做（不隐藏窗口、不写日志），所以关两遍是安全的。
+    /// - 只有一个标签页（它就是选中的）：不关、不释放，页面留着；和现在的 ⌘W 一样隐藏窗口（hideWindow("⌘W")，
+    ///   窗口写的就是现在 ⌘W 的那一行“隐藏：⌘W”），不写别的日志。
+    /// - 多个标签页：先写一行“[tabs] 关闭（剩 N 个）”（带 tab 的标签，N 是关闭以后的个数；没有地址和标题），然后
+    ///   - tab 不是选中的：收尾（close(_:)）。选中项、窗口都不变。
+    ///   - tab 是选中的（窗口显示着它）：
+    ///     1. 下一个选中谁问 TabList（list.selectionAfterClosing(_:)：右边的邻居，没有就左边），这时列表还不改。
+    ///     2. tab 记下的阅读位置都作废（dropReadingPositions(of:)）：下一步结束进行中的切模式时，它那次不会被留到“再显示”
+    ///        （它不会再显示），也不碰它的网页。
+    ///     3. 切换到下一个（select(_:)）：选中项先改成还在的那一页；窗口换上那一页，投上那一页自己的遮挡、提示和颜色
+    ///        （tab 的启动画面或新标签页的遮挡不会留在窗口上；还在淡出的那层去掉），tab 的补排版作废（不调用它的 laidOut），
+    ///        进行中的切模式结束，tab 的网页视图换下去、藏在窗口里。聚焦和记下的对话地址（lastConversationURL）跟着那一页，
+    ///        都由 select 做，这里不另外做。
+    ///     4. 收尾（close(_:)）：这时 tab 已经不是选中的，和关不选中的一样，其中把它的网页视图从窗口里拿出来。
+    ///   为什么先切换再关：list 和 tabs 只在收尾时一起改一次，切换只改选中项，所以任何时候两者一一对应，选中项也总指着
+    ///   tabs 里还在的那一页（selected 不会落空）；切换用的就是平常的 select，不另写一份显示别的页面的做法。
+    ///   如果先让 TabList 关掉（它在一步里拿掉并改选中项），窗口那时还显示着 tab，select 又因为邻居已经是选中的而什么都不做。
+    func closeTab(_ tab: ChatTab) {
+        guard holds(tab) else { return }
+        guard tabs.count > 1 else {
+            hideWindow("⌘W")
+            return
+        }
+        log(tab, "tabs", "关闭（剩 \(tabs.count - 1) 个）")
+        if isSelected(tab) {
+            guard let nextID = list.selectionAfterClosing(tab.id), let next = tabs.first(where: { $0.id == nextID }) else {
+                preconditionFailure("多于一个标签页时关选中的，TabList 给出还在的下一个")
+            }
+            dropReadingPositions(of: tab)
+            select(next)
+        }
+        close(tab)
+    }
+
+    /// 关闭选中的标签页（以后 ⌘W 用的）：closeTab(_:) 按下这一刻选中的那个。
+    func closeSelectedTab() {
+        closeTab(selected)
+    }
 
     /// 关闭标签页 tab 的收尾：之后它的任何事件、通知和计时都不再起作用，这组不再持有它（别处也不持有时，它连同运行时、
-    /// 页面状态和网页视图一起释放）。应用里现在还没有关闭标签页的入口（没有按键、菜单、标签栏），只有测试调用。
+    /// 适配器、页面状态和网页视图一起释放）。入口是 closeTab(_:)；测试也直接调用。
     ///
-    /// 前提：tab 不是选中的（窗口显示的不是它）。关选中的标签页要先切换到别的标签页（select(_:)，3.7 定选哪一个），
-    /// 这里不选下一个、不换网页视图、不投别的页面的状态。只有一个标签页时它就是选中的，所以也不能关（⌘W 隐藏窗口，不释放）。
-    /// tab 已经不在这组里（关过了，或者不是这组的）：什么都不做，所以关两遍是安全的。
+    /// 前提：tab 不是选中的（窗口显示的不是它）。关选中的标签页由 closeTab(_:) 先切换到别的标签页，这里不选下一个、
+    /// 不换网页视图、不投别的页面的状态。只有一个标签页时它就是选中的，所以也不能关（closeTab：⌘W 隐藏窗口，不释放）。
+    /// tab 已经不在这组里（关过了，或者不是这组的）：什么都不做，所以关两遍是安全的。这里不写 [tabs] 那一行（closeTab 写）。
     ///
     /// 顺序：先进入关闭态，再收尾。
-    /// 1. 运行时关闭（WebRuntime.close()）：不再自己发起加载、不再排重试，排着的重试取消，停止加载，回调断开，弹窗关掉。
-    /// 2. 页面状态关闭（ChatWindowController.pageClosed(_:)）：带这个页面的入口和它排着的兜底、颜色回调、遮挡的时限和上限
+    /// 1. 运行时关闭（WebRuntime.close()）：不再自己发起加载、不再排重试，排着的重试取消，停止加载，回调断开，停掉地址观察和
+    ///    消息桥，弹窗关掉；之后迟到的导航事件、网页脚本的回调都不做事、不写日志。
+    /// 2. 适配器关闭（ChatGPTAdapter.close()）：不再在网页里跑脚本、不再读媒体状态，进行中的脚本返回或超时以后不写日志、
+    ///    不写诊断。
+    /// 3. 页面状态关闭（ChatWindowController.pageClosed(_:)）：带这个页面的入口和它排着的兜底、颜色回调、遮挡的时限和上限
     ///    都不再起作用，也不能再显示。
-    /// 3. 它的网页视图显示过、换下去后藏在窗口里的，从窗口里拿出来（ChatWindowController.removeHiddenWebView(_:)）：
+    /// 4. 它的网页视图显示过、换下去后藏在窗口里的，从窗口里拿出来（ChatWindowController.removeHiddenWebView(_:)）：
     ///    窗口不再持有它。
-    /// 4. 排着的聚焦任务取消（到点本来也因为它不是选中的而不做，这里让它马上结束、不再等）。
-    /// 5. 从列表（list）和 tabs 里一起拿掉，两者始终一一对应。不记入最近关闭（⇧⌘T 记哪个地址是重新打开的任务）。
-    /// 6. 从共用的网络状态上去掉（tabLeft）。
+    /// 5. 排着的聚焦任务取消（到点本来也因为它不是选中的而不做，这里让它马上结束、不再等）。
+    /// 6. 它记下的阅读位置都作废（dropReadingPositions(of:)，不碰网页）。
+    /// 7. 从列表（list）和 tabs 里一起拿掉，两者始终一一对应。不记入最近关闭（⇧⌘T 记哪个地址是重新打开的任务）。
+    /// 8. 从共用的网络状态上去掉（tabLeft）。
     ///
-    /// 不取消的：进行中的新对话、证据采集和媒体实验、每秒的媒体状态和页面变化后的媒体日志。它们在下一次 holds 检查处停下
-    /// （不加载、不聚焦、不写诊断；运行时已关闭，加载也发不出去）；在这之前还拿着这个标签页，所以释放要等它们正在等的那一步
-    /// 网页脚本返回或超时。
-    /// 阅读位置：留着等再显示的那一次丢掉（pendingReadingRestore）；排版中记下的留在 readingHolds 里（记下和放回按先后
-    /// 一一配对，不能拿掉一条），到时因为这一页不在这组里而作废。都不碰网页：运行时已经关闭，网页随标签页一起释放。
+    /// 不取消的（没有取消的办法）：进行中的新对话、证据采集和媒体实验、每秒的媒体状态、页面变化后的媒体日志、正在等页面结果的聚焦。
+    /// 它们正在等的那一步返回后在 holds 检查处停下（不加载、不聚焦、不写诊断和日志）；适配器已经关闭，剩下的步骤也不再碰网页。
+    /// 在那一步返回之前它们还拿着这个标签页，所以释放要等那一步返回或超时（正式运行时由适配器的脚本时限兜底）。
     /// 补排版：只有显示着的标签页会补排版，tab 不选中，它显示时开始的那次在切换走时已经作废（窗口不再调用它的 laidOut），
     /// 迟到的排版完成和时限也不再做事（窗口按那一次的身份核对）。
     func close(_ tab: ChatTab) {
         guard holds(tab) else { return }
-        precondition(!isSelected(tab), "关选中的标签页要先切换到别的标签页（select(_:)）")
+        precondition(!isSelected(tab), "关选中的标签页要先切换到别的标签页（closeTab(_:)）")
         tab.runtime.close()
+        tab.adapter.close()
         windowController.pageClosed(tab.page)
         windowController.removeHiddenWebView(tab.runtime.webView)
         tab.focusTask?.cancel()
         tab.focusTask = nil
-        tab.pendingReadingRestore?.isSettled = true
-        tab.pendingReadingRestore = nil
+        dropReadingPositions(of: tab)
         let result = list.close(tab.id, url: nil)
         precondition(result == .closed(selectionChanged: false), "不选中的标签页从列表里拿掉，选中项不变")
         tabs.removeAll { $0 === tab }
         tabLeft(tab)
+    }
+
+    /// 关闭 tab 时它记下的阅读位置都作废：留着等再显示的那一次（pendingReadingRestore）拿掉；排版中记下的（readingHolds 里
+    /// 它的那几条）标成已结束、留在原位（记下和放回按先后一一配对，不能拿掉一条），到时什么都不做。
+    /// 都不碰网页（它要关闭了，网页随标签页一起释放）、不写日志。
+    private func dropReadingPositions(of tab: ChatTab) {
+        tab.pendingReadingRestore?.isSettled = true
+        tab.pendingReadingRestore = nil
+        for hold in readingHolds where hold.tab === tab {
+            hold.isSettled = true
+        }
     }
 
     /// 把标签页 tab 的网页运行时的回调接到窗口上。启动时 AppDelegate 在原来接这些的地方调用，add(_:) 也调用。
@@ -302,12 +357,14 @@ final class ChatTabs {
         log(tab, "nav", "页面变化 \(Redactor.describe(url))")
         readingPageChanged(tab)
         // 记录导航时网页媒体状态，用于验证“切换对话后官方朗读是否停止”（不主动干预）。
-        // 读的是这个标签页的适配器；到点时它已经释放或不在这组标签页里就不记。
+        // 读的是这个标签页的适配器；到点时它已经释放或不在这组标签页里就不读，读完时它已经不在这组里（读的时候关闭了）就不记。
         if previous != nil {
             Task { [weak self, weak tab] in
                 try? await Task.sleep(for: .milliseconds(800))
                 guard let self, let tab, self.holds(tab) else { return }
-                self.log(tab, "media", "页面变化后 0.8s WebKit 媒体状态=\(await self.mediaState(tab.adapter))")
+                let state = await self.mediaState(tab.adapter)
+                guard self.holds(tab) else { return }
+                self.log(tab, "media", "页面变化后 0.8s WebKit 媒体状态=\(state)")
             }
         }
     }
@@ -321,6 +378,7 @@ final class ChatTabs {
     /// 到点时只有 tab 还是选中的、并且这还是最新的一次聚焦请求（代号没变）才聚焦；tab 已经释放也不做。
     /// 请求时 tab 就不是选中的（例如新对话等页面结果时切换了标签页）：不算一次请求，什么都不做——不然它会把代号加一，
     /// 取消切换时给换上来的那一页排下的聚焦，结果哪一页都不聚焦。
+    /// 聚焦的结果记进诊断；等页面结果时 tab 关闭了（不在这组里）就不记。
     func focusInputSoon(for tab: ChatTab) {
         guard isSelected(tab) else { return }
         tab.focusTask?.cancel()
@@ -330,6 +388,7 @@ final class ChatTabs {
             try? await Task.sleep(for: .milliseconds(80))
             guard let self, let tab, !Task.isCancelled, self.isSelected(tab), self.focusGeneration == generation else { return }
             let result = await self.focusInput(tab.adapter)
+            guard self.holds(tab) else { return }
             self.diagnostics.recordInputFocus(result)
         }
     }
@@ -337,7 +396,7 @@ final class ChatTabs {
     // MARK: - 切换标签页
 
     /// 切换到标签页 tab：它成为选中的、窗口显示它。tab 已经是选中的、不在这组里（没加进来、关闭了、拿掉了）：什么都不做。
-    /// 新增标签页（newTab()）经这里换上新的那一页；3.7 关闭显示着的标签页也要经这里换。应用里还没有地方调用。
+    /// 新增标签页（newTab()）经这里换上新的那一页；关闭显示着的标签页（closeTab(_:)）先经这里换上邻居。应用里还没有地方调用。
     ///
     /// 顺序：
     /// 1. 先改选中项（list）。窗口在下一步结束进行中的切模式时说“排版结束”，那时选中的已经是 tab：
@@ -498,7 +557,9 @@ final class ChatTabs {
     //   之后换回原来的对话也不再放回。
     // - 新对话页一步拿到对话地址（/ → /c/<id>）：地址分不清是不是同一个对话，放回时请网页确认，确认不了网页自己丢掉那一次。
     // - 该放回时那一页不是选中的（D2）：不马上放回，也不丢，留在那一页上（ChatTab.pendingReadingRestore），
-    //   等它再显示并排好版时由 tabShownAndLaidOut(_:) 放回；留着期间规则说丢弃就丢弃；关闭标签页时丢掉（不碰网页）。
+    //   等它再显示并排好版时由 tabShownAndLaidOut(_:) 放回；留着期间规则说丢弃就丢弃。
+    // - 关闭标签页时它记下的都作废（dropReadingPositions(of:)，不碰网页、不写日志）；关的是显示着的那一页时，在切换到下一页之前
+    //   作废，切换时结束的切模式不会把它那次留到“再显示”。
     // 平常（没换页面）放回、丢弃都不写日志；丢弃、留着、留着的放回各写一行带标签的日志（只有原因，没有地址和内容）。
 
     /// 窗口大小要变（切模式、拖边）之前：记下这一刻选中的标签页的阅读位置，并记住是它、是哪一次（编号）、那时的样子。
@@ -511,7 +572,7 @@ final class ChatTabs {
     }
 
     /// 变完之后：交给记下它的那一页，不是这时选中的。
-    /// - 已经丢弃过（换页面、提交时规则说丢弃）：什么都不做。
+    /// - 已经丢弃过（换页面、提交时规则说丢弃）、那一页关闭时作废了：什么都不做。
     /// - 那一页已经不在这组里（关闭、拿掉、释放）：作废，不碰它的网页。
     /// - 规则说丢弃：丢弃，网页里也丢掉这一次。
     /// - 那一页不是选中的：留到它再显示并排好版（keepPending(_:on:)）。
