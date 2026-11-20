@@ -165,26 +165,34 @@ final class NewTabEntryTests: XCTestCase {
         }
     }
 
-    /// 已到上限（默认 4 个）：写一行、显示到上限的提示（个数来自 TabList），别的都不做——不找回窗口（窗口没显示也不）、不建、
-    /// 列表、选中项、窗口不变。
+    /// 已到上限（默认 4 个）：写一行、显示到上限的提示（个数来自 TabList），不建；列表、选中项、窗口不变。
+    /// 窗口显示着：不找回。窗口没显示（菜单栏图标的菜单，D9）：再写一行、先找回窗口（只一次），再显示提示。
     func testNothingIsAddedAtTheLimitExceptOneHintAndOneLine() throws {
         let rig = make()
         XCTAssertNotNil(rig.tabs.newTab())
         XCTAssertNotNil(rig.tabs.newTab())
         let d = try XCTUnwrap(rig.tabs.newTab())
         XCTAssertEqual(rig.tabs.list.tabs.count, TabList.defaultCapacity)
-        rig.visible = false
         let window = rig.windowState(), list = rig.tabs.list
-        let mark = rig.mark()
+        var mark = rig.mark()
         XCTAssertNil(rig.tabs.newTab())
         XCTAssertEqual(rig.limitHints, 1)
         XCTAssertEqual(rig.lines(since: mark), ["[tabs] 不新增标签页：已到上限（4 个）", "[hint] 显示 到上限（4 个）的提示"])
-        XCTAssertEqual(rig.reveals, 0)
+        XCTAssertEqual(rig.reveals, 0, "窗口显示着：不找回")
+        XCTAssertEqual(rig.windowState(), window)
+
+        rig.visible = false
+        mark = rig.mark()
+        XCTAssertNil(rig.tabs.newTab())
+        XCTAssertEqual(rig.limitHints, 2)
+        XCTAssertEqual(Array(rig.lines(since: mark).prefix(3)), [
+            "[tabs] 不新增标签页：已到上限（4 个）", "[tabs] 窗口没有显示，先找回窗口再提示", "找回窗口（选中=4 个数=4）",
+        ])
+        XCTAssertEqual(rig.reveals, 1, "窗口没显示：先找回窗口再提示（D9）")
         XCTAssertEqual(rig.made, [2, 3, 4])
         XCTAssertEqual(rig.tabs.list, list)
         XCTAssertEqual(rig.tabs.tabs.count, 4)
         XCTAssertTrue(rig.tabs.selected === d)
-        XCTAssertEqual(rig.windowState(), window)
     }
 
     /// 上限不是写死的：列表的上限是 1 时一开始就满了，那一行写 1。启动画面还在、上限也到了：只写启动画面那一行，不提示。
