@@ -185,6 +185,9 @@
 "diag.exp.resume" = "恢复网页媒体";
 "diag.exp.pauseAll" = "暂停全部网页媒体";
 "diag.exp.setRate" = "设置并测量";
+/* 页面的结果是哪个标签页的（读的那个标签页的创建序号），放在那一样前面。 */
+"diag.tab.open" = "【标签页 %1$ld】%2$@";
+"diag.tab.closed" = "【已关闭的标签页 %1$ld】%2$@";
 
 /* 应用更新（Sparkle）。Sparkle 自己的窗口用 Sparkle 的翻译、跟随 macOS 语言；这些跟随应用语言。 */
 "menu.checkForUpdates" = "检查更新…";

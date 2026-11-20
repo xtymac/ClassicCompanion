@@ -400,12 +400,13 @@ struct DiagnosticsView: View {
                 Button(L10n.string("diag.resetGateC")) { diagnostics.resetCycleCounters() }
             }
             let c = diagnostics.capabilities
+            let page = Self.pageTexts(diagnostics)
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
                 row(L10n.string("diag.row.build"), build)
                 row(L10n.string("diag.row.hotkey"), GlobalHotKey.statusText(diagnostics.hotKeyRegistration).string())
                 row(L10n.string("diag.row.dataStore"),
                     L10n.string(diagnostics.dataStoreIsPersistent ? "diag.dataStore.persistent" : "diag.dataStore.ephemeral"))
-                row(L10n.string("diag.row.page"), "\(c.pageKind) · \(c.location)")
+                row(L10n.string("diag.row.page"), page.page)
                 row(L10n.string("diag.row.input"), L10n.format("diag.input.value", String(c.inputFound), String(c.inputFocused)))
                 row(L10n.string("diag.row.messages"),
                     L10n.format("diag.messages.value", L10n.plural("diag.messageCount", c.messageCount), c.assistantCount,
@@ -423,9 +424,9 @@ struct DiagnosticsView: View {
 
             GroupBox(L10n.string("diag.readAloud")) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(L10n.format("diag.readAloud.media", diagnostics.webMediaState))
-                    Text(L10n.format("diag.readAloud.structure", shown(diagnostics.readAloudEvidence))).lineLimit(6)
-                    Text(L10n.format("diag.readAloud.rate", shown(diagnostics.mediaMeasurement))).lineLimit(3)
+                    Text(page.media)
+                    Text(page.structure).lineLimit(6)
+                    Text(page.rate).lineLimit(3)
                     Divider()
                     Text(L10n.string("diag.experiments.warning"))
                         .font(.caption).foregroundStyle(.orange)
@@ -442,7 +443,7 @@ struct DiagnosticsView: View {
                         .fixedSize()
                         Button(L10n.string("diag.exp.setRate")) { onExperiment(.setRate(rate)) }
                     }
-                    ForEach(diagnostics.experiments.suffix(6), id: \.self) { Text($0).font(.caption2) }
+                    ForEach(Array(page.experiments.enumerated()), id: \.offset) { Text($0.element).font(.caption2) }
                 }
                 .font(.system(.caption, design: .monospaced))
                 .textSelection(.enabled)
@@ -466,11 +467,44 @@ struct DiagnosticsView: View {
         .frame(minWidth: 720, minHeight: 680)
     }
 
+    /// 窗口里说某一个页面的那几样，每样前面带上它是哪个标签页的（Diagnostics.owner：写下它时绑定的那个，不是现在选中的；
+    /// 那个标签页关闭了就说“已关闭的”）。只有创建序号，没有标题、地址、内容。body 照这些显示，测试核对的也是这些（不开窗口）。
+    /// 最近一次回答提取窗口里本来不显示，这里也不加。
+    struct PageTexts: Equatable {
+        /// 页面能力那一份快照的“页面”一行（页面类型和位置）。同一份快照的输入框、消息、选择器几行紧跟在下面，不再重复标。
+        var page: String
+        var media: String
+        var structure: String
+        var rate: String
+        /// 最近 6 条实验记录，每条带它自己的标签页（按 experimentTabs 一一对应，和报告一样）。
+        var experiments: [String]
+    }
+
+    static func pageTexts(_ d: Diagnostics, in language: AppLanguage? = nil) -> PageTexts {
+        let c = d.capabilities
+        return PageTexts(
+            page: tagged("\(c.pageKind) · \(c.location)", d.owner(c.tab), in: language),
+            media: tagged(L10n.format("diag.readAloud.media", in: language, d.webMediaState), d.owner(d.webMediaStateTab), in: language),
+            structure: tagged(L10n.format("diag.readAloud.structure", in: language, shown(d.readAloudEvidence, in: language)),
+                              d.owner(d.readAloudEvidenceTab), in: language),
+            rate: tagged(L10n.format("diag.readAloud.rate", in: language, shown(d.mediaMeasurement, in: language)),
+                         d.owner(d.mediaMeasurementTab), in: language),
+            experiments: zip(d.experiments, d.experimentTabs).suffix(6).map { tagged($0, d.owner($1), in: language) })
+    }
+
+    /// text 前面加上它是哪个标签页的：“【标签页 N】”，那个标签页关闭了是“【已关闭的标签页 N】”（按界面语言，diag.tab.*）。
+    /// 放在前面：结构、速率那几行很长、限了行数，放在末尾会被截掉。没有标签页的（nil）照原样。
+    static func tagged(_ text: String, _ owner: Diagnostics.TabOwner?, in language: AppLanguage? = nil) -> String {
+        guard let owner else { return text }
+        return owner.closed ? L10n.format("diag.tab.closed", in: language, owner.number, text)
+                            : L10n.format("diag.tab.open", in: language, owner.number, text)
+    }
+
     /// 还没采集、没测量时，报告里写的是固定的中文；窗口里按界面语言显示。
-    private func shown(_ value: String) -> String {
+    private static func shown(_ value: String, in language: AppLanguage?) -> String {
         switch value {
-        case Diagnostics.notCollected: L10n.string("diag.notCollected")
-        case Diagnostics.notMeasured: L10n.string("diag.notMeasured")
+        case Diagnostics.notCollected: L10n.string("diag.notCollected", in: language)
+        case Diagnostics.notMeasured: L10n.string("diag.notMeasured", in: language)
         default: value
         }
     }
