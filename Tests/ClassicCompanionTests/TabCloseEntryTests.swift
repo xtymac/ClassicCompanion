@@ -73,18 +73,22 @@ final class TabCloseEntryTests: XCTestCase {
         XCTAssertEqual(rig.loads["1"], [other], "页面留着，照常加载")
     }
 
-    /// 隐藏的原因和现在 ⌘W 交给窗口的是同一个：窗口的按键监视写的是 hide(reason: "⌘W")，所以正式运行时
-    /// （hideWindow 就是 windowController.hide(reason:)）只有一个标签页时的 closeTab 和现在按 ⌘W 写的是同一行“[window] 隐藏：⌘W”。
+    /// 隐藏的原因就是原来 ⌘W 交给窗口的那一个，而且 ⌘W 现在走的就是这条路（3.10）：窗口的按键监视把 ⌘W 交给
+    /// ChatTabs.handleKey → closeSelectedTab → 只有一个标签页时 hideWindow("⌘W")，正式运行时（hideWindow 就是
+    /// windowController.hide(reason:)）写的是原来按 ⌘W 的同一行“[window] 隐藏：⌘W”。窗口自己不再隐藏（见 TabKeyTests）。
     func testTheHideReasonIsTheOneCommandWUsesToday() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let window = try String(contentsOf: root.appendingPathComponent("Sources/ClassicCompanion/Window/ChatWindowController.swift"),
-                                encoding: .utf8)
-        XCTAssertTrue(window.contains("self.hide(reason: \"⌘W\")"), "⌘W 的按键监视")
         let app = try String(contentsOf: root.appendingPathComponent("Sources/ClassicCompanion/App/AppDelegate.swift"), encoding: .utf8)
         XCTAssertTrue(app.contains("hideWindow: { [weak self] reason in self?.windowController.hide(reason: reason) }"))
         let rig = make()
         rig.tabs.closeSelectedTab()
         XCTAssertEqual(rig.hidden, ["⌘W"])
+        let number = try XCTUnwrap(rig.controller.window?.windowNumber)
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                                                   windowNumber: number, context: nil, characters: "w",
+                                                   charactersIgnoringModifiers: "w", isARepeat: false, keyCode: 13))
+        XCTAssertTrue(rig.controller.handleKeyDown(KeyPress(event)), "按键监视吃掉 ⌘W")
+        XCTAssertEqual(rig.hidden, ["⌘W", "⌘W"], "按 ⌘W 和 closeSelectedTab 是同一个原因")
     }
 
     // MARK: - 关不选中的

@@ -280,6 +280,49 @@ import Testing
         #expect(l == before)
     }
 
+    // MARK: 选哪一个（不改列表）
+
+    /// 每种个数、每个选中位置：下一个、上一个绕回，第 N 个、最后一个；问的时候列表不变，
+    /// 选择（selectNext 等）选中的就是问出来的那一个。
+    @Test(arguments: 1...4) func theQueriesNameTheTabTheSelectionsPick(count: Int) {
+        for chosen in 0..<count {
+            var l = list(count)
+            let ids = l.tabs
+            _ = l.select(ids[chosen])
+            let before = l
+            #expect(l.nextTab == ids[(chosen + 1) % count], "\(count) 个，选中第 \(chosen + 1) 个")
+            #expect(l.previousTab == ids[(chosen + count - 1) % count], "\(count) 个，选中第 \(chosen + 1) 个")
+            #expect(l.lastTab == ids[count - 1])
+            for position in -1...10 {
+                let expected: TabID? = (1...count).contains(position) ? ids[position - 1] : nil
+                #expect(l.tab(atPosition: position) == expected, "\(count) 个，第 \(position) 个")
+            }
+            #expect(l == before, "问的时候不改")
+
+            var next = l, previous = l, last = l
+            _ = next.selectNext()
+            _ = previous.selectPrevious()
+            _ = last.selectLast()
+            #expect(next.selected == l.nextTab)
+            #expect(previous.selected == l.previousTab)
+            #expect(last.selected == l.lastTab)
+            for position in 1...count {
+                var byPosition = l
+                _ = byPosition.select(position: position)
+                #expect(byPosition.selected == l.tab(atPosition: position))
+            }
+        }
+    }
+
+    @Test func withOneTabEveryQueryNamesTheSelectedTab() {
+        let l = TabList()
+        #expect(l.nextTab == l.selected)
+        #expect(l.previousTab == l.selected)
+        #expect(l.lastTab == l.selected)
+        #expect(l.tab(atPosition: 1) == l.selected)
+        #expect(l.tab(atPosition: 2) == nil)
+    }
+
     // MARK: 最近关闭的记录
 
     @Test func onlyConversationAddressesAreRecorded() {

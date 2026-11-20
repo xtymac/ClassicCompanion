@@ -64,6 +64,10 @@
 "hotkey.reject.used" = "%1$@ 用来%2$@，请换一个。";
 "hotkey.reject.common" = "%@ 是常用的快捷键，请换一个。";
 "purpose.hideWindow" = "隐藏窗口";
+"purpose.nextTab" = "切换到下一个标签页";
+"purpose.previousTab" = "切换到上一个标签页";
+"purpose.reopenTab" = "重新打开最近关闭的标签页";
+"purpose.hideWindowKeepTabs" = "隐藏窗口并保留标签页";
 "purpose.quitApp" = "退出应用";
 "purpose.minimizeWindow" = "最小化窗口";
 "purpose.hideApp" = "隐藏应用";

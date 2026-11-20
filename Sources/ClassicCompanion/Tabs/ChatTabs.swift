@@ -10,8 +10,8 @@ import CompanionCore
 /// 这里有一组标签页（tabs，按从左到右）和选中的那个（selected）。顺序、选中项和标识都由 list（TabList）决定。
 /// 换选中的只经 select(_:)（切换标签页：先改选中项，再让窗口显示它，再做跟着它的事）。新增标签页只经 newTab()，
 /// 关闭标签页只经 closeTab(_:)（closeSelectedTab()），重新打开最近关闭的只经 reopenClosedTab()。
-/// 应用里现在仍只有启动时的那一个，它就是选中的、窗口显示着的；还没有标签栏、菜单和按键，应用里没有地方调用 select(_:)、
-/// newTab()、closeTab(_:) 和 reopenClosedTab()。
+/// 开始时只有启动时的那一个，它就是选中的、窗口显示着的。应用里调用这些入口的只有按键（3.10，handleKey(_:_:)：⌘T、⇧⌘T、
+/// ⌘W、⇧⌘W、切换的键）；还没有标签栏和菜单（3.11、阶段 4）。不按这些键时一直只有启动时的那一个，和原来一样。
 ///
 /// 规则：事件属于发出它的标签页，接线时就绑定那个标签页，处理时明确传着它，不在中途拿“现在选中的”来代替。
 /// - 标签页自己的状态（页面加载状态、lastPath、适配器的代号、它自己的日志）不管选没选中都照常改。
@@ -135,6 +135,8 @@ final class ChatTabs {
             guard let self else { return done() }
             self.selected.runtime.prepareLayout(size: size, done: done)
         }
+        // 标签页的键（含 ⌘W）：窗口的按键监视认出来以后交给这里（handleKey(_:_:)）。
+        windowController.onTabKey = { [weak self] key, context in self?.handleKey(key, context) ?? false }
         network.add(tab.runtime)
     }
 
@@ -209,11 +211,11 @@ final class ChatTabs {
 
     // MARK: - 关闭标签页
 
-    /// 关闭标签页 tab（3.7，只有接口：应用里还没有地方调用。⌘W 在 3.10、菜单在 3.11、标签栏在阶段 4 接上），只有测试调用。
+    /// 关闭标签页 tab（3.7）。应用里经 closeSelectedTab() 由 ⌘W 调用（3.10）；菜单在 3.11、标签栏在阶段 4 接上。
     ///
     /// - tab 不在这组里（关过了、不是这组的）：什么都不做（不隐藏窗口、不写日志），所以关两遍是安全的。
-    /// - 只有一个标签页（它就是选中的）：不关、不释放，页面留着；和现在的 ⌘W 一样隐藏窗口（hideWindow("⌘W")，
-    ///   窗口写的就是现在 ⌘W 的那一行“隐藏：⌘W”），不写别的日志，也不记入最近关闭（它没关）。
+    /// - 只有一个标签页（它就是选中的）：不关、不释放，页面留着；和原来的 ⌘W 一样隐藏窗口（hideWindow("⌘W")，
+    ///   窗口写的就是原来 ⌘W 的那一行“隐藏：⌘W”），不写别的日志，也不记入最近关闭（它没关）。
     /// - 多个标签页：先写一行“[tabs] 关闭（剩 N 个）”（带 tab 的标签，N 是关闭以后的个数；没有地址和标题），然后
     ///   - tab 不是选中的：收尾（close(_:)）。选中项、窗口都不变。
     ///   - tab 是选中的（窗口显示着它）：
@@ -255,7 +257,7 @@ final class ChatTabs {
         close(tab)
     }
 
-    /// 关闭选中的标签页（以后 ⌘W 用的）：closeTab(_:) 按下这一刻选中的那个。
+    /// 关闭选中的标签页（⌘W，handleKey(_:_:)）：closeTab(_:) 按下这一刻选中的那个。
     func closeSelectedTab() {
         closeTab(selected)
     }
@@ -430,7 +432,8 @@ final class ChatTabs {
     // MARK: - 切换标签页
 
     /// 切换到标签页 tab：它成为选中的、窗口显示它。tab 已经是选中的、不在这组里（没加进来、关闭了、拿掉了）：什么都不做。
-    /// 新增标签页（newTab()）经这里换上新的那一页；关闭显示着的标签页（closeTab(_:)）先经这里换上邻居。应用里还没有地方调用。
+    /// 新增标签页（newTab()）经这里换上新的那一页；关闭显示着的标签页（closeTab(_:)）先经这里换上邻居；
+    /// 切换的键（⌃Tab ⌃⇧Tab ⇧⌘] ⇧⌘[ ⌘1–⌘4 ⌘9，handleKey(_:_:)）直接经这里换。
     ///
     /// 顺序：
     /// 1. 先改选中项（list）。窗口在下一步结束进行中的切模式时说“排版结束”，那时选中的已经是 tab：
@@ -485,7 +488,7 @@ final class ChatTabs {
     // MARK: - 新增标签页
 
     /// 新增标签页：加一个新对话的标签页，放在最右，切换过去。返回加进来的那一个；不新增时返回 nil。
-    /// 只有接口（3.6）：应用里还没有地方调用（⌘T、菜单在 3.10、3.11 接上），只有测试调用。
+    /// 应用里由 ⌘T 调用（3.10，handleKey(_:_:)）；菜单在 3.11 接上。
     ///
     /// 不新增（列表、选中项、窗口都不变，不找回窗口，不建网页；只写一行“[tabs] 不新增标签页：…”，不带标签）：
     /// - 启动画面还在（isLaunchScreenUp，计划 4.3）：别的什么都不做。新标签页的遮挡不算，还盖着也能再新增。
@@ -547,15 +550,16 @@ final class ChatTabs {
 
     // MARK: - 重新打开最近关闭的标签页
 
-    /// 有可以重新打开的记录（最近关闭的普通对话，见 TabList.recentlyClosed）。以后菜单项置灰、按键响不响应看它
-    /// （3.10、3.11）；到上限、启动画面还在另外看（list.isFull、isLaunchScreenUp），这里不算进去。
+    /// 有可以重新打开的记录（最近关闭的普通对话，见 TabList.recentlyClosed）。以后菜单项置灰看它（3.11）；
+    /// 到上限、启动画面还在另外看（list.isFull、isLaunchScreenUp），这里不算进去。
+    /// ⇧⌘T 不看它：没有记录时也交给 reopenClosedTab()（写一行“没有记录”），按键照样吃掉（D13、D17）。
     var canReopenClosedTab: Bool {
         !list.recentlyClosed.isEmpty
     }
 
-    /// 重新打开最近关闭的标签页（⇧⌘T 以后用的）：取最近关闭的那一条，新建一个标签页加载那个地址，放回它关闭时的位置
+    /// 重新打开最近关闭的标签页（⇧⌘T，handleKey(_:_:)）：取最近关闭的那一条，新建一个标签页加载那个地址，放回它关闭时的位置
     /// （那个位置已经没有了就放最右，规则在 TabList.reopen(select:)），切换过去。连着调用按关闭的倒序逐个打开。
-    /// 返回打开的那一个；不打开时返回 nil。只有接口（3.8）：应用里还没有地方调用（⇧⌘T 在 3.10、菜单在 3.11），只有测试调用。
+    /// 返回打开的那一个；不打开时返回 nil。应用里由 ⇧⌘T 调用（3.10）；菜单在 3.11 接上。
     /// 是重新加载这个地址，不是原样找回：新的标识、运行时、适配器、页面状态和网页视图，关掉的那个标签页不再用
     /// （它已经关闭、释放）；未发送的草稿和关闭前的页面现场都不在。
     ///
@@ -590,6 +594,44 @@ final class ChatTabs {
     private func reinsertClosedTab(_ make: (TabID) -> ChatTab) -> (tab: ChatTab, url: URL?)? {
         guard case .reopened(let id, let url) = list.reopen(select: false) else { return nil }
         return (adopt(id, make), url)
+    }
+
+    // MARK: - 按键（3.10）
+
+    /// 标签页的键（窗口的按键监视认出来的 key，和这一刻的情形 context，见 ChatWindowController.handleKeyDown(_:)）。
+    /// 返回 true：由这里处理，按键吃掉，不再交给菜单、输入法和网页。做什么由 TabKeys.keyAction(_:_:list:) 按这一刻的 list 定
+    /// （规则写在那里：别的窗口、模态框、用户自己的键放过，重复按键吃掉不做），这里只照做：
+    /// - pass：返回 false，按键照原来的路走（窗口接着看切换键，再交给菜单和网页）。
+    /// - swallow：吃掉，什么都不做；不是重复按键时写一行“[keys] 标签页按键 X：没有可切换到的标签页，按键不交给网页”。
+    /// - 别的：先写一行“[keys] 标签页按键 X”（只有键名），再调用入口：⌘T newTab()、⇧⌘T reopenClosedTab()、
+    ///   ⌘W closeSelectedTab()、⇧⌘W hideWindow("⇧⌘W")（和左上角的 × 一样隐藏窗口，标签页都留着；原因不同）、
+    ///   切换 select(_:)（要切换到的那一个是 keyAction 问 list 得来的）。入口做不了（启动画面还在、到上限、没有记录）时
+    ///   由入口自己响一声、写一行，按键照样吃掉。
+    ///   只有一个标签页时的 ⌘W 不写这一行：和原来按 ⌘W 一样，只有窗口那一行“[window] 隐藏：⌘W”。
+    func handleKey(_ key: TabKeys.Match, _ context: TabKeys.Context) -> Bool {
+        let action = TabKeys.keyAction(key.command, context, list: list)
+        switch action {
+        case .pass:
+            return false
+        case .swallow:
+            if !context.isRepeat { logGroup("keys", "标签页按键 \(key.name)：没有可切换到的标签页，按键不交给网页") }
+            return true
+        case .closeTab where tabs.count == 1:
+            break
+        default:
+            logGroup("keys", "标签页按键 \(key.name)")
+        }
+        switch action {
+        case .newTab: newTab()
+        case .reopenClosedTab: reopenClosedTab()
+        case .closeTab: closeSelectedTab()
+        case .hideWindow: hideWindow("⇧⌘W")
+        case .select(let id):
+            guard let tab = tabs.first(where: { $0.id == id }) else { preconditionFailure("TabList 给出的是这组里的标签页") }
+            select(tab)
+        case .pass, .swallow: break
+        }
+        return true
     }
 
     // MARK: - 对选中的标签页做的操作

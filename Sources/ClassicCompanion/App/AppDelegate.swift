@@ -272,6 +272,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 item.keyEquivalentModifierMask = equivalent?.modifiers ?? []
             }
         }.store(in: &cancellables)
+        // 唤醒键也交给窗口：标签页的键和它相同时让给它（ChatWindowController.userHotKeyTakes(_:)）。
+        settings.$hotKey.removeDuplicates().sink { [weak self] combo in self?.windowController.wakeKey = combo }.store(in: &cancellables)
         // 网页增强、页面缩放、网页无障碍：每个标签页都改（ChatTabs）。
         Publishers.CombineLatest(settings.$webEnhancements, settings.$escapeHidesWindow)
             .dropFirst()

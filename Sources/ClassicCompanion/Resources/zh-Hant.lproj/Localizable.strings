@@ -64,6 +64,10 @@
 "hotkey.reject.used" = "%1$@ 用來%2$@，請換一個。";
 "hotkey.reject.common" = "%@ 是常用的快速鍵，請換一個。";
 "purpose.hideWindow" = "隱藏視窗";
+"purpose.nextTab" = "切換到下一個分頁";
+"purpose.previousTab" = "切換到上一個分頁";
+"purpose.reopenTab" = "重新打開最近關閉的分頁";
+"purpose.hideWindowKeepTabs" = "隱藏視窗並保留分頁";
 "purpose.quitApp" = "結束 App";
 "purpose.minimizeWindow" = "將視窗縮到最小";
 "purpose.hideApp" = "隱藏 App";

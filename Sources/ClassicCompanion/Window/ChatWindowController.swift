@@ -183,6 +183,14 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     var chromeAppearance: NSAppearance? { bar.appearance }
     /// 小窗和完整窗口切换键，跟随设置。
     var modeKey = HotKeyCombo.modeStandard
+    /// 唤醒键，跟随设置（AppDelegate）。只用来让标签页的键让给它（userHotKeyTakes(_:)）：它是全局快捷键，注册着时按键
+    /// 先被系统拿走、到不了这里；注册失败、录制时暂停注册的时候才会到。nil：没有交进来（测试）。
+    var wakeKey: HotKeyCombo?
+    /// 标签页的键（含 ⌘W，见 TabKeys）交给谁：ChatTabs.handleKey(_:_:)，ChatTabs 建好时接上。返回 true 表示处理了，按键吃掉。
+    /// 没接上（只建窗口的测试）时这些键都照原来交给菜单和网页。
+    var onTabKey: ((TabKeys.Match, TabKeys.Context) -> Bool)?
+    /// 有没有应用级的模态框（提示框等 runModal）。就是 NSApp.modalWindow；只有测试换它。
+    var isAppModal: @MainActor () -> Bool = { NSApplication.shared.modalWindow != nil }
 
     init(webView: WKWebView, toolbar: some View, diagnostics: Diagnostics, appearance: PageAppearance = PageAppearance(),
          page: PageLoadState = PageLoadState()) {
@@ -286,51 +294,11 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
             }
         }
 
-        // ⌘W 在原生层处理，与浏览器一致：网页无法拦截。只匹配本窗口、只匹配纯 ⌘W，其余按键原样交给网页。
+        // ⌘W、标签页的键、切换键在原生层处理，与浏览器一致：网页无法拦截。只在本窗口里处理，其余按键原样交给网页。
+        // 规则在 handleKeyDown(_:)；这里只取出按键的事实交过去。
         closeKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            let close = Self.isCloseShortcut(event), escape = Self.isPlainEscape(event)
-            let pressed = HotKeyCombo(keyCode: UInt32(event.keyCode), carbonModifiers: HotKeyCombo.carbonModifiers(from: event.modifierFlags))
-            let mode = MainActor.assumeIsolated { self?.modeKey == pressed }
-            // ⌘[ ⌘] 和 ⌘W、切换键一样在原生层处理：输入框有焦点时网页也拦不住；本窗口里总是吃掉，走不了时什么都不做。
-            // 用户设的切换键和它相同时只当切换键。
-            let keyCode = event.keyCode, characters = event.charactersIgnoringModifiers, modifiers = event.modifierFlags
-            let isRepeat = event.isARepeat
-            let history = MainActor.assumeIsolated {
-                self?.historyShortcut(keyCode: keyCode, characters: characters, flags: modifiers)
-            }
-            // Phase 0 诊断：记录到达本应用的 ⌘⇧ / ⌃⌘ 组合（只有键码与该键字符，不含输入内容），用于判断快捷键是否被其他应用占用。
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if flags.contains(.command), flags.contains(.shift) || flags.contains(.control) {
-                let keyCode = event.keyCode, chars = event.charactersIgnoringModifiers ?? "", number = event.windowNumber
-                MainActor.assumeIsolated {
-                    let ours = self?.window?.windowNumber == number
-                    self?.diagnostics.log("keys", "\(flags.contains(.control) ? "⌃⌘" : "⌘⇧") 组合到达 keyCode=\(keyCode) 字符=\(chars) 本窗口=\(ours) 匹配切换=\(mode)")
-                }
-            }
-            if escape {
-                let number = event.windowNumber
-                MainActor.assumeIsolated { self?.logEscape(windowNumber: number) }
-            }
-            guard close || escape || mode || history != nil else { return event }
-            let target = event.windowNumber
-            let handled = MainActor.assumeIsolated { () -> Bool in
-                guard let self, let window = self.window, window.windowNumber == target, window.attachedSheet == nil else { return false }
-                if close {
-                    self.hide(reason: "⌘W")
-                    return true
-                }
-                if mode {
-                    // 官方预览等弹层持有焦点时，网页会先拿到菜单快捷键；原生层处理，网页无法拦截。
-                    self.diagnostics.log("window", "\(self.modeKey.label) 切换模式")
-                    self.toggleMode()
-                    return true
-                }
-                if let history {
-                    return self.handleHistoryKey(history, isRepeat: isRepeat, windowNumber: target)
-                }
-                // Esc 交给网页：网页自己关闭弹层，或按设置请求隐藏窗口。
-                return false
-            }
+            let press = KeyPress(event)
+            let handled = MainActor.assumeIsolated { self?.handleKeyDown(press) ?? false }
             return handled ? nil : event
         }
 
@@ -385,6 +353,53 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         return true
     }
 
+    /// 本应用收到的一次按下（按键监视调用；测试直接调用）。返回 true：由这里处理，按键吃掉，不再交给菜单、输入法和网页。
+    /// 按这个顺序：
+    /// 1. 诊断，和原来一样，不管是哪个窗口、处理不处理都先写：Phase 0 的“⌘⇧ / ⌃⌘ 组合到达”那一行；Esc 到达那一行。
+    /// 2. 标签页的键（KeyPress.tabKey：⌘T ⇧⌘T ⌘W ⇧⌘W ⌃Tab ⌃⇧Tab ⇧⌘] ⇧⌘[ ⌘1–⌘4 ⌘9）：连同这一刻的情形交给 onTabKey
+    ///    （ChatTabs.handleKey(_:_:)，做什么由 TabKeys.keyAction 定）。情形：按键是不是本窗口的、窗口上有没有表单
+    ///    （和原来 ⌘W 的条件一样）、有没有应用级模态框、这个组合是不是用户自己的切换键或唤醒键、是不是重复按键。
+    ///    它说处理了就吃掉。放在切换键前面：⌘W 原来就先于切换键；别的标签页的键和用户的键相同时 keyAction 放过，
+    ///    下一步照常当切换键。
+    /// 3. 本窗口（没有表单）里的切换键：切换模式，吃掉（和原来一样）。
+    /// 4. ⌘[ ⌘]（不是用户的切换键时）：交给 handleHistoryKey，本窗口里总是吃掉。
+    /// 5. 别的（Esc 等）：交给网页。Esc 由网页自己关闭弹层，或按设置请求隐藏窗口。
+    /// 输入法：按键先到这里、再到输入法。组词时（有未确认的文字）按标签页的键照样处理、吃掉，未确认的文字留在原来的那一页
+    /// （和原来组词时按 ⌘W 隐藏窗口一样；原生的 hasMarkedText 组词时仍是 false，见 logEscape，这里不看它）。
+    func handleKeyDown(_ press: KeyPress) -> Bool {
+        let mode = modeKey == press.combo
+        // Phase 0 诊断：记录到达本应用的 ⌘⇧ / ⌃⌘ 组合（只有键码与该键字符，不含输入内容），用于判断快捷键是否被其他应用占用。
+        let flags = press.flags.intersection(.deviceIndependentFlagsMask)
+        if flags.contains(.command), flags.contains(.shift) || flags.contains(.control) {
+            let ours = window?.windowNumber == press.windowNumber
+            diagnostics.log("keys", "\(flags.contains(.control) ? "⌃⌘" : "⌘⇧") 组合到达 keyCode=\(press.keyCode) 字符=\(press.characters ?? "") 本窗口=\(ours) 匹配切换=\(mode)")
+        }
+        if press.isPlainEscape { logEscape(windowNumber: press.windowNumber) }
+        let inChatWindow = window.map { $0.windowNumber == press.windowNumber && $0.attachedSheet == nil } ?? false
+        if let key = press.tabKey, let onTabKey {
+            let context = TabKeys.Context(inChatWindow: inChatWindow, appModal: isAppModal(),
+                                          takenByUserHotKey: userHotKeyTakes(press), isRepeat: press.isRepeat)
+            if onTabKey(key, context) { return true }
+        }
+        if mode, inChatWindow {
+            // 官方预览等弹层持有焦点时，网页会先拿到菜单快捷键；原生层处理，网页无法拦截。
+            diagnostics.log("window", "\(modeKey.label) 切换模式")
+            toggleMode()
+            return true
+        }
+        // ⌘[ ⌘] 和 ⌘W、切换键一样在原生层处理：输入框有焦点时网页也拦不住；本窗口里总是吃掉，走不了时什么都不做。
+        // 用户设的切换键和它相同时只当切换键（historyShortcut 返回 nil）。
+        if let history = historyShortcut(keyCode: press.keyCode, characters: press.characters, flags: press.flags) {
+            return handleHistoryKey(history, isRepeat: press.isRepeat, windowNumber: press.windowNumber)
+        }
+        return false
+    }
+
+    /// 这次按下的组合（按键位和修饰键）就是用户自己设的切换键或唤醒键：标签页的键让给它（TabKeys.keyAction 的第 2 条）。
+    func userHotKeyTakes(_ press: KeyPress) -> Bool {
+        press.combo == modeKey || press.combo == wakeKey
+    }
+
     /// Phase 0 诊断：Esc 到达时的模式；150ms 后再记一次窗口是否仍可见，判断这次 Esc 由谁处理。
     /// 输入法组词状态以网页侧 compositionstart/end 记录为准：原生 hasMarkedText 在 0219 实测中组词期间仍为 false，已移除。
     private func logEscape(windowNumber: Int) {
@@ -398,19 +413,19 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// 下面三个只是对一个按键事件问 KeyPress（按键监视用的同一套认法），留给测试。
     nonisolated static func isPlainEscape(_ event: NSEvent) -> Bool {
-        event.keyCode == 53 && event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .function]).isEmpty
+        KeyPress(event).isPlainEscape
     }
 
     /// 按键位匹配，和录制时一致。
     nonisolated static func isModeShortcut(_ event: NSEvent, combo: HotKeyCombo) -> Bool {
-        UInt32(event.keyCode) == combo.keyCode &&
-            HotKeyCombo.carbonModifiers(from: event.modifierFlags) == combo.carbonModifiers
+        KeyPress(event).combo == combo
     }
 
+    /// 纯 ⌘W（大写锁定不算）。
     nonisolated static func isCloseShortcut(_ event: NSEvent) -> Bool {
-        event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock) == .command &&
-            event.charactersIgnoringModifiers?.lowercased() == "w"
+        KeyPress(event).tabKey?.command == .closeTab
     }
 
     @available(*, unavailable)
@@ -675,7 +690,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 把它的遮挡投到窗口上。
     /// p 不显示时窗口一点不变（遮挡那层和样子、启动保护的窗口部分、日志），p 的启动保护和计时照常开始；
     /// p 显示着时和启动画面一样马上盖上，样子是新标签页的。p 已经关闭时什么都不做。
-    /// 应用里还没有地方调用 newTab()。
+    /// 应用里调用 newTab()、reopenClosedTab() 的是 ⌘T、⇧⌘T（3.10，ChatTabs.handleKey(_:_:)）。
     func beginNewTabCover(for p: PageLoadState) {
         beginCover(for: p, kind: .newTab)
     }

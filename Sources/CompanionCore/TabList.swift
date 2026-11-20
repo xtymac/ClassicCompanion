@@ -115,6 +115,30 @@ public struct TabList: Equatable, Sendable {
         return index + 1 < tabs.count ? tabs[index + 1] : tabs[index - 1]
     }
 
+    // MARK: 选哪一个（不改列表）。下面的选择和按键的决定（TabKeys.keyAction）都用这几个，“哪一个”只有一条规则。
+    // 调用方要经自己的切换入口选中时用（ChatTabs.select(_:)：先改选中项，窗口再跟着换）。
+
+    /// ⌃Tab、⇧⌘]：下一个，最右之后回到最左。只有一个标签页时就是选中的那个。
+    public var nextTab: TabID {
+        tabs[(selectedIndex + 1) % tabs.count]
+    }
+
+    /// ⌃⇧Tab、⇧⌘[：上一个，最左之前回到最右。只有一个标签页时就是选中的那个。
+    public var previousTab: TabID {
+        tabs[(selectedIndex - 1 + tabs.count) % tabs.count]
+    }
+
+    /// ⌘1–⌘4：从左数第 `position` 个（1 起）。没有这个标签页时是 nil：计划没写，取什么都不做的读法（不改选最后一个）。
+    public func tab(atPosition position: Int) -> TabID? {
+        guard (1...tabs.count).contains(position) else { return nil }
+        return tabs[position - 1]
+    }
+
+    /// ⌘9：最后一个（最右）。
+    public var lastTab: TabID {
+        tabs[tabs.count - 1]
+    }
+
     // MARK: 选择。返回值是选中项有没有变，没变时调用方什么都不用做。
 
     /// 点击标签栏里的标签页。不在列表里或已经选中时不变。
@@ -124,26 +148,25 @@ public struct TabList: Equatable, Sendable {
         return true
     }
 
-    /// ⌃Tab、⇧⌘]：下一个，最右之后回到最左。只有一个标签页时不变。
+    /// 选下一个（nextTab）。只有一个标签页时不变。
     public mutating func selectNext() -> Bool {
-        select(tabs[(selectedIndex + 1) % tabs.count])
+        select(nextTab)
     }
 
-    /// ⌃⇧Tab、⇧⌘[：上一个，最左之前回到最右。只有一个标签页时不变。
+    /// 选上一个（previousTab）。只有一个标签页时不变。
     public mutating func selectPrevious() -> Bool {
-        select(tabs[(selectedIndex - 1 + tabs.count) % tabs.count])
+        select(previousTab)
     }
 
-    /// ⌘1–⌘4：从左数第 `position` 个（1 起）。
-    /// 没有这个标签页时不变：计划没写，取什么都不做的读法（不改选最后一个）。
+    /// 选从左数第 `position` 个（tab(atPosition:)）。没有这个标签页时不变。
     public mutating func select(position: Int) -> Bool {
-        guard (1...tabs.count).contains(position) else { return false }
-        return select(tabs[position - 1])
+        guard let id = tab(atPosition: position) else { return false }
+        return select(id)
     }
 
-    /// ⌘9：最后一个。
+    /// 选最后一个（lastTab）。
     public mutating func selectLast() -> Bool {
-        select(tabs[tabs.count - 1])
+        select(lastTab)
     }
 
     // MARK: 重新打开

@@ -157,8 +157,13 @@ enum HotKeyCapture: Equatable {
 
     /// 应用自己在用、不能改的组合。全局快捷键会先于菜单拿到按键，这些功能就失效了。
     /// 两个可以改的键不在这里，由 taken 传入当前值。
+    /// 标签页的键（3.10）：⌘T、⌘1–⌘4、⌘9 是纯 ⌘ 加一个字符，已经被下面“几乎每个应用都在用”那条拒绝，不在这里。
+    /// 加进来之前已经设成这些组合的唤醒键、切换键不受影响（保存的设置不重新检查），按键让给它们（TabKeys.keyAction）。
     private static let reserved: [String: LocalizedText] = [
         "⌘W": LocalizedText("purpose.hideWindow"), "⌘Q": LocalizedText("purpose.quitApp"),
+        "⌃Tab": LocalizedText("purpose.nextTab"), "⌃⇧Tab": LocalizedText("purpose.previousTab"),
+        "⇧⌘]": LocalizedText("purpose.nextTab"), "⇧⌘[": LocalizedText("purpose.previousTab"),
+        "⇧⌘T": LocalizedText("purpose.reopenTab"), "⇧⌘W": LocalizedText("purpose.hideWindowKeepTabs"),
         "⌘M": LocalizedText("purpose.minimizeWindow"), "⌘H": LocalizedText("purpose.hideApp"),
         "⌥⌘H": LocalizedText("purpose.hideOthers"), "⌘N": LocalizedText("purpose.newChat"),
         "⌘K": LocalizedText("purpose.searchChats"), "⌘R": LocalizedText("purpose.reload"),
