@@ -70,7 +70,7 @@ final class HotKeyTests: XCTestCase {
     }
 
     func testTheAppsOwnShortcutsAreRejectedWithTheirPurpose() {
-        XCTAssertEqual(rejection(capture(kVK_ANSI_W, .command, "W")), "⌘W 用来隐藏窗口，请换一个。")
+        XCTAssertEqual(rejection(capture(kVK_ANSI_W, .command, "W")), "⌘W 用来关闭标签页或隐藏窗口，请换一个。")
         XCTAssertEqual(rejection(capture(kVK_ANSI_F, [.control, .command], "F")), "⌃⌘ F 用来切换小窗和完整窗口，请换一个。")
         XCTAssertEqual(rejection(capture(kVK_ANSI_R, [.shift, .command], "R")), "⇧⌘R 用来恢复页面，请换一个。")
         XCTAssertEqual(rejection(capture(kVK_ANSI_D, [.option, .command], "D")), "⌥⌘D 用来打开诊断，请换一个。")
@@ -709,9 +709,9 @@ final class HotKeyTests: XCTestCase {
 
     func testRejectionsAreWrittenInEachLanguage() throws {
         guard case .reject(let reserved) = capture(kVK_ANSI_W, .command, "W") else { return XCTFail() }
-        XCTAssertEqual(reserved.string(in: .english), "⌘W is used to hide the window. Choose another one.")
-        XCTAssertEqual(reserved.string(in: .japanese), "⌘W は「ウインドウを隠す」に使われています。別の組み合わせを選んでください。")
-        XCTAssertEqual(reserved.string(in: .traditionalChinese), "⌘W 用來隱藏視窗，請換一個。")
+        XCTAssertEqual(reserved.string(in: .english), "⌘W is used to close the tab or hide the window. Choose another one.")
+        XCTAssertEqual(reserved.string(in: .japanese), "⌘W は「タブを閉じる、またはウインドウを隠す」に使われています。別の組み合わせを選んでください。")
+        XCTAssertEqual(reserved.string(in: .traditionalChinese), "⌘W 用來關閉分頁或隱藏視窗，請換一個。")
         guard case .reject(let taken) = capture(kVK_ANSI_F, [.control, .command], "F") else { return XCTFail() }
         XCTAssertEqual(taken.string(in: .english), "⌃⌘ F is used to switch between the Quick and Full window. Choose another one.")
         XCTAssertEqual(HotKeyCapture.needsModifier.string(in: .english),

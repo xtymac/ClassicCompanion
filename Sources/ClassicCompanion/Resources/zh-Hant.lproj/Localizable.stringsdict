@@ -17,5 +17,20 @@
 			<string>共 %ld 則</string>
 		</dict>
 	</dict>
+	<!-- 到上限的提示（3.11），選單項目下面寫的原因也是它。N 是分頁的上限（TabList.capacity）。 -->
+	<key>tabs.limit</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>other</key>
+			<string>最多打開 %ld 個分頁</string>
+		</dict>
+	</dict>
 </dict>
 </plist>

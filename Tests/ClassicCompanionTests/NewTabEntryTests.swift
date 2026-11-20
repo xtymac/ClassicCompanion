@@ -8,14 +8,14 @@ import CompanionCore
 
 /// 新增标签页的入口（ChatTabs.newTab()，3.6，只有接口）。启动时的标签页（标签 1）和新增的都按正式运行时的建法建
 /// （ChatTab.make，日志带标签），新增的建法交给 ChatTabs（makeTab），建好后让加载请求只记下来、不发出去。核对：
-/// - 不新增：启动画面还在（到时限后还在等提交也算）时只写一行；到上限（上限来自 TabList）时响一声、写一行。
+/// - 不新增：启动画面还在（到时限后还在等提交也算）时只写一行；到上限（上限来自 TabList）时写一行、显示到上限的提示。
 ///   列表、选中项、窗口都不变，不建网页，不找回窗口。
 /// - 新增的顺序：（窗口没显示时先找回窗口）→ 建、接线、登记网络 → 开始新标签页的遮挡 → 加载新对话页 → 切换过去。
 ///   遮挡在切换之前就属于它：窗口换上它时遮挡一起投上，窗口不写“启动保护”的行；第一次显示不补排版。
 /// - 聚焦、记下的对话地址跟着切换（select）走；设置建的时候就照现在的，之后改设置也改到它；接线和网络和启动的那个一样。
 /// - 换下去的那一页之后的事件只改它自己的状态；A → 新的 B → 回到 A 时补排版和阅读位置照常。
 /// - 新的那一页关闭以后，它迟到的回调和计时什么都不做，标签页能释放。
-/// 不显示窗口：找回窗口、提示音、窗口显示着没有都换成替身。真的找回窗口（ChatWindowController.reveal()）要上屏看。
+/// 不显示窗口：找回窗口、窗口显示着没有都换成替身。真的找回窗口（ChatWindowController.reveal()）要上屏看。
 @MainActor
 final class NewTabEntryTests: XCTestCase {
     private let chat = URL(string: "https://chatgpt.com/c/abc")!
@@ -48,7 +48,7 @@ final class NewTabEntryTests: XCTestCase {
 
     /// 窗口显示着：建、接线 → “新增”一行 → 遮挡（这时它不显示、不选中）→ 加载新对话页（加载时已经盖着、还没选中、窗口还没显示它）
     /// → 切换（“选中”一行）。之后它是选中的、放在最右，窗口显示它的网页视图并盖着新标签页的遮挡；换下去的那一页藏着。
-    /// 窗口不写任何行（没有“启动保护”：遮挡不是在它显示着时开始的），也不补排版。不找回窗口、不响。
+    /// 窗口不写任何行（没有“启动保护”：遮挡不是在它显示着时开始的），也不补排版。不找回窗口、不提示到上限。
     func testANewTabIsBuiltCoveredLoadedThenSelectedInThatOrder() throws {
         let rig = make()
         let mark = rig.mark()
@@ -76,7 +76,7 @@ final class NewTabEntryTests: XCTestCase {
         XCTAssertNil(rig.loads["1"])
         XCTAssertEqual(rig.made, [2])
         XCTAssertEqual(rig.reveals, 0)
-        XCTAssertEqual(rig.beeps, 0)
+        XCTAssertEqual(rig.limitHints, 0)
     }
 
     /// 再新增一个：前一个新的还盖着自己的遮挡也能新增（那不是启动画面）；新的放在最右，哪怕选中的是最左的那个。
@@ -132,7 +132,7 @@ final class NewTabEntryTests: XCTestCase {
 
     // MARK: - 不新增
 
-    /// 启动画面还在（刚开始；到时限后还在等提交）：只写一行，别的都不做——不响、不找回窗口（窗口没显示也不）、不建、
+    /// 启动画面还在（刚开始；到时限后还在等提交）：只写一行，别的都不做——不提示、不找回窗口（窗口没显示也不）、不建、
     /// 列表和窗口不变。启动画面结束以后照常新增。
     func testNothingIsAddedWhileTheLaunchScreenIsUp() async throws {
         for awaitsCommit in [false, true] {
@@ -149,7 +149,7 @@ final class NewTabEntryTests: XCTestCase {
             let mark = rig.mark()
             XCTAssertNil(rig.tabs.newTab())
             XCTAssertEqual(rig.lines(since: mark), ["[tabs] 不新增标签页：启动画面还在"], "等提交=\(awaitsCommit)")
-            XCTAssertEqual(rig.beeps, 0)
+            XCTAssertEqual(rig.limitHints, 0)
             XCTAssertEqual(rig.reveals, 0)
             XCTAssertEqual(rig.made, [])
             XCTAssertEqual(rig.tabs.list, list)
@@ -165,9 +165,9 @@ final class NewTabEntryTests: XCTestCase {
         }
     }
 
-    /// 已到上限（默认 4 个）：响一声、写一行（个数来自 TabList），别的都不做——不找回窗口（窗口没显示也不）、不建、
+    /// 已到上限（默认 4 个）：写一行、显示到上限的提示（个数来自 TabList），别的都不做——不找回窗口（窗口没显示也不）、不建、
     /// 列表、选中项、窗口不变。
-    func testNothingIsAddedAtTheLimitExceptOneBeepAndOneLine() throws {
+    func testNothingIsAddedAtTheLimitExceptOneHintAndOneLine() throws {
         let rig = make()
         XCTAssertNotNil(rig.tabs.newTab())
         XCTAssertNotNil(rig.tabs.newTab())
@@ -177,8 +177,8 @@ final class NewTabEntryTests: XCTestCase {
         let window = rig.windowState(), list = rig.tabs.list
         let mark = rig.mark()
         XCTAssertNil(rig.tabs.newTab())
-        XCTAssertEqual(rig.beeps, 1)
-        XCTAssertEqual(rig.lines(since: mark), ["提示音", "[tabs] 不新增标签页：已到上限（4 个）"])
+        XCTAssertEqual(rig.limitHints, 1)
+        XCTAssertEqual(rig.lines(since: mark), ["[tabs] 不新增标签页：已到上限（4 个）", "[hint] 显示 到上限（4 个）的提示"])
         XCTAssertEqual(rig.reveals, 0)
         XCTAssertEqual(rig.made, [2, 3, 4])
         XCTAssertEqual(rig.tabs.list, list)
@@ -187,7 +187,7 @@ final class NewTabEntryTests: XCTestCase {
         XCTAssertEqual(rig.windowState(), window)
     }
 
-    /// 上限不是写死的：列表的上限是 1 时一开始就满了，那一行写 1。启动画面还在、上限也到了：只写启动画面那一行，不响。
+    /// 上限不是写死的：列表的上限是 1 时一开始就满了，那一行写 1。启动画面还在、上限也到了：只写启动画面那一行，不提示。
     func testTheLimitComesFromTheListAndTheLaunchScreenRefusalComesFirst() {
         let rig = make(capacity: 1)
         XCTAssertTrue(rig.tabs.list.isFull)
@@ -196,15 +196,15 @@ final class NewTabEntryTests: XCTestCase {
         let launch = rig.mark()
         XCTAssertNil(rig.tabs.newTab())
         XCTAssertEqual(rig.lines(since: launch), ["[tabs] 不新增标签页：启动画面还在"], "两样都有时按启动画面算")
-        XCTAssertEqual(rig.beeps, 0)
+        XCTAssertEqual(rig.limitHints, 0)
 
         rig.first.runtime.webView(rig.first.runtime.webView, didCommit: nil)
         rig.first.runtime.webView(rig.first.runtime.webView, didFinish: nil)
         XCTAssertFalse(rig.tabs.isLaunchScreenUp)
         let full = rig.mark()
         XCTAssertNil(rig.tabs.newTab())
-        XCTAssertEqual(rig.lines(since: full), ["提示音", "[tabs] 不新增标签页：已到上限（1 个）"])
-        XCTAssertEqual(rig.beeps, 1)
+        XCTAssertEqual(rig.lines(since: full), ["[tabs] 不新增标签页：已到上限（1 个）", "[hint] 显示 到上限（1 个）的提示"])
+        XCTAssertEqual(rig.limitHints, 1)
         XCTAssertEqual(rig.made, [])
         XCTAssertEqual(rig.tabs.list.tabs.map(\.rawValue), [1])
     }
@@ -497,7 +497,7 @@ private final class ReadingLog {
 
 /// 启动时的标签页（标签 1）和窗口、ChatTabs，像 AppDelegate 那样建（列表、标签页、窗口、ChatTabs、wire），新增的建法交给
 /// ChatTabs：正式运行时的 ChatTab.make，建好后加载请求只记下来。AppDelegate 交给 ChatTabs 的几样换成记录；
-/// 找回窗口、提示音、窗口显示着没有换成替身。替身的调用和共用的日志按发生的先后记在 timeline 里。
+/// 找回窗口、窗口显示着没有换成替身。替身的调用和共用的日志按发生的先后记在 timeline 里。
 /// 切模式的快照和排版换成手动送回。这里只弱引用新增的标签页（关闭以后看它能不能释放）。
 @MainActor
 private final class NewTabRig {
@@ -517,7 +517,12 @@ private final class NewTabRig {
     private(set) var focused: [String] = []
     private(set) var saved: [URL] = []
     private(set) var hidden: [String] = []
-    private(set) var beeps = 0
+    /// 交给窗口的提示（3.11），按先后。
+    private(set) var shownHints: [TabHint] = []
+    /// 到上限的提示显示了几次（3.11 以前是提示音）。
+    var limitHints: Int { shownHints.filter { if case .limit = $0 { true } else { false } }.count }
+    /// 窗口的提示排下的计时（到时收起、等“显示过”），不自己走：测试要时自己调用。
+    private(set) var hintTimers: [@MainActor () -> Void] = []
     private(set) var reveals = 0
     /// 窗口显示着没有（替身）。
     var visible = true
@@ -563,10 +568,15 @@ private final class NewTabRig {
         first.runtime.loadRequest = { [weak self] request in self?.loads["1", default: []].append(request.url!) }
         defaultWindowIsVisible = tabs.windowIsVisible
         tabs.windowIsVisible = { [weak self] in self?.visible ?? true }
-        tabs.beep = { [weak self] in
-            self?.beeps += 1
-            self?.timeline.append("提示音")
+        // 提示（3.11）照正式的交给窗口的提示（从不显示的窗口里，写“[hint] …”），也记下来；它的计时不自己走（hintTimers）。
+        // 第一次有多个标签页的提示当作已经显示过：这里的测试不看它（见 TabHintTests）。
+        let showHint = tabs.showHint
+        tabs.showHint = { [weak self] hint, displayed in
+            self?.shownHints.append(hint)
+            showHint(hint, displayed)
         }
+        tabs.tipRecord = MemoryTabTipRecord(shown: true)
+        controller.hints.schedule = { [weak self] _, work in self?.hintTimers.append(work) }
         controller.onSnapshotPage = { [weak self] done in self?.snapshots.append(done) }
         controller.onPrepareLayout = { [weak self] _, done in
             guard let self else { return }

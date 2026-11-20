@@ -26,7 +26,7 @@ struct WebBar: View {
         let toggle = L10n.string(state.quick ? "bar.toFull" : "bar.toQuick")
         let back = L10n.string("menu.back")
         HStack(spacing: 10) {
-            GlassCircleButton(symbol: "xmark", label: hide, help: L10n.format("format.withShortcut", hide, "⌘W"), action: onClose)
+            GlassCircleButton(symbol: "xmark", label: hide, help: Self.hideHelp(state.hideShortcut), action: onClose)
             // 只在不是聊天页面、并且能后退时出现（例如未登录时点进的介绍页；登录后的 /gpts、分享页等也一样）；
             // 聊天页面上这一条和以前一样。
             if state.showsBack {
@@ -53,6 +53,12 @@ struct WebBar: View {
     }
 
     static let height: CGFloat = 52
+
+    /// 左上角 × 的提示：“隐藏窗口（键）”，键是 ToolbarState.hideShortcut（3.11：一个标签页 ⌘W，多个 ⇧⌘W）；没有键时只有“隐藏窗口”。
+    static func hideHelp(_ shortcut: String?, in language: AppLanguage? = nil) -> String {
+        let hide = L10n.string("bar.hideWindow", in: language)
+        return shortcut.map { L10n.format("format.withShortcut", in: language, hide, $0) } ?? hide
+    }
 }
 
 /// 关闭按钮右边的闪电和应用名：这一条和别的聊天应用的窗口长得太像，容易点错，靠它认出是哪个应用（用户 2026-11-18）。
@@ -292,6 +298,9 @@ final class ToolbarState: ObservableObject {
     @Published var modeKeyLabel = HotKeyCombo.modeStandard.label
     /// 关闭按钮右边的返回箭头（见 HistoryNavigation.showsBackButton）。
     @Published var showsBack = false
+    /// 左上角 × 的提示里写的键（3.11，TabMenus 跟着标签页的个数改）：一个标签页是 ⌘W（和原来一样），多个是 ⇧⌘W；
+    /// nil 时不写键（⇧⌘W 是用户自己的键）。
+    @Published var hideShortcut: String? = "⌘W"
 }
 
 /// 页面第一次加载完之前盖在网页上。底色用窗口此刻的页面颜色（上次记下的，和顶部一条、窗口底色同一个），

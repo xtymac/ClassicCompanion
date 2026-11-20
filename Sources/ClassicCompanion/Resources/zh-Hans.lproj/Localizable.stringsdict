@@ -17,5 +17,20 @@
 			<string>共 %ld 条</string>
 		</dict>
 	</dict>
+	<!-- 到上限的提示（3.11），菜单项下面写的原因也是它。N 是标签页的上限（TabList.capacity）。 -->
+	<key>tabs.limit</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>other</key>
+			<string>最多打开 %ld 个标签页</string>
+		</dict>
+	</dict>
 </dict>
 </plist>

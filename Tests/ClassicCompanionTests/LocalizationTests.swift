@@ -324,14 +324,14 @@ final class LocalizationTests: XCTestCase {
     }
 
     func testNestedTextAndListsUseTheSameLanguage() {
-        let nested = LocalizedText("hotkey.reject.used", .plain("⌘W"), .text(LocalizedText("purpose.hideWindow")))
-        XCTAssertEqual(nested.string(in: .simplifiedChinese), "⌘W 用来隐藏窗口，请换一个。")
-        XCTAssertEqual(nested.string(in: .english), "⌘W is used to hide the window. Choose another one.")
+        let nested = LocalizedText("hotkey.reject.used", .plain("⌘W"), .text(LocalizedText("purpose.closeTabOrHideWindow")))
+        XCTAssertEqual(nested.string(in: .simplifiedChinese), "⌘W 用来关闭标签页或隐藏窗口，请换一个。")
+        XCTAssertEqual(nested.string(in: .english), "⌘W is used to close the tab or hide the window. Choose another one.")
         let list = LocalizedText("hotkey.conflict", .list(["Gemini", "ChatGPT"]))
         XCTAssertEqual(list.string(in: .simplifiedChinese), "按下时 Gemini、ChatGPT 也会打开。")
         XCTAssertEqual(list.string(in: .english), "Pressing it also opens Gemini, ChatGPT.")
         XCTAssertEqual(list.string(in: .japanese), "押すと Gemini、ChatGPT も開きます。")
-        XCTAssertEqual(nested.string(in: .traditionalChinese), "⌘W 用來隱藏視窗，請換一個。")
+        XCTAssertEqual(nested.string(in: .traditionalChinese), "⌘W 用來關閉分頁或隱藏視窗，請換一個。")
         XCTAssertEqual(list.string(in: .traditionalChinese), "按下時 Gemini、ChatGPT 也會打開。")
     }
 
@@ -389,7 +389,7 @@ final class LocalizationTests: XCTestCase {
     }
 
     /// 主菜单和菜单栏菜单里同一个功能用同一句话。
-    @MainActor func testStatusMenuUsesTheMainMenuWords() {
+    @MainActor func testStatusMenuUsesTheMainMenuWords() throws {
         for language in AppLanguage.allCases {
             let main = AppDelegate.makeMainMenu(modeKey: .modeStandard, language: language).menu
             var mainTitles: [String: String] = [:]
@@ -409,7 +409,10 @@ final class LocalizationTests: XCTestCase {
                 shared += 1
             }
             XCTAssertEqual(shared, 5, "新建对话、设置、诊断、关于、退出")
-            XCTAssertEqual(status.items.filter { !$0.isSeparatorItem }.count, 7)
+            // 新建标签页（3.11）：菜单栏图标的菜单里另有自己的动作（不看哪个窗口在前面），字和主菜单的一样。
+            let statusNewTab = try XCTUnwrap(status.items.first { $0.action == #selector(TabMenus.statusNewTab(_:)) })
+            XCTAssertEqual(statusNewTab.title, mainTitles[NSStringFromSelector(#selector(TabMenus.newTab(_:)))], "\(language)")
+            XCTAssertEqual(status.items.filter { !$0.isSeparatorItem }.count, 8)
         }
     }
 

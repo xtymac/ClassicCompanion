@@ -63,7 +63,6 @@
 "hotkey.reject.needsModifier" = "至少要带 ⌘、⌥ 或 ⌃ 中的一个，否则打字时会误触。";
 "hotkey.reject.used" = "%1$@ 用来%2$@，请换一个。";
 "hotkey.reject.common" = "%@ 是常用的快捷键，请换一个。";
-"purpose.hideWindow" = "隐藏窗口";
 "purpose.nextTab" = "切换到下一个标签页";
 "purpose.previousTab" = "切换到上一个标签页";
 "purpose.reopenTab" = "重新打开最近关闭的标签页";
@@ -212,3 +211,13 @@
 "update.authorize.laterNote" = "选择“稍后”或关闭这个窗口，不会下载或安装任何东西，Classic Companion 照常可用。之后要安装，请选择“检查更新…”。";
 "update.authorize.install" = "下载并安装";
 "update.authorize.notesTitle" = "更新内容";
+
+/* 标签页（3.11）：菜单项、窗口里的提示。到上限的提示“最多打开 N 个标签页”在 Localizable.stringsdict（tabs.limit）。 */
+"menu.newTab" = "新建标签页";
+"menu.reopenClosedTab" = "重新打开最近关闭的标签页";
+"menu.closeTab" = "关闭标签页";
+"menu.showNextTab" = "显示下一个标签页";
+"menu.showPreviousTab" = "显示上一个标签页";
+"tabs.tip.severalTabs" = "⌘W 关闭当前标签页，未发送的草稿可能丢失；⇧⌘T 只能重新打开已保存的聊天。左上角的 × 隐藏整个窗口，标签页都会保留。";
+"tabs.hint.close" = "关闭提示";
+"purpose.closeTabOrHideWindow" = "关闭标签页或隐藏窗口";

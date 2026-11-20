@@ -161,6 +161,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     }
     /// 正在显示的提示（测试和诊断用），没显示是 nil。
     var shownLoadProblem: LoadRecovery.Status? { page.notice == .hidden ? nil : page.notice }
+    /// 窗口里的提示（3.11：到上限、第一次有多个标签页），属于窗口、不属于哪个标签页。规则和位置见 TabHintPresenter。
+    /// 它的视图加在窗口内容的最上层（网页区域上方正中）。
+    let hints: TabHintPresenter
     /// 提示收起后正在淡出的那层，淡出完就没了（测试用）。
     private weak var loadProblemFade: NSHostingView<LoadProblemView>?
     var loadProblemFadeView: NSHostingView<LoadProblemView>? { loadProblemFade }
@@ -221,6 +224,10 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         window.tabbingMode = .disallowed
         window.hidesOnDeactivate = false
+        hints = TabHintPresenter(windowShowsContent: { [weak window] in
+            guard let window else { return false }
+            return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
+        }, log: { [diagnostics] in diagnostics.log("hint", $0) })
 
         let bar = NSHostingView(rootView: toolbar)
         self.bar = bar
@@ -243,6 +250,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         // 启动画面从页面的遮挡状态开始（新页面没有遮挡，和这里原来的初值一样），之后只经 applyCover(_:) 改。
         launchCover.isHidden = !page.isCovered
         container.addSubview(launchCover)
+        // 提示在所有遮挡之上（最后加；之后加的淡出层、补排版的遮挡都放在指定的层的旁边，不会盖到它上面）。
+        let hint = hints.host
+        container.addSubview(hint)
         let edges = [webContainer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
                      webContainer.bottomAnchor.constraint(equalTo: container.bottomAnchor)]
         webEdges = edges
@@ -264,6 +274,10 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
             loadProblemCover.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor),
             loadProblemCover.trailingAnchor.constraint(equalTo: webContainer.trailingAnchor),
             loadProblemCover.bottomAnchor.constraint(equalTo: webContainer.bottomAnchor),
+            hint.topAnchor.constraint(equalTo: webContainer.topAnchor, constant: 10),
+            hint.centerXAnchor.constraint(equalTo: webContainer.centerXAnchor),
+            hint.leadingAnchor.constraint(greaterThanOrEqualTo: webContainer.leadingAnchor, constant: 12),
+            hint.trailingAnchor.constraint(lessThanOrEqualTo: webContainer.trailingAnchor, constant: -12),
         ])
         window.contentView = container
         window.webView = webView
@@ -562,6 +576,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         bringToFrontInActiveSpace(window)
         window.makeFirstResponder(webView)
         onDidShow?(kind)
+        hints.windowMayBeOnScreen()
         if modeChanged, window.isVisible, layoutChange == nil { refreshInputMethodPosition() }
         logPlacement("显示后")
         logActivationState(after: 0.35)
@@ -606,6 +621,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         diagnostics.log("window", "隐藏：\(reason)")
         rememberQuickPosition()
         window.orderOut(nil)
+        hints.windowHidden()
         diagnostics.recordHide()
         let target = previousApp
         returnForeground()
@@ -993,6 +1009,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         bar.appearance = appearance.nsAppearance
         launchCover.appearance = appearance.nsAppearance
         loadProblemCover.appearance = appearance.nsAppearance
+        hints.host.appearance = appearance.nsAppearance
         // 窗口底色和网页一致：切换、调整大小时新露出的地方不闪白。
         window?.backgroundColor = appearance.background ?? .windowBackgroundColor
         // 补排版时盖着网页的那块是窗口此刻的页面底色：补排版中采用了新颜色（换上来的页面的颜色等到了），它跟着换。
@@ -1632,7 +1649,17 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidMiniaturize(_ notification: Notification) {
+        hints.windowHidden()
         onDidMiniaturize?()
+    }
+
+    func windowDidDeminiaturize(_ notification: Notification) {
+        hints.windowMayBeOnScreen()
+    }
+
+    /// 被别的窗口完全挡住、又露出来：还没记下显示过的提示从这一刻重新等（TabHintPresenter）。
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        hints.windowMayBeOnScreen()
     }
 
     func windowDidResize(_ notification: Notification) {
