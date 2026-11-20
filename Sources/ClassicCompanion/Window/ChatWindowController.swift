@@ -272,7 +272,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
             let close = Self.isCloseShortcut(event), escape = Self.isPlainEscape(event)
             let pressed = HotKeyCombo(keyCode: UInt32(event.keyCode), carbonModifiers: HotKeyCombo.carbonModifiers(from: event.modifierFlags))
             let mode = MainActor.assumeIsolated { self?.modeKey == pressed }
-            // ⌘[ ⌘] 和 ⌘W、切换键一样在原生层处理：输入框有焦点时网页也拦不住。用户设的切换键和它相同时只当切换键。
+            // ⌘[ ⌘] 和 ⌘W、切换键一样在原生层处理：输入框有焦点时网页也拦不住；本窗口里总是吃掉，走不了时什么都不做。
+            // 用户设的切换键和它相同时只当切换键。
             let keyCode = event.keyCode, characters = event.charactersIgnoringModifiers, modifiers = event.modifierFlags
             let isRepeat = event.isARepeat
             let history = MainActor.assumeIsolated {
@@ -334,13 +335,24 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         return HistoryNavigation.direction(characters: characters, flags: flags)
     }
 
-    /// ⌘[ ⌘]。返回 true 表示由这里处理，按键不再交给网页。只处理本窗口里、这一页能往这个方向走的按键；
-    /// 走不了时原样交给网页（菜单项也是灰的），和没有这个功能时一样。按住不放的重复按键只吃掉，不连着后退。
+    /// ⌘[ ⌘]。返回 true 表示由这里处理，按键不再交给输入法和网页（规则见 HistoryNavigation.keyAction）：
+    /// 本窗口里的按键总是吃掉，能往这个方向走时走一次；走不了（菜单项也是灰的）、按住不放的重复按键时什么都不做。
+    /// 别的窗口里的按键原样放过。重复按键不解析目标页面。
     func handleHistoryKey(_ direction: HistoryDirection, isRepeat: Bool, windowNumber: Int) -> Bool {
-        guard let window, window.windowNumber == windowNumber, window.attachedSheet == nil,
-              let page = historyPage?(), page.canGo(direction) else { return false }
-        if isRepeat { return true }
-        return page.go(direction, source: HistoryNavigation.shortcutName(direction))
+        let inChatWindow = window.map { $0.windowNumber == windowNumber && $0.attachedSheet == nil } ?? false
+        let page = inChatWindow && !isRepeat ? historyPage?() : nil
+        let source = HistoryNavigation.shortcutName(direction)
+        switch HistoryNavigation.keyAction(direction, inChatWindow: inChatWindow, isRepeat: isRepeat,
+                                           canGo: page?.canGo(direction) ?? false) {
+        case .pass:
+            return false
+        case .swallow:
+            if !isRepeat { diagnostics.log("nav", "\(direction.logName)（\(source)）：没有可去的页面，按键不交给网页") }
+            return true
+        case .navigate(let direction):
+            page?.go(direction, source: source)
+            return true
+        }
     }
 
     /// 鼠标侧键。返回 true 表示吃掉这个事件（不交给 WebKit 和网页）。只管本窗口里的事件，登录弹窗等别的窗口原样放过。

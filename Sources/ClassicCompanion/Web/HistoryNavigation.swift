@@ -72,18 +72,33 @@ enum HistoryNavigation {
         }
     }
 
-    enum MouseAction: Equatable {
-        /// 按下侧键：走一次。
+    /// ⌘[ ⌘] 和鼠标侧键怎么处理（keyAction、mouseAction）。
+    enum EventAction: Equatable {
+        /// 走一次。
         case navigate(HistoryDirection)
-        /// 同一个侧键的拖动和松开：吃掉，不再交给 WebKit 和网页。
+        /// 吃掉，什么都不做：不再交给 WebKit、输入法和网页。
         case swallow
-        /// 其他按键：原样放过。
+        /// 原样放过。
         case pass
     }
 
+    /// ⌘[ ⌘]（方向见 direction(characters:flags:)）。⌘[ ⌘] 是应用的后退、前进快捷键：聊天窗口里的按键总是由应用处理，
+    /// 不交给网页——这一页能往这个方向走时走一次；走不了（菜单项是灰的）或者是按住不放的重复按键时吃掉，什么都不做。
+    /// 这样同一个快捷键不会因为能不能后退，有时后退、有时变成网页里的别的功能。
+    /// 别的窗口（登录弹窗、设置、关于、诊断等）里的按键原样放过，和以前一样。
+    /// 不看输入法组词状态（原生层读不到，见 ChatWindowController.logEscape），和 ⌘W、切换键一样：
+    /// 吃掉的按键输入法和网页都收不到，输入框里正在组的字原样留着，不会被确认或取消（按事件流程推断，没有用真实输入法实测）。
+    /// 能走时照样走一次，不管输入框里有没有正在组的字。
+    static func keyAction(_ direction: HistoryDirection, inChatWindow: Bool, isRepeat: Bool, canGo: Bool) -> EventAction {
+        guard inChatWindow else { return .pass }
+        guard !isRepeat, canGo else { return .swallow }
+        return .navigate(direction)
+    }
+
     /// 鼠标侧键：buttonNumber 3 后退，4 前进（macOS 从 0 数，左 0 右 1 中 2）。
-    /// 按下时走一次；按下、拖动、松开都不交给 WebKit 和网页，所以不管它们自己会不会处理侧键，按一下只有这一次导航。
-    static func mouseAction(type: NSEvent.EventType, button: Int) -> MouseAction {
+    /// 按下时走一次；同一个侧键的拖动和松开吃掉；其他按键原样放过。
+    /// 按下、拖动、松开都不交给 WebKit 和网页，所以不管它们自己会不会处理侧键，按一下只有这一次导航。
+    static func mouseAction(type: NSEvent.EventType, button: Int) -> EventAction {
         let direction: HistoryDirection
         switch button {
         case 3: direction = .back

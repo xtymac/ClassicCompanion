@@ -27,7 +27,8 @@ struct WebBar: View {
         let back = L10n.string("menu.back")
         HStack(spacing: 10) {
             GlassCircleButton(symbol: "xmark", label: hide, help: L10n.format("format.withShortcut", hide, "⌘W"), action: onClose)
-            // 只在不是聊天页面、并且能后退时出现（例如未登录时点进的介绍页）；聊天页面上这一条和以前一样。
+            // 只在不是聊天页面、并且能后退时出现（例如未登录时点进的介绍页；登录后的 /gpts、分享页等也一样）；
+            // 聊天页面上这一条和以前一样。
             if state.showsBack {
                 GlassCircleButton(symbol: "chevron.left", label: back,
                                   help: L10n.format("format.withShortcut", back, HistoryNavigation.shortcutName(.back)),
