@@ -263,6 +263,12 @@ private struct TaggedEvidence: EvidenceTarget {
         onFirstStep()
         return "速率 \(n)"
     }
-    func setAllMediaPlaybackSuspended(_ suspended: Bool) async { onFirstStep() }
-    func pauseAllMediaPlayback() async { onFirstStep() }
+    func setAllMediaPlaybackSuspended(_ suspended: Bool) async -> String {
+        onFirstStep()
+        return "ok"
+    }
+    func pauseAllMediaPlayback() async -> String {
+        onFirstStep()
+        return "ok"
+    }
 }

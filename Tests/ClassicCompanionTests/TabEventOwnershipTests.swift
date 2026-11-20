@@ -1255,8 +1255,14 @@ private struct EvidenceSpy: EvidenceTarget {
         await steps.record("\(name) setRate \(rate)")
         return "速率 \(name)"
     }
-    func setAllMediaPlaybackSuspended(_ suspended: Bool) async { await steps.record("\(name) suspend \(suspended)") }
-    func pauseAllMediaPlayback() async { await steps.record("\(name) pauseAll") }
+    func setAllMediaPlaybackSuspended(_ suspended: Bool) async -> String {
+        await steps.record("\(name) suspend \(suspended)")
+        return "ok"
+    }
+    func pauseAllMediaPlayback() async -> String {
+        await steps.record("\(name) pauseAll")
+        return "ok"
+    }
 }
 
 /// 记下、放回、丢弃阅读位置的记录。
