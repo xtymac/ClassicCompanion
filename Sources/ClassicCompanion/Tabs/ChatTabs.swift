@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import CompanionCore
 
 /// 标签页和窗口之间的接线：把每个标签页的网页运行时的回调接到窗口上（wire(_:)），加上换页面（urlChanged）和聚焦输入框
@@ -8,8 +8,9 @@ import CompanionCore
 /// 和改设置时每个标签页都要跟着改的几样也在这里，AppDelegate 只调用。
 ///
 /// 这里有一组标签页（tabs，按从左到右）和选中的那个（selected）。顺序、选中项和标识都由 list（TabList）决定。
-/// 换选中的只经 select(_:)（切换标签页：先改选中项，再让窗口显示它，再做跟着它的事）。
-/// 应用里现在仍只有启动时的那一个，它就是选中的、窗口显示着的；还没有标签栏、菜单和按键，应用里没有地方调用 select(_:)。
+/// 换选中的只经 select(_:)（切换标签页：先改选中项，再让窗口显示它，再做跟着它的事）。新增标签页只经 newTab()。
+/// 应用里现在仍只有启动时的那一个，它就是选中的、窗口显示着的；还没有标签栏、菜单和按键，应用里没有地方调用 select(_:)
+/// 和 newTab()。
 ///
 /// 规则：事件属于发出它的标签页，接线时就绑定那个标签页，处理时明确传着它，不在中途拿“现在选中的”来代替。
 /// - 标签页自己的状态（页面加载状态、lastPath、适配器的代号、它自己的日志）不管选没选中都照常改。
@@ -48,9 +49,23 @@ final class ChatTabs {
     /// 在页面里点官方的“新对话”入口，确定没点到时返回 false（调用方再整页加载）。AppDelegate：适配器的 openNewChatInPage()。
     /// 它要在真实页面里跑脚本，所以交进来：测试换成记录，并且能在它等着的时候换选中的标签页。
     private let openNewChat: @MainActor (ChatGPTAdapter) async -> Bool
+    /// 新增标签页（newTab()）时用标识建一个标签页。AppDelegate：建启动时的那个标签页用的同一个建法（ChatTab.make，
+    /// 同一份诊断和设置），所以新的那一页建的时候就照现在的设置（页面缩放、网页增强、网页无障碍）。
+    /// 测试换成同样的建法再让加载请求不发出去。不新增标签页的测试可以不交（nil）；没交就调用 newTab() 是用错了（断言）。
+    private let makeTab: (@MainActor (TabID) -> ChatTab)?
+    /// 找回窗口（D9：窗口没显示时新增标签页，先找回窗口再新增）。AppDelegate：windowController.reveal()
+    /// （点 Dock、⌘Tab 找回窗口的同一个入口，保持现在的模式）。测试换成记录：测试不显示窗口。
+    /// 和 makeTab 一样，不新增标签页的测试可以不交；没交就调用 newTab() 是用错了（断言）。
+    private let revealWindow: (@MainActor () -> Void)?
     /// 窗口是不是 key 窗口（加载完成时据此决定要不要聚焦）。就是 windowController.isKey；
     /// 只有测试换它：测试不显示窗口，窗口不会成为 key 窗口。
     var windowIsKey: @MainActor () -> Bool
+    /// 窗口显示着：可见，并且没有最小化到 Dock（新增标签页时据此决定要不要先找回窗口）。就是窗口的 isVisible、isMiniaturized；
+    /// 只有测试换它：测试不显示窗口，窗口总是不可见。
+    var windowIsVisible: @MainActor () -> Bool
+    /// 到上限还要新增标签页时的提示音（阶段 3 的占位，D8：以后换成“最多打开 4 个标签页”的提示）。就是 NSSound.beep()；
+    /// 只有测试换它：测试不出声。
+    var beep: @MainActor () -> Void = { NSSound.beep() }
     /// 记下、放回、丢弃阅读位置：就是运行时的 holdReadingPosition()（返回这一次的编号）、
     /// restoreReadingPosition(_:confirmingContinuation:)（编号、要不要网页确认）、discardReadingPosition(_:)（编号）。
     /// 只有测试换它们：网页里没有页面，看不到效果，换成记录才看得出给了哪个标签页、哪一次。
@@ -76,13 +91,16 @@ final class ChatTabs {
     /// wire(_:) 不再改它们。
     /// tab 的运行时在这里登记到 network。原来 AppDelegate 在建好运行时之后马上登记；那时和这里之间都在同一轮里同步执行，
     /// 网络状态的第一次报告要等回到主队列才到，登记时还不知道状态，什么都不补发，所以挪到这里看不出差别。
+    /// makeTab、revealWindow 只有新增标签页（newTab()）用，见各自的说明。
     init(list: TabList, tab: ChatTab, windowController: ChatWindowController, diagnostics: Diagnostics,
          network: NetworkStatus,
          hideWindow: @escaping @MainActor (String) -> Void,
          focusInput: @escaping @MainActor (ChatGPTAdapter) async -> String,
          saveLastConversation: @escaping @MainActor (URL) -> Void,
          mediaState: @escaping @MainActor (ChatGPTAdapter) async -> String,
-         openNewChat: @escaping @MainActor (ChatGPTAdapter) async -> Bool) {
+         openNewChat: @escaping @MainActor (ChatGPTAdapter) async -> Bool,
+         makeTab: (@MainActor (TabID) -> ChatTab)? = nil,
+         revealWindow: (@MainActor () -> Void)? = nil) {
         precondition(list.tabs == [tab.id] && list.selected == tab.id, "启动时只有这一个标签页，并且选中它")
         self.list = list
         tabs = [tab]
@@ -94,7 +112,10 @@ final class ChatTabs {
         self.saveLastConversation = saveLastConversation
         self.mediaState = mediaState
         self.openNewChat = openNewChat
+        self.makeTab = makeTab
+        self.revealWindow = revealWindow
         windowIsKey = { windowController.isKey }
+        windowIsVisible = { windowController.window.map { $0.isVisible && !$0.isMiniaturized } ?? false }
         windowController.onReloadRequest = { [weak self] in self?.reloadSelectedTab() }
         windowController.onDidShow = { [weak self] kind in self?.windowDidShow(kind) }
         windowController.onWillChangeLayout = { [weak self] in self?.holdReadingPositionForLayout() }
@@ -131,16 +152,16 @@ final class ChatTabs {
     /// 启动画面还在：这组里有页面的启动画面（启动时的那种遮挡）还盖着，到时限后还在等提交也算
     /// （ChatWindowController.coversWithLaunchScreen(_:)）。只有启动时的那个标签页会有：启动画面只在启动时开始一次
     /// （beginLaunchScreen()）。新标签页的遮挡不算，窗口那层显不显示也不看（看的是页面自己的遮挡状态）。
-    /// 计划 4.3“启动画面还在的时候不能新增标签页”：3.6 新增标签页的入口（菜单置灰、按键不响应）在它为 true 时不加。
-    /// 应用里现在没有地方调用。
+    /// 计划 4.3“启动画面还在的时候不能新增标签页”：新增标签页的入口 newTab() 在它为 true 时不加
+    /// （以后的菜单置灰、按键不响应也看它）。
     var isLaunchScreenUp: Bool {
         tabs.contains { windowController.coversWithLaunchScreen($0.page) }
     }
 
     /// 加一个标签页：放在最右，不选中，接好线，登记到网络状态。标识从 list 来，先发标识再由 make 用它建标签页
     /// （正式运行是 ChatTab.make：运行时和适配器建的时候就知道自己的标识，日志从第一行起带标签）。
-    /// 已到上限时返回 nil，什么都不加，也不调用 make。应用里现在没有地方调用（还没有新增标签页的入口），
-    /// 测试用它加一个从不显示的标签页。
+    /// 已到上限时返回 nil，什么都不加，也不调用 make。新增标签页的入口 newTab() 经它加（建法是 makeTab）；
+    /// 测试也用它加一个从不显示的标签页。
     func add(_ make: (TabID) -> ChatTab) -> ChatTab? {
         guard case .added(let id) = list.append(select: false) else { return nil }
         let tab = make(id)
@@ -161,6 +182,11 @@ final class ChatTabs {
     /// 写标签页 tab 的事：写进这组的诊断（和原来一样），行末带 tab 的标签（它的运行时带标签时，见 ChatTab.logTag）。
     private func log(_ tab: ChatTab, _ category: String, _ message: String) {
         TabLog(diagnostics: diagnostics, tab: tab.logTag)(category, message)
+    }
+
+    /// 写这组的事，不属于哪一个标签页（不新增标签页、先找回窗口）：不带标签。
+    private func logGroup(_ category: String, _ message: String) {
+        TabLog(diagnostics: diagnostics, tab: nil)(category, message)
     }
 
     /// 标签页离开这组时：从共用的网络状态上去掉，之后的网络变化不再送给它。close(_:) 和测试的 removeForTesting(_:) 调用。
@@ -311,7 +337,7 @@ final class ChatTabs {
     // MARK: - 切换标签页
 
     /// 切换到标签页 tab：它成为选中的、窗口显示它。tab 已经是选中的、不在这组里（没加进来、关闭了、拿掉了）：什么都不做。
-    /// 应用里现在没有地方调用（还没有标签栏、菜单和按键）；3.6 新增标签页、3.7 关闭显示着的标签页都经这里换。
+    /// 新增标签页（newTab()）经这里换上新的那一页；3.7 关闭显示着的标签页也要经这里换。应用里还没有地方调用。
     ///
     /// 顺序：
     /// 1. 先改选中项（list）。窗口在下一步结束进行中的切模式时说“排版结束”，那时选中的已经是 tab：
@@ -353,6 +379,55 @@ final class ChatTabs {
     private func holdBeforeCatchUp(_ tab: ChatTab) {
         guard tab.pendingReadingRestore == nil else { return }
         tab.pendingReadingRestore = ReadingHold(tab: tab, token: holdReadingPosition(tab.runtime))
+    }
+
+    // MARK: - 新增标签页
+
+    /// 新增标签页：加一个新对话的标签页，放在最右，切换过去。返回加进来的那一个；不新增时返回 nil。
+    /// 只有接口（3.6）：应用里还没有地方调用（⌘T、菜单在 3.10、3.11 接上），只有测试调用。
+    ///
+    /// 不新增（列表、选中项、窗口都不变，不找回窗口，不建网页；只写一行“[tabs] 不新增标签页：…”，不带标签）：
+    /// - 启动画面还在（isLaunchScreenUp，计划 4.3）：别的什么都不做。新标签页的遮挡不算，还盖着也能再新增。
+    /// - 已到上限（list.isFull，上限由 TabList 定）：响一声提示音（beep）。这是阶段 3 的占位（D8），
+    ///   以后换成“最多打开 4 个标签页”的提示。
+    /// 两样都有时按启动画面算（不响）。
+    ///
+    /// 顺序：
+    /// 1. 窗口没显示（隐藏、最小化，windowIsVisible）：写一行，先找回窗口（revealWindow，D9），窗口照常显示这时选中的那一页
+    ///    （窗口显示后的聚焦、提前重试也照常给它），再往下做。窗口显示着就不找回。
+    /// 2. 加一个标签页（add(_:)，建法是 makeTab：和启动时的那个一样，建的时候就照现在的设置；接好线、登记到网络状态），
+    ///    放在最右，不选中，窗口不变。写一行“新增”（带它的标签，有现在的个数，没有地址）。
+    /// 3. 它的页面开始新标签页的遮挡（ChatWindowController.beginNewTabCover(for:)）。这时它不显示：只改它自己的状态
+    ///    （盖着、样子、计时、启动保护），窗口一点不变、不写窗口的行。
+    /// 4. 它开始加载新对话页（WebRuntime.newChat()，和“新对话”整页加载的是同一个地址）。在遮挡之后：第一次加载从一开始
+    ///    就有遮挡盖着，加载的结果（提交、完成、失败）都能结束它，和启动时先盖启动画面、再加载一样。它不选中也照常加载：
+    ///    是它自己的页面。
+    /// 5. 切换过去（select(_:)）。遮挡这时已经属于它：窗口在换上它的网页视图的同一步里投上它的遮挡（display 里），
+    ///    没有它的空白网页显示着、遮挡还没盖上的时候；也不会像给显示着的页面开始遮挡那样动窗口的启动保护、写窗口的
+    ///    “启动保护”那一行。它从没在窗口里显示过，不补排版（第一次加载有自己的遮挡）。
+    ///    聚焦（窗口是 key 窗口才聚焦它，之前排着的作废）、记下可恢复的对话地址、阅读位置都由 select 照常做，这里不另外做。
+    @discardableResult
+    func newTab() -> ChatTab? {
+        guard let makeTab, let revealWindow else { preconditionFailure("新增标签页要有建法和找回窗口（AppDelegate 交进来）") }
+        guard !isLaunchScreenUp else {
+            logGroup("tabs", "不新增标签页：启动画面还在")
+            return nil
+        }
+        guard !list.isFull else {
+            beep()
+            logGroup("tabs", "不新增标签页：已到上限（\(list.capacity) 个）")
+            return nil
+        }
+        if !windowIsVisible() {
+            logGroup("tabs", "新增标签页：窗口没有显示，先找回窗口")
+            revealWindow()
+        }
+        guard let tab = add(makeTab) else { preconditionFailure("上面看过没到上限，找回窗口不加标签页") }
+        log(tab, "tabs", "新增（现在 \(tabs.count) 个）")
+        windowController.beginNewTabCover(for: tab.page)
+        tab.runtime.newChat()
+        select(tab)
+        return tab
     }
 
     // MARK: - 对选中的标签页做的操作
