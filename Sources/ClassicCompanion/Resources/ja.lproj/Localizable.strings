@@ -185,6 +185,9 @@
 "diag.exp.resume" = "Web メディアを再開";
 "diag.exp.pauseAll" = "すべての Web メディアを一時停止";
 "diag.exp.setRate" = "設定して測定";
+/* ページの結果がどのタブのものか（読み取ったタブの作成番号）。結果の前に付けます。 */
+"diag.tab.open" = "【タブ %1$ld】%2$@";
+"diag.tab.closed" = "【閉じたタブ %1$ld】%2$@";
 
 /* アップデート（Sparkle）。Sparkle 自身のウインドウは Sparkle の翻訳で macOS の言語に従い、ここの文字列は App の言語に従う。 */
 "menu.checkForUpdates" = "アップデートを確認…";

@@ -118,7 +118,8 @@ final class TabLogTests: XCTestCase {
         ])
     }
 
-    /// 媒体实验那一行日志带它对的那个标签页（开始时选中的）的标签；诊断窗口和报告里的实验记录照原样不带。
+    /// 媒体实验那一行日志带它对的那个标签页（开始时选中的）的标签；实验记录本身（experiments）照原样不带
+    /// （报告和诊断窗口按 experimentTabs 另外带上，见 TabReportTagTests、DiagnosticsTabLabelTests）。
     func testAnExperimentsLogLineCarriesItsTabsTagButTheRecordDoesNot() async {
         let rig = makeRig()
         let b = rig.add()

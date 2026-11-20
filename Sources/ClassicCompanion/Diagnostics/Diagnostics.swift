@@ -55,14 +55,16 @@ final class Diagnostics: ObservableObject {
     @Published private(set) var experiments: [String] = []
 
     // 下面这几样说的都是某一个标签页：各记下是哪个标签页的（开始读、开始采集这一刻绑定的那个，不是写进来时选中的那个），
-    // 报告里那一行带上它的标签（reportTag）。nil 不带。只有标签页的创建序号，没有标题、地址。
+    // 报告里那一行带上它的标签（reportTag），诊断窗口里那一样也带上（owner，DiagnosticsView.pageTexts）。nil 不带。
+    // 只有标签页的创建序号，没有标题、地址。
     private(set) var readAloudEvidenceTab: TabID?
     private(set) var mediaMeasurementTab: TabID?
     private(set) var webMediaStateTab: TabID?
-    /// 和 experiments 一一对应。
-    private var experimentTabs: [TabID?] = []
-    /// 已经关闭的标签页（ChatTabs.close(_:) 告诉这里）。标识不再用，所以只增不减；报告里它们的行写“已关闭的标签N”。
-    private var closedTabs: Set<TabID> = []
+    /// 和 experiments 一一对应（一起加，到 50 条一起去掉最早的）。
+    private(set) var experimentTabs: [TabID?] = []
+    /// 已经关闭的标签页（ChatTabs.close(_:) 告诉这里）。标识不再用，所以只增不减；报告里它们的行写“已关闭的标签N”，
+    /// 诊断窗口里写“已关闭的”。@Published：诊断窗口开着时关闭标签页，只有这一样变，窗口也要跟着重画。
+    @Published private var closedTabs: Set<TabID> = []
 
     /// 官方 Read Aloud 的结构证据（脱敏 JSON 摘要），是标签页 tab 的（PageEvidence.collect 交开始时绑定的那个）。
     func recordReadAloudEvidence(_ evidence: String, tab: TabID?) {
@@ -83,7 +85,7 @@ final class Diagnostics: ObservableObject {
     }
 
     /// tab：实验是对哪个标签页做的。给了就在日志那一行末尾带上它的标签（TabLog），报告里的实验记录那一行也带上
-    /// （reportTag）；诊断窗口里的实验记录（experiments）照原样不带。
+    /// （reportTag），诊断窗口里的那一条也带上（按 experimentTabs）；记录本身（experiments）照原样不带。
     func recordExperiment(_ line: String, tab: TabID? = nil) {
         let tf = DateFormatter(); tf.dateFormat = "HH:mm:ss"
         experiments.append("\(tf.string(from: Date())) \(line)")
@@ -96,17 +98,30 @@ final class Diagnostics: ObservableObject {
     }
 
     /// 标签页 tab 关闭了（ChatTabs.close(_:)）。它写下的那几样留着（是它关闭前的），报告里那一行改写“已关闭的标签N”，
-    /// 不去掉，也不标成别的标签页。nil（没有标签的）不记。
+    /// 诊断窗口里那一样改说“已关闭的”（开着的窗口马上跟着改），不去掉，也不标成别的标签页。nil（没有标签的）不记。
     func tabClosed(_ tab: TabID?) {
         guard let tab else { return }
         closedTabs.insert(tab)
     }
 
+    /// 一样结果是哪个标签页的：它的创建序号，那个标签页是不是已经关闭。
+    struct TabOwner: Equatable {
+        let number: Int
+        let closed: Bool
+    }
+
+    /// 记下的标签页 tab 现在怎么说：只看记下的标识和它关没关闭，不看现在选中的是哪个；nil 是 nil。
+    /// 报告（reportTag）和诊断窗口（DiagnosticsView.pageTexts）都按它写，两边说的总是同一个标签页、同样的“已关闭”。
+    func owner(_ tab: TabID?) -> TabOwner? {
+        guard let tab else { return nil }
+        return TabOwner(number: tab.rawValue, closed: closedTabs.contains(tab))
+    }
+
     /// 报告里一行末尾说它是哪个标签页的：“ 【标签N】”；那个标签页已经关闭是“ 【已关闭的标签N】”；nil 是空。
     /// 和日志的标签（TabLog.tag）一样只有创建序号。
     func reportTag(_ tab: TabID?) -> String {
-        guard let tab else { return "" }
-        return closedTabs.contains(tab) ? " 【已关闭的标签\(tab.rawValue)】" : " \(TabLog.tag(tab))"
+        guard let tab, let owner = owner(tab) else { return "" }
+        return owner.closed ? " 【已关闭的标签\(owner.number)】" : " \(TabLog.tag(tab))"
     }
 
     /// 报告文件位置（只含脱敏内容）

@@ -185,6 +185,9 @@
 "diag.exp.resume" = "恢復網頁媒體";
 "diag.exp.pauseAll" = "暫停全部網頁媒體";
 "diag.exp.setRate" = "設定並測量";
+/* 頁面的結果是哪個分頁的（讀取的那個分頁的建立序號），放在那一項前面。 */
+"diag.tab.open" = "【分頁 %1$ld】%2$@";
+"diag.tab.closed" = "【已關閉的分頁 %1$ld】%2$@";
 
 /* 應用程式更新（Sparkle）。Sparkle 自己的視窗用 Sparkle 的翻譯、跟隨 macOS 語言；這些跟隨 App 語言。 */
 "menu.checkForUpdates" = "檢查更新項目⋯";
