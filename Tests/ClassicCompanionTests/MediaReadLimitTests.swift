@@ -177,18 +177,23 @@ final class MediaReadLimitTests: XCTestCase {
 
     /// 选中的 2 正在等 WebKit（不回答，时限 60 秒）时关闭 2：每秒的读、页面变化后 0.8 秒的读、挂起实验、暂停实验，
     /// 都经适配器交给 WebKit（交的是哪一个请求），都在关闭后马上释放（测试这时还拿着 WebKit 的回调）；
-    /// 回调之后才调用：不写诊断、不写日志。
+    /// 回调之后才调用：不写诊断、不写日志。两种实验在关闭时写一行“没有做完”：那一步是关闭让它马上结束的（"closed"），
+    /// 请求已经交给 WebKit、没有撤回（测试还拿着它的回调）。
     func testAClosedTabIsReleasedAtOnceWhileWebKitHoldsItsMediaRequest() async throws {
-        let kinds: [(String, ChatGPTAdapter.MediaRequest, @MainActor (TabCloseRig, Refs) -> Void)] = [
-            ("每秒的读", .state, { rig, _ in rig.tabs.mediaTick() }),
+        let kinds: [(String, ChatGPTAdapter.MediaRequest, @MainActor (TabCloseRig, Refs) -> Void, [String])] = [
+            ("每秒的读", .state, { rig, _ in rig.tabs.mediaTick() }, []),
             ("页面变化后的读", .state, { [chat, other] _, refs in
                 refs.runtime?.onURLChange?(chat)
                 refs.runtime?.onURLChange?(other)
-            }),
-            ("挂起实验", .suspendAll(true), { rig, _ in _ = Task { await rig.tabs.runExperiment(.suspendAll) } }),
-            ("暂停实验", .pauseAll, { rig, _ in _ = Task { await rig.tabs.runExperiment(.pauseAll) } }),
+            }, []),
+            ("挂起实验", .suspendAll(true), { rig, _ in _ = Task { await rig.tabs.runExperiment(.suspendAll) } },
+             ["[diag] 媒体实验“WebKit setAllMediaPlaybackSuspended(true)”没有做完：标签页在“全部挂起”这一步关闭，这一步的结果丢弃；"
+              + "关闭时马上不再等 WebKit 回答，已交给 WebKit 的请求没有撤回 【标签2】"]),
+            ("暂停实验", .pauseAll, { rig, _ in _ = Task { await rig.tabs.runExperiment(.pauseAll) } },
+             ["[diag] 媒体实验“WebKit pauseAllMediaPlayback”没有做完：标签页在“全部暂停”这一步关闭，这一步的结果丢弃；"
+              + "关闭时马上不再等 WebKit 回答，已交给 WebKit 的请求没有撤回 【标签2】"]),
         ]
-        for (name, request, start) in kinds {
+        for (name, request, start, cutShort) in kinds {
             let rig = make()
             rig.realAdapter = true
             let held = HeldMediaRequests()
@@ -220,7 +225,7 @@ final class MediaReadLimitTests: XCTestCase {
             XCTAssertEqual(rig.diagnostics.webMediaState, shown, name)
             XCTAssertEqual(rig.diagnostics.experiments, experiments, name)
             XCTAssertEqual(rig.lines(since: mark).filter { $0.contains("【标签2】") },
-                           ["[tabs] 关闭（剩 1 个） 【标签2】", "[web] 关闭网页：停止加载 【标签2】"], name)
+                           ["[tabs] 关闭（剩 1 个） 【标签2】", "[web] 关闭网页：停止加载 【标签2】"] + cutShort, name)
         }
     }
 

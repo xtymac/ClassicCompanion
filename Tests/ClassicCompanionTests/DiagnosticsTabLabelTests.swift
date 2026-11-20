@@ -195,6 +195,6 @@ private struct LabelEvidence: EvidenceTarget {
     func measureMedia() async -> String { "测量 \(n)" }
     func webMediaState() async -> String { "媒体态 \(n)" }
     func experimentSetRate(_ rate: Double) async -> String { "速率 \(n)" }
-    func setAllMediaPlaybackSuspended(_ suspended: Bool) async {}
-    func pauseAllMediaPlayback() async {}
+    func setAllMediaPlaybackSuspended(_ suspended: Bool) async -> String { "ok" }
+    func pauseAllMediaPlayback() async -> String { "ok" }
 }

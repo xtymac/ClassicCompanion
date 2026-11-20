@@ -5,7 +5,8 @@ import CompanionCore
 @testable import ClassicCompanion
 
 /// 关闭标签页以后，关闭前开始、还在等的操作（新对话、读媒体状态、页面变化后的媒体日志、聚焦、证据采集和媒体实验）：
-/// 它们等的那一步返回或到时限以后不再有任何页面或窗口的副作用（不加载、不聚焦、不写诊断、不写日志、窗口不变），
+/// 它们等的那一步返回或到时限以后不再有任何页面或窗口的副作用（不加载、不聚焦、不写诊断、不写日志、窗口不变；
+/// 只有证据采集和媒体实验写一行“没有做完”，见 EvidenceCutShortTests），
 /// 也不再拿着标签页。每条核对：开始操作 → 关闭标签页（经入口 closeTab）→ 让它返回 → 什么都没发生；
 /// 以及标签页、运行时、适配器、页面状态和网页视图什么时候释放（弱引用）：
 /// - 什么都没在等：closeTab 返回时就释放（同一轮里，不用等）；
@@ -224,15 +225,20 @@ final class TabCloseAsyncTests: XCTestCase {
     // MARK: - 证据采集、媒体实验
 
     /// 证据采集（要测量）和三种实验，第一步在等（0.3 秒）时关 2：之后的步骤一步都不做，诊断不写（证据、测量、实验记录），
-    /// 2 在那一步返回时释放。
+    /// 2 在那一步返回时释放。那一步返回时写一行“没有做完”（只一行，带 2 的标签；替身的挂起返回 "ok"，不是关闭让它结束的，
+    /// 只说结果丢弃）。
     func testEvidenceAndExperimentsStopAtTheClosedTab() async throws {
-        let kinds: [(String, @MainActor (ChatTabs) async -> Void, String)] = [
-            ("证据", { await $0.collectEvidence(measure: true) }, "probe"),
-            ("暂停全部", { await $0.runExperiment(.suspendAll) }, "suspend"),
-            ("播放速度", { await $0.runExperiment(.setRate(1.25)) }, "setRate"),
-            ("测量", { await $0.runExperiment(.measure) }, "measure"),
+        let kinds: [(String, @MainActor (ChatTabs) async -> Void, String, String)] = [
+            ("证据", { await $0.collectEvidence(measure: true) }, "probe",
+             "[diag] 证据采集没有做完：标签页在“探测页面能力”这一步关闭，这一步的结果丢弃；网页脚本没有取消，是它返回、出错或超时以后丢弃的 【标签2】"),
+            ("暂停全部", { await $0.runExperiment(.suspendAll) }, "suspend",
+             "[diag] 媒体实验“WebKit setAllMediaPlaybackSuspended(true)”没有做完：标签页在“全部挂起”这一步关闭，这一步的结果丢弃 【标签2】"),
+            ("播放速度", { await $0.runExperiment(.setRate(1.25)) }, "setRate",
+             "[diag] 媒体实验“DOM playbackRate=1.25”没有做完：标签页在“设置播放速度并测量”这一步关闭，这一步的结果丢弃 【标签2】"),
+            ("测量", { await $0.runExperiment(.measure) }, "measure",
+             "[diag] 媒体实验“测量”没有做完：标签页在“测量速率”这一步关闭，这一步的结果丢弃 【标签2】"),
         ]
-        for (name, run, firstStep) in kinds {
+        for (name, run, firstStep, cutShort) in kinds {
             let rig = make()
             let steps = SlowEvidenceSteps()
             rig.tabs.evidenceTarget = { tab in SlowEvidence(name: "\(tab.id.rawValue)", steps: steps, delay: 0.3) }
@@ -250,7 +256,7 @@ final class TabCloseAsyncTests: XCTestCase {
             XCTAssertEqual(rig.diagnostics.readAloudEvidence, evidence, name)
             XCTAssertEqual(rig.diagnostics.mediaMeasurement, measured, name)
             XCTAssertEqual(rig.diagnostics.experiments, experiments, name)
-            XCTAssertEqual(rig.lines(since: mark), closedTwo, name)
+            XCTAssertEqual(rig.lines(since: mark), closedTwo + [cutShort], name)
         }
     }
 
@@ -289,7 +295,8 @@ final class TabCloseAsyncTests: XCTestCase {
 
     /// 2 打开一个本地网页，真的证据采集（TabEvidenceTarget）做“测量”实验：网页里的测量脚本要 2 秒（时限 4 秒）。
     /// 开始 0.3 秒后关 2：测量脚本返回前 2 还在（测量那一步拿着它），返回后马上释放（不等 4 秒的时限）；
-    /// 测量结果、实验记录都不写，适配器不写日志。
+    /// 测量结果、实验记录都不写，适配器不写日志。写一行“没有做完”：测量这一步先读媒体状态再跑脚本，
+    /// 分不清关闭时在等哪一个，只说结果丢弃。
     func testARealMeasurementHoldsTheClosedTabOnlyUntilItsScriptReturns() async throws {
         let rig = make()
         rig.realAdapter = true
@@ -313,7 +320,8 @@ final class TabCloseAsyncTests: XCTestCase {
         XCTAssertEqual(rig.diagnostics.mediaMeasurement, measured)
         XCTAssertEqual(rig.diagnostics.experiments, experiments)
         XCTAssertEqual(rig.lines(since: mark).filter { $0.contains("【标签2】") },
-                       ["[tabs] 关闭（剩 1 个） 【标签2】", "[web] 关闭网页：停止加载 【标签2】"])
+                       ["[tabs] 关闭（剩 1 个） 【标签2】", "[web] 关闭网页：停止加载 【标签2】",
+                        "[diag] 媒体实验“测量”没有做完：标签页在“测量速率”这一步关闭，这一步的结果丢弃 【标签2】"])
     }
 }
 
@@ -340,6 +348,6 @@ private struct SlowEvidence: EvidenceTarget {
     func measureMedia() async -> String { await step("measure"); return "测量" }
     func webMediaState() async -> String { await step("mediaState"); return "none" }
     func experimentSetRate(_ rate: Double) async -> String { await step("setRate"); return "set=ok" }
-    func setAllMediaPlaybackSuspended(_ suspended: Bool) async { await step("suspend") }
-    func pauseAllMediaPlayback() async { await step("pause") }
+    func setAllMediaPlaybackSuspended(_ suspended: Bool) async -> String { await step("suspend"); return "ok" }
+    func pauseAllMediaPlayback() async -> String { await step("pause"); return "ok" }
 }

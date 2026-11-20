@@ -200,6 +200,6 @@ private struct FixedEvidence: EvidenceTarget {
     func measureMedia() async -> String { "测量" }
     func webMediaState() async -> String { "none" }
     func experimentSetRate(_ rate: Double) async -> String { "set=ok" }
-    func setAllMediaPlaybackSuspended(_ suspended: Bool) async {}
-    func pauseAllMediaPlayback() async {}
+    func setAllMediaPlaybackSuspended(_ suspended: Bool) async -> String { "ok" }
+    func pauseAllMediaPlayback() async -> String { "ok" }
 }
