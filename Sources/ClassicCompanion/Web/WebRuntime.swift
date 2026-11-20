@@ -53,6 +53,31 @@ final class WebRuntime: NSObject {
     /// 排着一次定时自动重试（测试和诊断用）。
     var hasScheduledRetry: Bool { retryTimer != nil }
 
+    /// 这个页面是不是选中的标签页（窗口显示着它）。网页的对话框和新窗口看它（见 WKUIDelegate 那一段）。
+    /// ChatTabs.wire(_:) 接成“它是选中的标签页”；不接（测试里单独建的运行时）就总是 true：和只有一个页面时一样。
+    var isSelectedTab: @MainActor () -> Bool = { true }
+    /// 把网页的对话框真的显示出来，返回用户的回答。正式运行就是原来的做法（runAlert、runConfirm、runOpenPanel）；
+    /// 只有测试换它们：测试不能弹模态框、开文件选择。只在轮到显示时调用，每个请求最多一次。
+    /// 最后一个参数是这一次显示（ShownDialog）：页面在它显示着时关闭，就调用它的 dismiss（文件选择设成收起面板）。
+    var presentAlert: @MainActor (_ host: String, _ message: String, _ shown: ShownDialog) async -> Void = { host, message, _ in
+        WebRuntime.runAlert(host: host, message: message)
+    }
+    var presentConfirm: @MainActor (_ host: String, _ message: String, _ shown: ShownDialog) async -> Bool = { host, message, _ in
+        WebRuntime.runConfirm(host: host, message: message)
+    }
+    var presentOpenPanel: @MainActor (_ allowsMultipleSelection: Bool, _ allowsDirectories: Bool,
+                                      _ shown: ShownDialog) async -> [URL]? = {
+        await WebRuntime.runOpenPanel(allowsMultipleSelection: $0, allowsDirectories: $1, shown: $2)
+    }
+    /// 排着等显示的网页对话框，按到达的先后。
+    private var heldDialogs: [HeldDialog] = []
+    /// 排着的里面放出来的那一个：从放出来（showHeldDialogs()）到它显示完。同一时间最多一个，后面的等它显示完再放。
+    private var dialogTurn: HeldDialog?
+    /// 正在显示的网页对话框（马上显示的和放出来的都算），按开始显示的先后。
+    private var shownDialogs: [ShownDialog] = []
+    /// 排着等显示的网页对话框有几个（测试和诊断用）。
+    var heldDialogCount: Int { heldDialogs.count }
+
     /// 消息桥白名单
     private static let allowedMessageTypes: Set<String> = ["escape"]
 
@@ -425,7 +450,8 @@ final class WebRuntime: NSObject {
     /// ⌘R、新对话都不加载（load、reload、handle 都先看它），网页的导航事件（提交、加载完成、失败、取消）也不再改恢复状态、
     /// 不再转给窗口、不再排计时。所以下面停止加载引起的取消（-999）不会再排一次重试。
     /// 然后：取消排着的重试；停止加载；断开六个回调（接线的闭包持有页面状态，断开后不再驱动它）；
-    /// 停掉地址观察和消息桥；关掉这个页面开的弹窗。
+    /// 停掉地址观察和消息桥；关掉这个页面开的弹窗；网页的对话框按取消处理（cancelDialogs()：排着的不再显示，
+    /// 显示着的文件选择收起，每一个都按取消回答 WebKit，各正好一次）。
     /// 关闭以后网页自己发起的导航、新窗口、提示框、确认框、文件选择、媒体采集也都按取消处理（见各代理方法）；
     /// 记下、放回、丢弃阅读位置也不再碰网页。关闭之前发出、之后才返回的网页脚本（加载完成后的 Esc 脚本、渲染自检、
     /// 排版、确认阅读位置、读浏览器标识）回来时什么都不写。所以关闭以后这个运行时只写关闭的那一行；
@@ -456,7 +482,9 @@ final class WebRuntime: NSObject {
         let popups = popupWindows
         popupWindows = []
         popups.forEach { $0.close() }
-        log("web", "关闭网页：停止加载\(hadRetry ? "，取消排着的自动重试" : "")\(popups.isEmpty ? "" : "，关掉 \(popups.count) 个弹窗")")
+        let dialogs = cancelDialogs()
+        log("web", "关闭网页：停止加载\(hadRetry ? "，取消排着的自动重试" : "")\(popups.isEmpty ? "" : "，关掉 \(popups.count) 个弹窗")"
+                   + (dialogs.isEmpty ? "" : "，网页的对话框按取消处理（\(dialogs)）"))
     }
 }
 
@@ -660,7 +688,19 @@ extension WebRuntime: WKDownloadDelegate {
 // MARK: - UI 代理：新窗口、文件选择、JS 对话框、媒体权限
 
 /// 关闭以后（isClosed）：不开新窗口，提示框、确认框、文件选择都按取消处理（不显示），媒体采集照样拒绝、不写日志。
-/// 不显示的标签页的这些请求等它被选中再显示，是以后切换标签页的事；这里只管关闭以后。
+///
+/// 网页的对话框（提示框、确认框、文件选择）属于这个页面（这个标签页），按 runDialog(_:cancel:present:) 的规则显示：
+/// - 这一页是选中的（isSelectedTab）、没有排着的：马上显示，和原来一样（只有一个页面时总是这样，窗口隐藏、最小化时也是）。
+/// - 不是选中的：排在这一页上（heldDialogs，按到达的先后），什么都不显示，写一行（只有种类和个数）；
+///   这一页被选中、窗口显示它以后（ChatTabs.select(_:) 最后调用 showHeldDialogs()）一次放出一个，显示完再放下一个。
+/// - 排着时、显示着时这一页关闭：按取消回答（提示框：结束；确认框：false；文件选择：nil）。
+/// 每个请求 WebKit 的回调都正好调用一次：代理方法每次调用正好返回一次，返回时由 WebKit 的接口调用回调。
+/// 排着的不设上限，个数不会自己一直涨：提示框、确认框让发出它的网页停下等回答，一个网页一次只有一个在等；
+/// 文件选择 WebKit 一个网页一次只发一个（两样都有测试实测，TabDialogTests）。一个标签页排着的最多是它的网页和它开着的
+/// 每个弹窗各一两个。排着的提示框、确认框让那一页的网页停着，直到选中它或关闭它（关闭时按取消回答，网页接着跑完、随后释放）。
+/// 网页要求输入文字（prompt）：这里没有实现，WebKit 不调用代理、网页直接得到 null，什么都不显示（原来就这样，没有改）。
+///
+/// 新窗口（登录等弹窗）：不是选中的标签页要开，不开（返回 nil，写一行）。WebKit 要当场拿到弹窗的网页视图，不能像对话框那样等。
 extension WebRuntime: WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
@@ -678,6 +718,12 @@ extension WebRuntime: WKUIDelegate {
             return nil
         }
         if kind == .blocked { return nil }
+        // 不是选中的标签页：不开。开了就是一个新窗口出现在显示着的那一页上面；网页拿到 null（和弹窗被拦下一样），
+        // 用户切回这一页再点一次。不写地址。
+        guard isSelectedTab() else {
+            log("nav", "不显示的标签页要开弹窗：不开")
+            return nil
+        }
         // 认证等弹窗：使用 WebKit 提供的 configuration 以保留 window.opener 关系
         log("nav", "打开弹窗：\(Redactor.describe(url))")
         let popup = WKWebView(frame: NSRect(x: 0, y: 0, width: 520, height: 680), configuration: configuration)
@@ -733,36 +779,130 @@ extension WebRuntime: WKUIDelegate {
 
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
                  initiatedByFrame frame: WKFrameInfo) async -> [URL]? {
-        guard !isClosed else { return nil }
         // 仅响应网页上的用户操作；不会自动上传任何文件
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
-        panel.canChooseDirectories = parameters.allowsDirectories
-        panel.canChooseFiles = true
-        let response = await panel.begin()
-        return response == .OK ? panel.urls : nil
+        let multiple = parameters.allowsMultipleSelection, directories = parameters.allowsDirectories
+        return await runDialog(.openPanel, cancel: nil) { shown in
+            await presentOpenPanel(multiple, directories, shown)
+        }
     }
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo) async {
-        guard !isClosed else { return }
+        await runDialog(.alert, cancel: ()) { shown in
+            await presentAlert(frame.securityOrigin.host, message, shown)
+        }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo) async -> Bool {
+        await runDialog(.confirm, cancel: false) { shown in
+            await presentConfirm(frame.securityOrigin.host, message, shown)
+        }
+    }
+
+    // MARK: 网页的对话框：排着、放出来、取消
+
+    /// 网页的一个对话框按这一页的规则走一遍，返回给 WebKit 的回答：
+    /// - 已经关闭：cancel，不显示（3.1 的规则）。
+    /// - 这一页是选中的，没有排着的，也没有放出来还没显示完的：马上显示（present），和原来一样，不写日志。
+    /// - 不然排在这一页上（写一行“排着等显示”），等放出来（waitForTurn(_:)）再显示（写一行“显示排着的”）；
+    ///   等着时关闭：cancel，不显示。
+    /// - 显示着时关闭：close() 调用这一次的 dismiss（能收起的收起），present 返回后按 cancel 回答（不管用户选了什么）。
+    /// 放出来的那一个显示完，放下一个（showHeldDialogs()）。present 最多调用一次；这个函数每次调用正好返回一次。
+    private func runDialog<Answer>(_ kind: WebDialogKind, cancel: Answer,
+                                   present: (ShownDialog) async -> Answer) async -> Answer {
+        guard !isClosed else { return cancel }
+        var held: HeldDialog?
+        if !isSelectedTab() || !heldDialogs.isEmpty || dialogTurn != nil {
+            let waiting = HeldDialog(kind)
+            heldDialogs.append(waiting)
+            log("web", "网页的\(kind.name)排着等显示（排着 \(heldDialogs.count) 个）")
+            guard await waitForTurn(waiting) else { return cancel }
+            log("web", "显示排着的\(kind.name)（还排着 \(heldDialogs.count) 个）")
+            held = waiting
+        }
+        let shown = ShownDialog(kind, held: held)
+        shownDialogs.append(shown)
+        let answer = await present(shown)
+        shownDialogs.removeAll { $0 === shown }
+        if let held, dialogTurn === held {
+            dialogTurn = nil
+            showHeldDialogs()
+        }
+        return isClosed ? cancel : answer
+    }
+
+    /// 排着的 held 等到放出来。返回 true：该显示了（这时它是 dialogTurn，这一页是选中的、没关闭）；false：关闭了，按取消。
+    /// 继续它的只有两处，各正好一次：showHeldDialogs() 放出它（先把它设成 dialogTurn）、close() 取消它（先进入关闭态）。
+    /// 放出来以后、真的显示之前（下一轮）这一页又不是选中的了（又切换走了）：放回最前面接着等，不写日志。
+    private func waitForTurn(_ held: HeldDialog) async -> Bool {
+        while true {
+            await withCheckedContinuation { held.waiting = $0 }
+            if isClosed { return false }
+            if isSelectedTab() { return true }
+            if dialogTurn === held { dialogTurn = nil }
+            heldDialogs.insert(held, at: 0)
+        }
+    }
+
+    /// 放出排着的第一个：它在之后的一轮里显示（这一轮的切换、关闭先做完），显示之前再看一次这一页还是不是选中的、关没关闭。
+    /// 调用的地方：ChatTabs.select(_:) 的最后一步（这一页被选中、窗口显示了它）；放出来的那一个显示完时（runDialog）。
+    /// 关闭了、这一页不是选中的、已经放出一个还没显示完、没有排着的：什么都不做。
+    func showHeldDialogs() {
+        guard !isClosed, isSelectedTab(), dialogTurn == nil, !heldDialogs.isEmpty else { return }
+        let next = heldDialogs.removeFirst()
+        dialogTurn = next
+        next.resume()
+    }
+
+    /// 关闭时（close()，已经进入关闭态）：排着的都继续（看到已经关闭，按取消回答），放出来还没显示的到时也按取消回答，
+    /// 显示着的调用 dismiss（文件选择收起；模态框收不起，用户点掉以后按取消回答）。
+    /// 返回写进关闭那一行的种类和个数（“提示框 1 个、文件选择 1 个”，没有就是空的）：只有种类和个数，没有网页的文字和文件名。
+    private func cancelDialogs() -> String {
+        let waiting = heldDialogs
+        heldDialogs = []
+        var kinds = waiting.map(\.kind)
+        if let turn = dialogTurn, !shownDialogs.contains(where: { $0.held === turn }) {
+            kinds.append(turn.kind)
+        }
+        kinds += shownDialogs.map(\.kind)
+        waiting.forEach { $0.resume() }
+        shownDialogs.forEach { $0.dismiss?() }
+        return WebDialogKind.allCases.compactMap { kind in
+            let count = kinds.filter { $0 == kind }.count
+            return count == 0 ? nil : "\(kind.name) \(count) 个"
+        }.joined(separator: "、")
+    }
+
+    /// 原来的提示框：应用级模态框（runModal），标题是网页的主机名，正文是网页给的文字。
+    static func runAlert(host: String, message: String) {
         let alert = NSAlert()
-        alert.messageText = frame.securityOrigin.host
+        alert.messageText = host
         alert.informativeText = message
         // 按钮写明，否则用系统语言，和手动选的界面语言不一致。网页给的文字原样显示。
         alert.addButton(withTitle: L10n.string("common.ok"))
         alert.runModal()
     }
 
-    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
-                 initiatedByFrame frame: WKFrameInfo) async -> Bool {
-        guard !isClosed else { return false }
+    /// 原来的确认框：应用级模态框，点“好”是 true。
+    static func runConfirm(host: String, message: String) -> Bool {
         let alert = NSAlert()
-        alert.messageText = frame.securityOrigin.host
+        alert.messageText = host
         alert.informativeText = message
         alert.addButton(withTitle: L10n.string("common.ok"))
         alert.addButton(withTitle: L10n.string("common.cancel"))
         return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    /// 原来的文件选择：不是模态的面板（begin），选好是选的文件，取消是 nil。页面在它显示着时关闭：收起面板（按取消）。
+    static func runOpenPanel(allowsMultipleSelection: Bool, allowsDirectories: Bool, shown: ShownDialog) async -> [URL]? {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = allowsMultipleSelection
+        panel.canChooseDirectories = allowsDirectories
+        panel.canChooseFiles = true
+        shown.dismiss = { panel.cancel(nil) }
+        let response = await panel.begin()
+        return response == .OK ? panel.urls : nil
     }
 
     func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin,
@@ -796,6 +936,52 @@ extension WebRuntime: WKScriptMessageHandler {
         default:
             break
         }
+    }
+}
+
+/// 网页的对话框的种类。日志里只写种类和个数，不写网页给的文字、主机名和文件名。
+enum WebDialogKind: CaseIterable {
+    case alert, confirm, openPanel
+
+    var name: String {
+        switch self {
+        case .alert: "提示框"
+        case .confirm: "确认框"
+        case .openPanel: "文件选择"
+        }
+    }
+}
+
+/// 正在显示的一个网页对话框（WebRuntime 的 presentAlert、presentConfirm、presentOpenPanel 拿到的那一次）。
+/// 显示它的一方可以设上 dismiss：页面在它显示着时关闭，WebRuntime 调用它（文件选择设成收起面板）。没设就什么都不做。
+@MainActor
+final class ShownDialog {
+    let kind: WebDialogKind
+    /// 显示的是排着、放出来的那一个时是它；马上显示的是 nil。
+    fileprivate let held: HeldDialog?
+    var dismiss: (() -> Void)?
+
+    fileprivate init(_ kind: WebDialogKind, held: HeldDialog?) {
+        self.kind = kind
+        self.held = held
+    }
+}
+
+/// 排着等显示的一个网页对话框：等着的那一刻的续体。放出来（showHeldDialogs()）或关闭（close()）时继续，每次等正好继续一次。
+@MainActor
+fileprivate final class HeldDialog {
+    let kind: WebDialogKind
+    var waiting: CheckedContinuation<Void, Never>?
+
+    init(_ kind: WebDialogKind) {
+        self.kind = kind
+    }
+
+    /// 继续等着的那一次，并清掉：同一次不会继续两遍。
+    func resume() {
+        let continuation = waiting
+        waiting = nil
+        continuation?.resume()
     }
 }
 
