@@ -463,6 +463,12 @@ final class TabCloseRig {
     private(set) var saved: [URL] = []
     private(set) var hidden: [String] = []
     private(set) var mediaRead: [String] = []
+    /// 交给窗口的提示（3.11），按先后。
+    private(set) var shownHints: [TabHint] = []
+    /// 到上限的提示显示了几次（3.11 以前是提示音）。
+    var limitHints: Int { shownHints.filter { if case .limit = $0 { true } else { false } }.count }
+    /// 窗口的提示排下的计时（到时收起、等“显示过”），不自己走：测试要时自己调用。
+    private(set) var hintTimers: [@MainActor () -> Void] = []
     private(set) var newChatAsked: [String] = []
     /// 替身等多久再返回（秒）："focus"、"media"、"newChat"。
     var delays: [String: Double] = [:]
@@ -534,7 +540,15 @@ final class TabCloseRig {
         tabs.wire(first)
         register(first)
         tabs.windowIsVisible = { true }
-        tabs.beep = { [weak self] in self?.timeline.append("提示音") }
+        // 提示（3.11）照正式的交给窗口的提示（从不显示的窗口里，写“[hint] …”），也记下来；它的计时不自己走（hintTimers）。
+        // 第一次有多个标签页的提示当作已经显示过：这里的测试不看它（见 TabHintTests）。
+        let showHint = tabs.showHint
+        tabs.showHint = { [weak self] hint, displayed in
+            self?.shownHints.append(hint)
+            showHint(hint, displayed)
+        }
+        tabs.tipRecord = MemoryTabTipRecord(shown: true)
+        controller.hints.schedule = { [weak self] _, work in self?.hintTimers.append(work) }
         controller.onSnapshotPage = { [weak self] done in self?.snapshots.append(done) }
         controller.onPrepareLayout = { [weak self] _, done in self?.prepares.append(done) }
         controller.window!.contentView!.layoutSubtreeIfNeeded()

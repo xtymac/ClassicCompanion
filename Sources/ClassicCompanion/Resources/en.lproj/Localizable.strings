@@ -63,7 +63,6 @@
 "hotkey.reject.needsModifier" = "Include at least one of ⌘, ⌥ or ⌃, so typing doesn’t trigger it by accident.";
 "hotkey.reject.used" = "%1$@ is used to %2$@. Choose another one.";
 "hotkey.reject.common" = "%@ is a common shortcut. Choose another one.";
-"purpose.hideWindow" = "hide the window";
 "purpose.nextTab" = "switch to the next tab";
 "purpose.previousTab" = "switch to the previous tab";
 "purpose.reopenTab" = "reopen the last closed tab";
@@ -212,3 +211,13 @@
 "update.authorize.laterNote" = "Not Now or closing this window downloads and installs nothing. Classic Companion keeps working. Choose Check for Updates… to install it later.";
 "update.authorize.install" = "Download and Install";
 "update.authorize.notesTitle" = "Release Notes";
+
+/* Tabs (3.11): menu items and in-window hints. The limit hint “You can open up to N tabs” is in Localizable.stringsdict (tabs.limit). */
+"menu.newTab" = "New Tab";
+"menu.reopenClosedTab" = "Reopen Last Closed Tab";
+"menu.closeTab" = "Close Tab";
+"menu.showNextTab" = "Show Next Tab";
+"menu.showPreviousTab" = "Show Previous Tab";
+"tabs.tip.severalTabs" = "⌘W closes the current tab; unsent drafts may be lost. ⇧⌘T only reopens saved chats. The × at the top left hides the whole window and keeps your tabs.";
+"tabs.hint.close" = "Close Tip";
+"purpose.closeTabOrHideWindow" = "close the tab or hide the window";

@@ -6,7 +6,7 @@ import CompanionCore
 
 /// 标签页的键（3.10）经窗口的按键监视（ChatWindowController.handleKeyDown(_:)）到 ChatTabs.handleKey(_:_:)。
 /// 按键用 NSEvent.keyEvent(...) 造出来、取出事实（KeyPress）直接交给 handleKeyDown，不发真的按键、不显示窗口。
-/// 一组是 TabCloseRig（像 AppDelegate 那样建：正式的建法、真的窗口控制器；隐藏窗口、找回窗口、提示音都是记录）。
+/// 一组是 TabCloseRig（像 AppDelegate 那样建：正式的建法、真的窗口控制器；隐藏窗口、找回窗口都是记录，提示交给从不显示的窗口）。
 /// 不测切换键本身（切换模式会显示窗口）：只按不是切换键的组合；切换键优先只经 userHotKeyTakes(_:) 和 handleKey 核对。
 @MainActor
 final class TabKeyTests: XCTestCase {
@@ -182,7 +182,7 @@ final class TabKeyTests: XCTestCase {
 
     // MARK: - 做不了时照样吃掉
 
-    /// 固定的键做不了时也吃掉（D13、D17），入口自己写一行或响一声：⇧⌘T 没有记录；⌘T 启动画面还在；⌘T 到上限；
+    /// 固定的键做不了时也吃掉（D13、D17），入口自己写一行（到上限时还有提示）：⇧⌘T 没有记录；⌘T 启动画面还在；⌘T 到上限；
     /// ⌘3 时只有两个；只有一个时的上一个、下一个；已经选中的 ⌘1、⌘9。
     func testFixedKeysThatCannotActAreStillSwallowed() throws {
         let rig = make()
@@ -207,7 +207,7 @@ final class TabKeyTests: XCTestCase {
         XCTAssertEqual(rig.tabs.tabs.count, 4)
         lines = rig.mark()
         XCTAssertTrue(try commandT(rig))
-        XCTAssertEqual(rig.lines(since: lines), ["提示音", "[tabs] 不新增标签页：已到上限（4 个）"])
+        XCTAssertEqual(rig.lines(since: lines), ["[tabs] 不新增标签页：已到上限（4 个）", "[hint] 显示 到上限（4 个）的提示"])
         XCTAssertEqual(rig.tabs.tabs.count, 4)
 
         let two = make()
@@ -488,7 +488,8 @@ final class TabKeyTests: XCTestCase {
     func testTheAppPassesTheWakeKeyToTheWindow() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let app = try String(contentsOf: root.appendingPathComponent("Sources/ClassicCompanion/App/AppDelegate.swift"), encoding: .utf8)
-        XCTAssertTrue(app.contains("settings.$hotKey.removeDuplicates().sink { [weak self] combo in self?.windowController.wakeKey = combo }"))
+        XCTAssertTrue(app.contains("settings.$hotKey.removeDuplicates().sink { [weak self] combo in\n"
+                                   + "            self?.windowController.wakeKey = combo\n"))
         let tabs = try String(contentsOf: root.appendingPathComponent("Sources/ClassicCompanion/Tabs/ChatTabs.swift"), encoding: .utf8)
         XCTAssertTrue(tabs.contains("windowController.onTabKey = { [weak self] key, context in self?.handleKey(key, context) ?? false }"))
     }

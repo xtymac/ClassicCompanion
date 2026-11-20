@@ -23,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     /// 现在只有启动时的那一个标签页。对选中的标签页做的操作（新对话、⌘R、媒体状态、证据采集）和设置的改动都经它，
     /// 在操作开始时取选中的那个；这里不再另外留着一个标签页。
     private var chatTabs: ChatTabs!
+    /// 标签页的菜单项（3.11）：文件菜单、窗口菜单、菜单栏图标的菜单里的那几项，和左上角 × 的提示里的键。见 TabMenus。
+    private var tabMenus: TabMenus!
     private let toolbarState = ToolbarState()
     private let pageAppearance = PageAppearance()
     private var mediaTimer: Timer?
@@ -130,6 +132,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                             makeTab: makeTab,
                             revealWindow: { [weak self] in self?.windowController.reveal() })
         chatTabs.wire(launchTab)
+        // 第一次有多个标签页的提示显示过没有，存在设置里（每次安装一次）。提示的文字也给读屏播报。
+        chatTabs.tipRecord = settings
+        windowController.hints.announce = { text in
+            NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+                                 userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+        }
+        tabMenus = TabMenus(tabs: chatTabs, chatWindow: windowController.window, diagnostics: diagnostics, toolbar: toolbarState)
+        tabMenus.userHotKeys = { [weak self] in self.map { [$0.settings.hotKey, $0.settings.modeKey] } ?? [] }
+        chatTabs.onTabsChanged = { [weak self] in self?.tabMenus.refresh() }
         updates = UpdateController(diagnostics: diagnostics)
 
         buildMainMenu()
@@ -271,9 +282,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 item.keyEquivalent = equivalent?.key ?? ""
                 item.keyEquivalentModifierMask = equivalent?.modifiers ?? []
             }
+            // 标签页的菜单项和它相同时不显示快捷键（TabMenus）。sink 在设置改之前调用：等改完再看。
+            DispatchQueue.main.async { self.tabMenus.refresh() }
         }.store(in: &cancellables)
-        // 唤醒键也交给窗口：标签页的键和它相同时让给它（ChatWindowController.userHotKeyTakes(_:)）。
-        settings.$hotKey.removeDuplicates().sink { [weak self] combo in self?.windowController.wakeKey = combo }.store(in: &cancellables)
+        // 唤醒键也交给窗口：标签页的键和它相同时让给它（ChatWindowController.userHotKeyTakes(_:)）。菜单也一样（TabMenus）。
+        settings.$hotKey.removeDuplicates().sink { [weak self] combo in
+            self?.windowController.wakeKey = combo
+            DispatchQueue.main.async { self?.tabMenus.refresh() }
+        }.store(in: &cancellables)
         // 网页增强、页面缩放、网页无障碍：每个标签页都改（ChatTabs）。
         Publishers.CombineLatest(settings.$webEnhancements, settings.$escapeHidesWindow)
             .dropFirst()
@@ -387,14 +403,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let built = Self.makeMainMenu(modeKey: settings.modeKey)
         modeMenuItem = built.modeItem
         checkForUpdatesMenuItem = built.updatesItem
+        tabMenus.attach(built.tabItems)
         built.updatesItem.badge = updates.status.pendingVersion.map { _ in NSMenuItemBadge(string: L10n.string("menu.updateBadge")) }
         NSApp.mainMenu = built.menu
         NSApp.windowsMenu = built.windowMenu
     }
 
     /// 主菜单。切换语言时整份重建；动作和快捷键不随语言变（LocalizationTests 核对各语言一致）。
+    /// 标签页的项（3.11）建成单个标签页时的样子（关闭标签页、关闭窗口 ⇧⌘W 藏着），目标、显示与否、快捷键之后由 TabMenus 改。
     static func makeMainMenu(modeKey: HotKeyCombo, language: AppLanguage = L10n.language)
-        -> (menu: NSMenu, modeItem: NSMenuItem, windowMenu: NSMenu, updatesItem: NSMenuItem) {
+        -> (menu: NSMenu, modeItem: NSMenuItem, windowMenu: NSMenu, updatesItem: NSMenuItem, tabItems: TabMenus.Items) {
         let t = { (key: String) in L10n.string(key, in: language) }
         let main = NSMenu()
 
@@ -417,6 +435,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let fileItem = NSMenuItem()
         let fileMenu = NSMenu(title: t("menu.file"))
         fileMenu.addItem(withTitle: t("menu.newChat"), action: #selector(AppDelegate.newChat), keyEquivalent: "n")
+        let newTab = fileMenu.addItem(withTitle: t("menu.newTab"), action: #selector(TabMenus.newTab(_:)), keyEquivalent: "t")
+        let reopenTab = fileMenu.addItem(withTitle: t("menu.reopenClosedTab"), action: #selector(TabMenus.reopenClosedTab(_:)),
+                                         keyEquivalent: "t")
+        reopenTab.keyEquivalentModifierMask = [.command, .shift]
         let modeEquivalent = modeKey.menuKeyEquivalent
         let modeItem = fileMenu.addItem(withTitle: t("menu.toggleMode"), action: #selector(AppDelegate.toggleMode), keyEquivalent: modeEquivalent?.key ?? "")
         modeItem.keyEquivalentModifierMask = modeEquivalent?.modifiers ?? []
@@ -427,7 +449,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                          keyEquivalent: HistoryNavigation.menuKey(.forward))
         fileMenu.addItem(withTitle: t("menu.reload"), action: #selector(AppDelegate.reloadPage), keyEquivalent: "r")
         fileMenu.addItem(withTitle: t("menu.restartAudio"), action: #selector(AppDelegate.restartAudio), keyEquivalent: "")
-        fileMenu.addItem(withTitle: t("menu.closeWindow"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let closeWindow = fileMenu.addItem(withTitle: t("menu.closeWindow"), action: #selector(NSWindow.performClose(_:)),
+                                           keyEquivalent: "w")
+        // 多个标签页、聊天窗口在前面时代替上一项（TabMenuRules）。
+        let closeTab = fileMenu.addItem(withTitle: t("menu.closeTab"), action: #selector(TabMenus.closeTab(_:)), keyEquivalent: "w")
+        closeTab.isHidden = true
+        let hideKeepingTabs = fileMenu.addItem(withTitle: t("menu.closeWindow"), action: #selector(TabMenus.hideWindowKeepingTabs(_:)),
+                                               keyEquivalent: "w")
+        hideKeepingTabs.keyEquivalentModifierMask = [.command, .shift]
+        hideKeepingTabs.isHidden = true
         fileItem.submenu = fileMenu
         main.addItem(fileItem)
 
@@ -461,11 +491,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         windowMenu.addItem(withTitle: t("menu.minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: t("menu.zoom"), action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(.separator())
+        let nextTab = windowMenu.addItem(withTitle: t("menu.showNextTab"), action: #selector(TabMenus.showNextTab(_:)), keyEquivalent: "\t")
+        nextTab.keyEquivalentModifierMask = [.control]
+        let previousTab = windowMenu.addItem(withTitle: t("menu.showPreviousTab"), action: #selector(TabMenus.showPreviousTab(_:)),
+                                             keyEquivalent: "\t")
+        previousTab.keyEquivalentModifierMask = [.control, .shift]
+        windowMenu.addItem(.separator())
         windowMenu.addItem(withTitle: t("menu.bringAllToFront"), action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         windowItem.submenu = windowMenu
         main.addItem(windowItem)
 
-        return (main, modeItem, windowMenu, updatesItem)
+        let tabItems = TabMenus.Items(newTab: newTab, reopenClosedTab: reopenTab, closeWindow: closeWindow, closeTab: closeTab,
+                                      hideWindowKeepingTabs: hideKeepingTabs, nextTab: nextTab, previousTab: previousTab)
+        return (main, modeItem, windowMenu, updatesItem, tabItems)
     }
 
     private func buildStatusItem() {
@@ -484,6 +522,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     /// 每次打开菜单栏菜单时按当前语言重建。
     func menuNeedsUpdate(_ menu: NSMenu) {
         Self.fillStatusMenu(menu, pendingUpdate: updates.status.pendingVersion)
+        // “新建标签页”的目标是 TabMenus（先接上，下面就不改它的目标）。
+        tabMenus.attachStatus(menu)
         for item in menu.items where item.target == nil && item.action != #selector(NSApplication.terminate(_:)) {
             item.target = self
         }
@@ -502,6 +542,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         menu.addItem(withTitle: t("menu.showQuick"), action: #selector(AppDelegate.showQuick), keyEquivalent: "")
         menu.addItem(withTitle: t("menu.openFull"), action: #selector(AppDelegate.showFull), keyEquivalent: "")
         menu.addItem(withTitle: t("menu.newChat"), action: #selector(AppDelegate.newChat), keyEquivalent: "")
+        menu.addItem(withTitle: t("menu.newTab"), action: #selector(TabMenus.statusNewTab(_:)), keyEquivalent: "")
         menu.addItem(.separator())
         // 决策 A：朗读只在网页内通过官方按钮开始和停止；菜单不显示播放状态（K11）
         menu.addItem(withTitle: t("menu.settings"), action: #selector(AppDelegate.showSettings), keyEquivalent: "")

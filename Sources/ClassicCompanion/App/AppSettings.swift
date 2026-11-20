@@ -67,6 +67,12 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(wakeWindowMode.rawValue, forKey: "wakeWindowMode") }
     }
 
+    /// 第一次有多个标签页的提示显示过（3.11，每次安装一次；TabHintPresenter 说显示过时才记下）。
+    var severalTabsTipShown: Bool {
+        get { defaults.bool(forKey: "tabs.severalTabsTipShown") }
+        set { defaults.set(newValue, forKey: "tabs.severalTabsTipShown") }
+    }
+
     /// 仅保存对话路径（不含 query），用于重启后恢复。
     var lastConversationURL: URL? {
         get { defaults.string(forKey: "lastConversationURL").flatMap(URL.init(string:)) }
@@ -104,3 +110,6 @@ final class AppSettings: ObservableObject {
         wakeWindowMode = defaults.string(forKey: "wakeWindowMode").flatMap(WakeWindowMode.init(rawValue:)) ?? .keepLast
     }
 }
+
+/// 第一次有多个标签页的提示显示过没有（ChatTabs.tipRecord），存在 UserDefaults。
+extension AppSettings: TabTipRecord {}

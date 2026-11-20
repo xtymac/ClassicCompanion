@@ -10,8 +10,9 @@ import CompanionCore
 /// 这里有一组标签页（tabs，按从左到右）和选中的那个（selected）。顺序、选中项和标识都由 list（TabList）决定。
 /// 换选中的只经 select(_:)（切换标签页：先改选中项，再让窗口显示它，再做跟着它的事）。新增标签页只经 newTab()，
 /// 关闭标签页只经 closeTab(_:)（closeSelectedTab()），重新打开最近关闭的只经 reopenClosedTab()。
-/// 开始时只有启动时的那一个，它就是选中的、窗口显示着的。应用里调用这些入口的只有按键（3.10，handleKey(_:_:)：⌘T、⇧⌘T、
-/// ⌘W、⇧⌘W、切换的键）；还没有标签栏和菜单（3.11、阶段 4）。不按这些键时一直只有启动时的那一个，和原来一样。
+/// 开始时只有启动时的那一个，它就是选中的、窗口显示着的。应用里调用这些入口的是按键（3.10，handleKey(_:_:)：⌘T、⇧⌘T、
+/// ⌘W、⇧⌘W、切换的键）和菜单（3.11，TabMenus：同样的入口，不经 handleKey）；还没有标签栏（阶段 4）。
+/// 不用这些键和菜单项时一直只有启动时的那一个，和原来一样。
 ///
 /// 规则：事件属于发出它的标签页，接线时就绑定那个标签页，处理时明确传着它，不在中途拿“现在选中的”来代替。
 /// - 标签页自己的状态（页面加载状态、lastPath、适配器的代号、它自己的日志）不管选没选中都照常改。
@@ -68,9 +69,15 @@ final class ChatTabs {
     /// 窗口显示着：可见，并且没有最小化到 Dock（新增标签页时据此决定要不要先找回窗口）。就是窗口的 isVisible、isMiniaturized；
     /// 只有测试换它：测试不显示窗口，窗口总是不可见。
     var windowIsVisible: @MainActor () -> Bool
-    /// 到上限还要新增标签页时的提示音（阶段 3 的占位，D8：以后换成“最多打开 4 个标签页”的提示）。就是 NSSound.beep()；
-    /// 只有测试换它：测试不出声。
-    var beep: @MainActor () -> Void = { NSSound.beep() }
+    /// 窗口里的提示（3.11，见 TabHint）：到上限、第一次有多个标签页。就是窗口的提示（ChatWindowController.hints 的
+    /// show(_:onDisplayed:)）；第二个参数在提示真正显示过时调用（只有第一次有多个标签页的提示交，用来记下）。
+    /// 只有测试换它。不出声（D8 的提示音占位已经去掉，用户 11-20 定）。
+    var showHint: @MainActor (TabHint, (@MainActor () -> Void)?) -> Void
+    /// “第一次有多个标签页”的提示显示过没有（每次安装一次）。AppDelegate：settings（存在 UserDefaults）；
+    /// 没交进来时只记在内存里（测试不写 UserDefaults）。
+    var tipRecord: any TabTipRecord = MemoryTabTipRecord()
+    /// 标签页的个数变了（加进来、关掉）。AppDelegate：TabMenus.refresh()（菜单项和左上角 × 的提示跟着改）。
+    var onTabsChanged: (@MainActor () -> Void)?
     /// 记下、放回、丢弃阅读位置：就是运行时的 holdReadingPosition()（返回这一次的编号）、
     /// restoreReadingPosition(_:confirmingContinuation:)（编号、要不要网页确认）、discardReadingPosition(_:)（编号）。
     /// 只有测试换它们：网页里没有页面，看不到效果，换成记录才看得出给了哪个标签页、哪一次。
@@ -120,6 +127,7 @@ final class ChatTabs {
         self.makeTab = makeTab
         self.revealWindow = revealWindow
         windowIsKey = { windowController.isKey }
+        showHint = { [weak windowController] hint, displayed in windowController?.hints.show(hint, onDisplayed: displayed) }
         windowIsVisible = { windowController.window.map { $0.isVisible && !$0.isMiniaturized } ?? false }
         windowController.onReloadRequest = { [weak self] in self?.reloadSelectedTab() }
         windowController.onDidShow = { [weak self] kind in self?.windowDidShow(kind) }
@@ -186,6 +194,7 @@ final class ChatTabs {
         // 接好线再登记：已经知道网络状态时马上补发给它（断网时加进来的页面也等得到“网络恢复”），
         // 补发引起的变化照常到它自己的页面状态。
         network.add(tab.runtime)
+        onTabsChanged?()
         return tab
     }
 
@@ -307,6 +316,7 @@ final class ChatTabs {
         precondition(result == .closed(selectionChanged: false), "不选中的标签页从列表里拿掉，选中项不变")
         tabs.removeAll { $0 === tab }
         tabLeft(tab)
+        onTabsChanged?()
     }
 
     /// 关闭 tab 时它记下的阅读位置都作废：留着等再显示的那一次（pendingReadingRestore）拿掉；排版中记下的（readingHolds 里
@@ -488,13 +498,13 @@ final class ChatTabs {
     // MARK: - 新增标签页
 
     /// 新增标签页：加一个新对话的标签页，放在最右，切换过去。返回加进来的那一个；不新增时返回 nil。
-    /// 应用里由 ⌘T 调用（3.10，handleKey(_:_:)）；菜单在 3.11 接上。
+    /// 应用里由 ⌘T（3.10，handleKey(_:_:)）和菜单（3.11，TabMenus：文件菜单、菜单栏图标的菜单）调用。
     ///
     /// 不新增（列表、选中项、窗口都不变，不找回窗口，不建网页；只写一行“[tabs] 不新增标签页：…”，不带标签）：
     /// - 启动画面还在（isLaunchScreenUp，计划 4.3）：别的什么都不做。新标签页的遮挡不算，还盖着也能再新增。
-    /// - 已到上限（list.isFull，上限由 TabList 定）：响一声提示音（beep）。这是阶段 3 的占位（D8），
-    ///   以后换成“最多打开 4 个标签页”的提示。
-    /// 两样都有时按启动画面算（不响）。
+    /// - 已到上限（list.isFull，上限由 TabList 定）：写那一行以后请窗口显示“最多打开 N 个标签页”的提示
+    ///   （showHint(.limit)，N 是 list.capacity；不出声，3 秒后自己收起，见 TabHintPresenter）。按键和菜单都经这里，提示一样。
+    /// 两样都有时按启动画面算（不提示）。
     ///
     /// 顺序：
     /// 1. 窗口没显示（隐藏、最小化，windowIsVisible）：写一行，先找回窗口（revealWindow，D9），窗口照常显示这时选中的那一页
@@ -510,6 +520,7 @@ final class ChatTabs {
     ///    没有它的空白网页显示着、遮挡还没盖上的时候；也不会像给显示着的页面开始遮挡那样动窗口的启动保护、写窗口的
     ///    “启动保护”那一行。它从没在窗口里显示过，不补排版（第一次加载有自己的遮挡）。
     ///    聚焦（窗口是 key 窗口才聚焦它，之前排着的作废）、记下可恢复的对话地址、阅读位置都由 select 照常做，这里不另外做。
+    /// 6. 第一次有多个标签页的提示（offerSeveralTabsTip()）。
     /// 这条路和重新打开（reopenClosedTab()）共用（open(_:place:line:)），只有放在哪、加载什么、日志的说法不同。
     @discardableResult
     func newTab() -> ChatTab? {
@@ -517,8 +528,9 @@ final class ChatTabs {
     }
 
     /// 新增（newTab()）和重新打开（reopenClosedTab()）共用的一条路，规则写在 newTab() 上：
-    /// 不打开（启动画面还在 → 写一行；已到上限 → 响一声、写一行）→ 窗口没显示就先找回 → 放进来（place）→ 写一行（line）→
-    /// 它的页面开始新标签页的遮挡 → 加载（place 给的地址；nil 是新对话页，WebRuntime.newChat()）→ 切换过去（select(_:)）。
+    /// 不打开（启动画面还在 → 写一行；已到上限 → 写一行、到上限的提示）→ 窗口没显示就先找回 → 放进来（place）→ 写一行（line）→
+    /// 它的页面开始新标签页的遮挡 → 加载（place 给的地址；nil 是新对话页，WebRuntime.newChat()）→ 切换过去（select(_:)）→
+    /// 第一次有多个标签页的提示（offerSeveralTabsTip()）。
     /// 返回放进来的那一个；不打开时返回 nil。
     /// - verb：日志里怎么说这件事（“新增”“重新打开”），不打开和先找回窗口的那几行用它。
     /// - place：用 makeTab 建一个标签页放进这组（list 和 tabs 一起改、不选中、接好线、登记到网络状态），返回它和要加载的地址。
@@ -532,8 +544,8 @@ final class ChatTabs {
             return nil
         }
         guard !list.isFull else {
-            beep()
             logGroup("tabs", "不\(verb)标签页：已到上限（\(list.capacity) 个）")
+            showHint(.limit(capacity: list.capacity), nil)
             return nil
         }
         if !windowIsVisible() {
@@ -545,12 +557,22 @@ final class ChatTabs {
         windowController.beginNewTabCover(for: tab.page)
         if let url { tab.runtime.load(url) } else { tab.runtime.newChat() }
         select(tab)
+        offerSeveralTabsTip()
         return tab
+    }
+
+    /// 第一次有多个标签页时的提示（3.11）：现在多于一个标签页、还没记下显示过（tipRecord），就请窗口显示它（showHint）。
+    /// 窗口真正显示过它（TabHintPresenter 的规则：窗口在屏幕上连续 0.5 秒，或用户点了它的关闭按钮）才记下；
+    /// 显示不出来（窗口没显示、被挡住、还没显示过就被到上限的提示换掉）不记，下次新增、重新打开时再显示。
+    /// 新增、重新打开都经 open 调用；以后别的让标签页多起来的入口（3.12、标签栏）也要调用它。
+    func offerSeveralTabsTip() {
+        guard tabs.count > 1, !tipRecord.severalTabsTipShown else { return }
+        showHint(.severalTabs) { [weak self] in self?.tipRecord.severalTabsTipShown = true }
     }
 
     // MARK: - 重新打开最近关闭的标签页
 
-    /// 有可以重新打开的记录（最近关闭的普通对话，见 TabList.recentlyClosed）。以后菜单项置灰看它（3.11）；
+    /// 有可以重新打开的记录（最近关闭的普通对话，见 TabList.recentlyClosed）。菜单项置灰看它（3.11，TabMenuRules）；
     /// 到上限、启动画面还在另外看（list.isFull、isLaunchScreenUp），这里不算进去。
     /// ⇧⌘T 不看它：没有记录时也交给 reopenClosedTab()（写一行“没有记录”），按键照样吃掉（D13、D17）。
     var canReopenClosedTab: Bool {
@@ -559,15 +581,15 @@ final class ChatTabs {
 
     /// 重新打开最近关闭的标签页（⇧⌘T，handleKey(_:_:)）：取最近关闭的那一条，新建一个标签页加载那个地址，放回它关闭时的位置
     /// （那个位置已经没有了就放最右，规则在 TabList.reopen(select:)），切换过去。连着调用按关闭的倒序逐个打开。
-    /// 返回打开的那一个；不打开时返回 nil。应用里由 ⇧⌘T 调用（3.10）；菜单在 3.11 接上。
+    /// 返回打开的那一个；不打开时返回 nil。应用里由 ⇧⌘T（3.10）和文件菜单（3.11）调用。
     /// 是重新加载这个地址，不是原样找回：新的标识、运行时、适配器、页面状态和网页视图，关掉的那个标签页不再用
     /// （它已经关闭、释放）；未发送的草稿和关闭前的页面现场都不在。
     ///
     /// 不打开（列表、记录、选中项、窗口都不变，不找回窗口，不建网页；只写一行“[tabs] 不重新打开标签页：…”，不带标签）：
-    /// - 没有记录（canReopenClosedTab 为 false）：别的什么都不做，不响。先看这一条：没有记录时也不说启动画面、上限
-    ///   （和 TabList.reopen() 没有记录时不算到上限一样）。以后菜单项置灰、按键不响应；这一行只用来在诊断里看出“按了没反应”的原因。
+    /// - 没有记录（canReopenClosedTab 为 false）：别的什么都不做，不提示。先看这一条：没有记录时也不说启动画面、上限
+    ///   （和 TabList.reopen() 没有记录时不算到上限一样）。菜单项置灰、按键不响应；这一行只用来在诊断里看出“按了没反应”的原因。
     /// - 启动画面还在：和 newTab() 一样，别的什么都不做；记录留着。
-    /// - 已到上限：和 newTab() 一样响一声（D8 的占位，以后换成上限提示）；不打开，记录留着（不消耗）。
+    /// - 已到上限：和 newTab() 一样显示到上限的提示；不打开，记录留着（不消耗）。
     ///
     /// 打开的顺序和 newTab() 完全相同（同一条路 open(_:place:line:)，同一个建法 makeTab）：
     /// 窗口没显示（隐藏、最小化）就写一行、先找回窗口 → 消耗这条记录，新建的标签页放回原位置，不选中，接好线、登记到网络状态
@@ -604,9 +626,9 @@ final class ChatTabs {
     /// - pass：返回 false，按键照原来的路走（窗口接着看切换键，再交给菜单和网页）。
     /// - swallow：吃掉，什么都不做；不是重复按键时写一行“[keys] 标签页按键 X：没有可切换到的标签页，按键不交给网页”。
     /// - 别的：先写一行“[keys] 标签页按键 X”（只有键名），再调用入口：⌘T newTab()、⇧⌘T reopenClosedTab()、
-    ///   ⌘W closeSelectedTab()、⇧⌘W hideWindow("⇧⌘W")（和左上角的 × 一样隐藏窗口，标签页都留着；原因不同）、
+    ///   ⌘W closeSelectedTab()、⇧⌘W hideWindowKeepingTabs("⇧⌘W")（和左上角的 × 一样隐藏窗口，标签页都留着；原因不同）、
     ///   切换 select(_:)（要切换到的那一个是 keyAction 问 list 得来的）。入口做不了（启动画面还在、到上限、没有记录）时
-    ///   由入口自己响一声、写一行，按键照样吃掉。
+    ///   由入口自己写一行（到上限时还有提示），按键照样吃掉。
     ///   只有一个标签页时的 ⌘W 不写这一行：和原来按 ⌘W 一样，只有窗口那一行“[window] 隐藏：⌘W”。
     func handleKey(_ key: TabKeys.Match, _ context: TabKeys.Context) -> Bool {
         let action = TabKeys.keyAction(key.command, context, list: list)
@@ -625,13 +647,35 @@ final class ChatTabs {
         case .newTab: newTab()
         case .reopenClosedTab: reopenClosedTab()
         case .closeTab: closeSelectedTab()
-        case .hideWindow: hideWindow("⇧⌘W")
+        case .hideWindow: hideWindowKeepingTabs("⇧⌘W")
         case .select(let id):
             guard let tab = tabs.first(where: { $0.id == id }) else { preconditionFailure("TabList 给出的是这组里的标签页") }
             select(tab)
         case .pass, .swallow: break
         }
         return true
+    }
+
+    // MARK: - 菜单（3.11）也用的入口
+
+    /// 隐藏窗口，标签页都留着（⇧⌘W、菜单“关闭窗口 ⇧⌘W”，和左上角的 × 一样）。reason 写进窗口的那一行“[window] 隐藏：…”。
+    func hideWindowKeepingTabs(_ reason: String) {
+        hideWindow(reason)
+    }
+
+    /// 切换到下一个标签页（窗口菜单“显示下一个标签页”）：问 list.nextTab（到头绕回），经 select(_:)；只有一个时什么都不做。
+    func selectNextTab() {
+        selectTab(list.nextTab)
+    }
+
+    /// 切换到上一个标签页（窗口菜单“显示上一个标签页”）：问 list.previousTab，经 select(_:)；只有一个时什么都不做。
+    func selectPreviousTab() {
+        selectTab(list.previousTab)
+    }
+
+    private func selectTab(_ id: TabID?) {
+        guard let id, let tab = tabs.first(where: { $0.id == id }) else { return }
+        select(tab)
     }
 
     // MARK: - 对选中的标签页做的操作
@@ -843,6 +887,7 @@ final class ChatTabs {
         _ = list.close(tab.id, url: nil)
         tabs.removeAll { $0 === tab }
         tabLeft(tab)
+        onTabsChanged?()
     }
     #endif
 }

@@ -63,7 +63,6 @@
 "hotkey.reject.needsModifier" = "⌘、⌥、⌃ のいずれかを含めてください。含めないと、入力中に誤って反応します。";
 "hotkey.reject.used" = "%1$@ は「%2$@」に使われています。別の組み合わせを選んでください。";
 "hotkey.reject.common" = "%@ はよく使われるショートカットです。別の組み合わせを選んでください。";
-"purpose.hideWindow" = "ウインドウを隠す";
 "purpose.nextTab" = "次のタブに切り替え";
 "purpose.previousTab" = "前のタブに切り替え";
 "purpose.reopenTab" = "最後に閉じたタブを再度開く";
@@ -212,3 +211,13 @@
 "update.authorize.laterNote" = "「あとで」を選ぶかこのウインドウを閉じると、何もダウンロードもインストールもされません。Classic Companion はそのまま使えます。あとでインストールするには「アップデートを確認…」を選んでください。";
 "update.authorize.install" = "ダウンロードしてインストール";
 "update.authorize.notesTitle" = "アップデートの内容";
+
+/* タブ（3.11）：メニュー項目とウインドウ内のヒント。上限のヒント「タブは N 個まで開けます」は Localizable.stringsdict（tabs.limit）。 */
+"menu.newTab" = "新規タブ";
+"menu.reopenClosedTab" = "最後に閉じたタブを再度開く";
+"menu.closeTab" = "タブを閉じる";
+"menu.showNextTab" = "次のタブを表示";
+"menu.showPreviousTab" = "前のタブを表示";
+"tabs.tip.severalTabs" = "⌘W で現在のタブを閉じます。送信していない下書きは失われることがあります。⇧⌘T で開き直せるのは保存済みのチャットだけです。左上の × はウインドウ全体を隠し、タブはそのまま残ります。";
+"tabs.hint.close" = "ヒントを閉じる";
+"purpose.closeTabOrHideWindow" = "タブを閉じる、またはウインドウを隠す";
