@@ -1,11 +1,25 @@
 import AppKit
 import CompanionCore
 
-/// 一个页面加载到哪一步了，包括它第一次加载的遮挡（启动画面）。这里只放状态：什么时候改、怎么用，规则都还在 ChatWindowController 里。
+/// 一个页面加载到哪一步了，包括它第一次加载的遮挡（启动画面或新标签页的遮挡）。这里只放状态：什么时候改、怎么用，规则都还在 ChatWindowController 里。
 /// 窗口显示其中一个（ChatWindowController.page），换网页视图时不跟着换。事件带着它属于的页面交给窗口：
 /// 先改那个页面自己的这些状态，只有它显示着时窗口才跟着变；不显示的页面的事件只改它自己的状态。
 @MainActor
 final class PageLoadState {
+    /// 第一次加载的遮挡是哪一种。两种的规则、时限、上限完全相同（同一套，在 ChatWindowController 里），只有样子不同：
+    /// - launch：启动画面，启动时的那个页面用（图标、应用名、小进度圈）。
+    /// - newTab：新标签页的遮挡（只有页面底色和小进度圈，没有图标和应用名）。
+    enum CoverKind { case launch, newTab }
+
+    /// 这个页面属于哪个标签页：它的日志带的标签（TabLog）。正式运行时每个页面都有（ChatTab 建页面时给它的运行时的标签，
+    /// 就是标签页的标识）；测试里单独建的页面、单独建的运行时的页面没有（nil）。窗口用它给不显示的页面写行（见
+    /// ChatWindowController.endLaunchScreen(_:for:)）。
+    let logTag: TabID?
+
+    init(logTag: TabID? = nil) {
+        self.logTag = logTag
+    }
+
     /// 主框架提交过（窗口里有页面）。
     var hasCommittedPage = false
     /// 主框架已提交、还没加载完成。
@@ -37,12 +51,15 @@ final class PageLoadState {
     /// 只记不用：切换到这个页面时能不能采用、怎么采用，留到下一阶段。
     var colorAtLastFinish: NSColor?
 
-    // 第一次加载的遮挡（现在只有启动画面）：这个页面自己的那一份。开始、到时限、到上限、提交后兜底、加载完成和失败
-    // 结束它的规则在 ChatWindowController 里（beginLaunchScreen()、endLaunchScreen(_:for:)），不管页面显不显示都照常改这几项；
-    // 窗口的启动画面只照显示着的页面的 isCovered 显示（applyCover(_:)）。不显示的页面的遮挡变了，窗口上什么都不变。
+    // 第一次加载的遮挡（启动画面、新标签页的遮挡）：这个页面自己的那一份。开始、到时限、到上限、提交后兜底、加载完成和失败
+    // 结束它的规则在 ChatWindowController 里（beginLaunchScreen()、beginNewTabCover(for:)、endLaunchScreen(_:for:)），
+    // 不管页面显不显示都照常改这几项；窗口的遮挡那层只照显示着的页面的 isCovered 和 coverKind 显示（applyCover(_:)）。
+    // 不显示的页面的遮挡变了，窗口上什么都不变。
 
     /// 遮挡还盖着：开始了、还没结束。
     var isCovered = false
+    /// 遮挡是哪一种。每次开始遮挡时设，结束以后留着（结束时淡出的那层照它）。没开始过时是 launch（窗口那层原来的样子）。
+    var coverKind = CoverKind.launch
     /// 到时限时网页还没提交，遮挡继续盖着，等加载完成、加载失败、提交后兜底或上限。
     var coverAwaitsCommit = false
     /// 每次开始遮挡加一。遮挡的时限和上限只在还是排下它们的那一次时起作用。

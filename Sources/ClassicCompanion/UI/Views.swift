@@ -294,20 +294,26 @@ final class ToolbarState: ObservableObject {
     @Published var showsBack = false
 }
 
-/// 启动时网页加载完之前显示。底色用上次记下的页面颜色。图标跟随应用图标资源，换正式图标时不用改这里。
+/// 页面第一次加载完之前盖在网页上。底色用窗口此刻的页面颜色（上次记下的，和顶部一条、窗口底色同一个），
+/// 没有记下时跟随系统。图标跟随应用图标资源，换正式图标时不用改这里。
+/// 两种样子（kind）只差图标和应用名：启动画面有，新标签页的遮挡没有（只有页面底色和小进度圈）。底色、进度圈、外观都一样。
 struct LaunchScreen: View {
     @ObservedObject var appearance: PageAppearance
-    /// 启动画面结束后淡出的那层用：底色固定，不再跟着页面颜色变（文字和图标的外观由宿主视图固定）。
+    /// 哪一种遮挡的样子。不指定是启动画面（原来的样子）。
+    var kind = PageLoadState.CoverKind.launch
+    /// 遮挡结束后淡出的那层用：底色固定，不再跟着页面颜色变（文字和图标的外观由宿主视图固定）。
     var fixedBackground: NSColor?
     @ObservedObject private var languages = LanguageController.shared
 
     var body: some View {
         VStack(spacing: 16) {
-            Image(nsImage: NSApplication.shared.applicationIconImage)
-                .resizable()
-                .frame(width: 96, height: 96)
-                .accessibilityHidden(true)
-            Text("Classic Companion").font(.title3.weight(.semibold))
+            if kind == .launch {
+                Image(nsImage: NSApplication.shared.applicationIconImage)
+                    .resizable()
+                    .frame(width: 96, height: 96)
+                    .accessibilityHidden(true)
+                Text("Classic Companion").font(.title3.weight(.semibold))
+            }
             ProgressView().controlSize(.small).accessibilityLabel(L10n.string("launch.opening"))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

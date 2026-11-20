@@ -14,6 +14,7 @@ final class ChatTab {
     let runtime: WebRuntime
     let adapter: ChatGPTAdapter
     /// 这一页加载到哪一步了。窗口显示这一页时，ChatWindowController.page 就是它。
+    /// 建标签页时建，带这个标签页的日志标签（和运行时、适配器的一样，见 init）。
     let page: PageLoadState
     /// 上次的页面路径（主机加路径，不含 query）。只有路径变了才算换了页面。
     var lastPath: String?
@@ -45,12 +46,13 @@ final class ChatTab {
     /// 运行时和适配器由调用方建好再交进来：建立顺序（运行时 → 适配器）留在调用方（正式运行是 make）。
     /// 运行时登记到网络状态由 ChatTabs 做（启动时的那个在 ChatTabs.init，之后的在 add）。
     /// 两者的日志要么都带这个标签页的标签，要么都不带（测试里单独建的），不能带别的标签页的。
-    init(id: TabID, runtime: WebRuntime, adapter: ChatGPTAdapter, page: PageLoadState = PageLoadState()) {
+    /// 页面状态在这里建，带同一个标签（PageLoadState.logTag）：窗口给不显示的页面写的行也带这个标签页的标签。
+    init(id: TabID, runtime: WebRuntime, adapter: ChatGPTAdapter) {
         precondition(runtime.log.tab == adapter.log.tab && (runtime.log.tab == nil || runtime.log.tab == id),
                      "运行时和适配器的日志标签要是这个标签页的（或者都不带）")
         self.id = id
         self.runtime = runtime
         self.adapter = adapter
-        self.page = page
+        page = PageLoadState(logTag: runtime.log.tab)
     }
 }
