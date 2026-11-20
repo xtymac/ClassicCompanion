@@ -75,9 +75,13 @@ public enum NavigationPolicy {
     }
 
     /// 是否为可恢复的对话 URL（/c/<id> 或 /g/<gpt>/c/<id>）。返回去掉 query/fragment 的 URL。
+    /// 查询参数里带临时聊天参数的（isTemporaryChat(_:)）不管路径都不算：临时聊天不保存，去掉参数后按普通对话再打开不可靠。
+    /// 最近关闭的记录（RecentlyClosedTabs）和下次启动恢复的对话地址（lastConversationURL）都经这里，所以两处都不记它
+    /// （用户 11-20 裁定：临时聊天不进最近关闭；认不准时，确认不了能恢复的地址不记）。
+    /// 真实页面上临时聊天有了对话 id 以后地址还带不带这个参数，还没核对（M1）：不带的话这里认不出来。
     public static func restorableConversationURL(_ url: URL?) -> URL? {
         guard let url, classify(url) == .chat, url.scheme == "https",
-              let host = url.host?.lowercased(), chatHosts.contains(host) else { return nil }
+              let host = url.host?.lowercased(), chatHosts.contains(host), !isTemporaryChat(url) else { return nil }
         let parts = url.path.split(separator: "/")
         let isConversation =
             (parts.count == 2 && parts[0] == "c") ||
@@ -88,5 +92,15 @@ public enum NavigationPolicy {
         comps.host = host
         comps.path = url.path
         return comps.url
+    }
+
+    /// 临时聊天的查询参数名。代码里能找到的地址只有 /?temporary-chat=true（新建临时聊天的首页）。
+    static let temporaryChatParameter = "temporary-chat"
+
+    /// 地址的查询参数里有临时聊天参数：不管路径、值（有没有值、是不是 true），名字不分大小写（百分号编码的也认）。
+    /// 只看查询参数，片段（#…）里的不算。
+    static func isTemporaryChat(_ url: URL) -> Bool {
+        guard let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { return false }
+        return items.contains { $0.name.lowercased() == temporaryChatParameter }
     }
 }
