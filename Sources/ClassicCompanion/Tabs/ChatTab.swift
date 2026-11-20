@@ -21,7 +21,8 @@ final class ChatTab {
     var lastPath: String?
     /// 排着的聚焦输入框任务。再次请求聚焦时先取消它；关闭标签页时也取消（ChatTabs.close(_:)）。
     var focusTask: Task<Void, Never>?
-    /// 这一页现在的地址：运行时最近一次报的（含 query），ChatTabs.urlChanged 记。阅读位置的连续性规则拿它和记下时的比。
+    /// 这一页现在的地址：运行时最近一次报的（含 query），ChatTabs.urlChanged 记。阅读位置的连续性规则拿它和记下时的比；
+    /// 关闭时记入最近关闭的也是它（ChatTabs.close(_:)，是普通对话地址才记）。
     var url: URL?
     /// 这一页的主框架提交过几次（每次提交，网页里就换了一份文档），ChatTabs 在运行时报提交时加一。
     /// 阅读位置的连续性规则用它看记下以后有没有提交过。

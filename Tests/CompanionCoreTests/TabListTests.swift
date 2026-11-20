@@ -327,6 +327,24 @@ import Testing
         #expect(l.recentlyClosed.latest?.url == conversation(11))
     }
 
+    /// 不去重（用户 11-20 定的 D14）：同一个地址关闭几次就记几次，按关闭的先后；满 10 条丢最旧的，重复的也照样占位置。
+    @Test func theSameAddressIsRecordedEachTimeItIsClosed() throws {
+        var l = list(3)
+        _ = l.close(l.tabs[0], url: conversation(1))
+        _ = l.close(l.tabs[0], url: URL(string: "https://chatgpt.com/c/conv-1?model=x"))
+        #expect(l.recentlyClosed.entries == [RecentlyClosedTabs.Entry(url: conversation(1), index: 0),
+                                             RecentlyClosedTabs.Entry(url: conversation(1), index: 0)],
+                "同一个地址（去掉查询参数后）记两次")
+
+        var r = RecentlyClosedTabs()
+        for n in 1...12 {
+            #expect(r.record(url: conversation(n % 2), index: n) == true)
+        }
+        #expect(r.entries.count == 10)
+        #expect(r.entries.map(\.index) == Array(3...12), "最旧的两条丢掉，其余按关闭的先后")
+        #expect(r.entries.map(\.url) == (3...12).map { conversation($0 % 2) })
+    }
+
     // MARK: 重新打开
 
     @Test func reopenStartsWithTheMostRecentlyClosed() {
@@ -398,5 +416,52 @@ import Testing
         let before = full
         #expect(full.reopen() == .nothingToReopen, "没有记录时不算到上限")
         #expect(full == before)
+    }
+
+    /// 不选中地重新打开（ChatTabs 用的）：放的位置、发的标识、消耗的记录和 `reopen()` 一样，只是选中项不变；再选中它就和
+    /// `reopen()` 的结果完全一样。上限 5：关闭时在位置 0–4，之后剩 1–4 个（另外关掉的是新对话页，不记），选中每一个
+    /// （位置不存在的放最右）。
+    @Test func reopenWithoutSelectingMatchesReopenExceptTheSelection() throws {
+        for index in 0...4 {
+            for count in 1...4 {
+                for chosen in 0..<count {
+                    var l = list(5, capacity: 5)
+                    _ = l.close(l.tabs[index], url: conversation(index))
+                    while l.tabs.count > count {
+                        _ = l.close(l.tabs[0], url: home)
+                    }
+                    _ = l.select(l.tabs[chosen])
+                    #expect(l.recentlyClosed.entries == [RecentlyClosedTabs.Entry(url: conversation(index), index: index)])
+                    var a = l, b = l
+                    let selectedBefore = a.selected
+                    let quiet = try #require(reopened(a.reopen(select: false)))
+                    let loud = try #require(reopened(b.reopen()))
+                    let at = "关闭时在 \(index)，剩 \(count) 个，选中第 \(chosen) 个"
+                    #expect(quiet.id == loud.id && quiet.url == loud.url, "\(at)")
+                    #expect(a.tabs == b.tabs, "\(at)")
+                    #expect(a.tabs.firstIndex(of: quiet.id) == min(index, count), "原位置，不存在就最右：\(at)")
+                    #expect(a.selected == selectedBefore, "选中项不变：\(at)")
+                    #expect(a.recentlyClosed.isEmpty && b.recentlyClosed.isEmpty, "一样消耗了记录：\(at)")
+                    #expect(a.select(quiet.id) == true)
+                    #expect(a == b, "再选中它就和 reopen() 一样：\(at)")
+                }
+            }
+        }
+    }
+
+    /// 不选中地重新打开时的拒绝和 `reopen()` 一样：没有记录、已到上限（记录留着），列表都不变。
+    @Test func reopenWithoutSelectingRefusesLikeReopen() throws {
+        var empty = list(2)
+        let before = empty
+        #expect(empty.reopen(select: false) == .nothingToReopen)
+        #expect(empty == before)
+
+        var full = list(4)
+        _ = full.close(full.tabs[1], url: conversation(1))
+        _ = try #require(added(full.append()))
+        let kept = full
+        #expect(full.reopen(select: false) == .atCapacity)
+        #expect(full == kept, "不打开，记录留着")
+        #expect(full.recentlyClosed.latest?.url == conversation(1))
     }
 }
