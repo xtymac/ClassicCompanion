@@ -999,8 +999,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// p 的其余状态停在这一刻。关两遍和关一个从没显示过的页面都可以。这里不写日志（运行时关闭时写了一行）。
     /// p 是显示着的页面时也照这样做：窗口停在关闭时的样子，不会再因 p 而变（启动画面还盖着的就一直盖着，直到换上别的页面）。
     /// 换上哪个页面显示、它的提示、遮挡和颜色，是切换标签页的入口 display(_:webView:) 的事：照换上来的页面自己的状态投，
-    /// 和关闭的页面无关。关闭的页面不能再换上来。正式的关闭入口 ChatTabs.close(_:) 只关不选中、不显示的标签页
-    /// （它的网页视图还藏在容器里的话，由 removeHiddenWebView(_:) 拿出来）。
+    /// 和关闭的页面无关。关闭的页面不能再换上来。正式的关闭入口 ChatTabs.closeTab(_:) 关显示着的标签页时先切换到邻居
+    /// （display 换上邻居的页面，投邻居自己的遮挡、提示和颜色），再收尾（ChatTabs.close(_:)，只关不选中、不显示的标签页），
+    /// 所以关闭时 p 已经不显示；它的网页视图藏在容器里，由 removeHiddenWebView(_:) 拿出来。
     func pageClosed(_ p: PageLoadState) {
         p.isClosed = true
     }
@@ -1236,7 +1237,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// 关闭标签页时（ChatTabs.close(_:)）：view 藏在容器里（它的页面显示过、又换下去了）就拿出来，窗口不再持有它，
-    /// 标签页放手后它就能释放。从没显示过的不在容器里；显示着的那个不算藏着（关闭显示着的标签页要先换走，3.7）：什么都不做。
+    /// 标签页放手后它就能释放。从没显示过的不在容器里；显示着的那个不算藏着（关闭显示着的标签页时 ChatTabs.closeTab(_:)
+    /// 先换上邻居，它就藏进了容器）：什么都不做。
     func removeHiddenWebView(_ view: WKWebView) {
         guard let hidden = hiddenWebViews.removeValue(forKey: ObjectIdentifier(view)) else { return }
         NSLayoutConstraint.deactivate(hidden.fixed)

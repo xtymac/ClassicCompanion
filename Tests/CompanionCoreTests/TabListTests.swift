@@ -164,6 +164,48 @@ import Testing
         #expect(l == after, "不再记一次")
     }
 
+    /// 关闭以后选谁可以先问（列表不改），答案和真的关闭以后的选中项一样：1–4 个标签页，选中每一个，关每一个。
+    /// 只剩一个、不在列表里：nil（close 也不关）。
+    @Test func theSelectionAfterClosingCanBeAskedFirstAndMatchesClose() {
+        for count in 1...4 {
+            for chosen in 0..<count {
+                for closing in 0..<count {
+                    var l = list(count)
+                    let ids = l.tabs
+                    _ = l.select(ids[chosen])
+                    let before = l
+                    let answer = l.selectionAfterClosing(ids[closing])
+                    #expect(l == before, "只问不改")
+                    let result = l.close(ids[closing], url: home)
+                    if count == 1 {
+                        #expect(answer == nil)
+                        #expect(result == .onlyTab)
+                    } else {
+                        #expect(answer == l.selected, "\(count) 个，选中第 \(chosen) 个，关第 \(closing) 个")
+                        #expect(result == .closed(selectionChanged: chosen == closing))
+                    }
+                }
+            }
+        }
+        var l = list(3)
+        let gone = l.tabs[0]
+        _ = l.close(gone, url: home)
+        #expect(l.selectionAfterClosing(gone) == nil)
+        #expect(l.selectionAfterClosing(TabID(rawValue: 99)) == nil)
+    }
+
+    /// 选中的在中间：右边的邻居；在最右：左边的邻居；不是选中的：还是选中的那个。
+    @Test func theSelectionAfterClosingIsTheRightNeighbourElseTheLeft() {
+        var l = list(3)
+        let ids = l.tabs
+        #expect(l.selectionAfterClosing(ids[2]) == ids[1])
+        #expect(l.selectionAfterClosing(ids[0]) == ids[2])
+        _ = l.select(ids[1])
+        #expect(l.selectionAfterClosing(ids[1]) == ids[2])
+        _ = l.select(ids[0])
+        #expect(l.selectionAfterClosing(ids[0]) == ids[1])
+    }
+
     // MARK: 切换
 
     @Test func nextAndPreviousWrapAround() {

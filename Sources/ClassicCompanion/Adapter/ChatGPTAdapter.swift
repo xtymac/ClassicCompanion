@@ -34,6 +34,8 @@ final class ChatGPTAdapter {
     private(set) var generation = 0
     private let timeout: TimeInterval = 2.5
     private var openingNewChat = false
+    /// 已经关闭（close()）。不会改回。
+    private(set) var isClosed = false
 
     /// tab：这个适配器属于哪个标签页，日志带上它的标签。正式运行由 ChatTab.make 传；不传（nil）就不带。
     init(webView: WKWebView, diagnostics: Diagnostics, settings: AppSettings, tab: TabID? = nil) {
@@ -47,6 +49,16 @@ final class ChatGPTAdapter {
         generation += 1
     }
 
+    /// 关闭（关闭标签页时由 ChatTabs.close(_:) 调用，和它的网页运行时一起）。之后：
+    /// - 不再在网页里跑脚本（run 直接按没有结果返回），不再读网页媒体状态（webMediaState 返回 "closed"）：
+    ///   进行中的多步操作（读朗读证据、测量、实验、页面里的新对话）剩下的步骤不再碰这个网页，马上返回；
+    /// - 进行中的脚本返回、出错或超时都不写日志，探测结果不写进诊断（probe）；
+    /// - 页面里的新对话点完入口后不再等页面变化（openNewChatInPage）。
+    /// 已经在网页里跑着的脚本不取消（没有取消的办法），它返回或超时以后什么都不做。关两遍没关系。
+    func close() {
+        isClosed = true
+    }
+
     var isEnabled: Bool { settings.webEnhancements }
 
     private var onChatPage: Bool {
@@ -56,14 +68,18 @@ final class ChatGPTAdapter {
 
     // MARK: - 能力
 
+    /// 关闭以后什么都不做；等脚本时关闭了，结果不写进诊断。
     func probe() async {
+        guard !isClosed else { return }
         guard isEnabled, onChatPage else {
             diagnostics.capabilities.pageKind = onChatPage ? "chat（网页增强已关闭）" : pageKindDescription()
             diagnostics.capabilities.location = Redactor.describe(webView?.url)
             diagnostics.capabilities.checkedAt = Date()
             return
         }
-        guard let json = await run(AdapterScripts.probe),
+        let result = await run(AdapterScripts.probe)
+        guard !isClosed else { return }
+        guard let json = result,
               let obj = decode(json) else {
             diagnostics.capabilities.pageKind = "chat（探测失败/超时）"
             return
@@ -104,7 +120,9 @@ final class ChatGPTAdapter {
 
     /// 只有确定没有点击官方入口时才返回 false，允许调用方整页加载。
     /// 点击后的慢切换、脚本超时或页面变化都不能补一次加载，否则会清掉新会话的草稿。
+    /// 关闭以后返回 true（不点、不让调用方加载，什么都不写）；等脚本或等页面变化时关闭了，也马上返回 true，不再写日志。
     func openNewChatInPage() async -> Bool {
+        guard !isClosed else { return true }
         guard !openingNewChat else { return true }
         guard isEnabled, onChatPage else { return false }
         guard webView?.url?.path != "/" else {
@@ -114,7 +132,9 @@ final class ChatGPTAdapter {
         openingNewChat = true
         defer { openingNewChat = false }
         let gen = generation
-        guard let json = await run(AdapterScripts.newChat), let obj = decode(json) else {
+        let result = await run(AdapterScripts.newChat)
+        guard !isClosed else { return true }
+        guard let json = result, let obj = decode(json) else {
             log("nav", "新建对话：点击结果未知，保留当前页面")
             return true
         }
@@ -125,7 +145,7 @@ final class ChatGPTAdapter {
         for _ in 0..<10 {
             do { try await Task.sleep(for: .milliseconds(100)) }
             catch { return true }
-            guard gen == generation else { return true }
+            guard !isClosed, gen == generation else { return true }
             if webView?.url?.path == "/" {
                 log("nav", "新建对话：页内切换")
                 return true
@@ -225,8 +245,9 @@ final class ChatGPTAdapter {
         return "set=\(set) measured=\(measured)"
     }
 
-    /// WebKit 层面的媒体播放状态（覆盖未挂载到 DOM 的媒体；不涉及页面内部对象）
+    /// WebKit 层面的媒体播放状态（覆盖未挂载到 DOM 的媒体；不涉及页面内部对象）。关闭以后不读，返回 "closed"。
     func webMediaState() async -> String {
+        guard !isClosed else { return "closed" }
         guard let webView else { return "no-webview" }
         switch await webView.requestMediaPlaybackState() {
         case .none: return "none"
@@ -239,9 +260,11 @@ final class ChatGPTAdapter {
 
     // MARK: - 执行
 
-    /// 在隔离世界执行脚本，结果统一为 JSON 字符串；超时返回 nil。
+    /// 在隔离世界执行脚本，结果统一为 JSON 字符串；超时返回 nil。关闭以后不执行，直接返回 nil。
+    /// 脚本出错、超时写一行日志；那时已经关闭就不写（关闭的网页被释放时 WebKit 会让还没返回的脚本出错）。
+    /// 到时限的那一次只弱引用适配器：脚本早就返回了，适配器不用等到时限才能释放。
     private func run(_ body: String, arguments: [String: Any] = [:], timeout: TimeInterval? = nil) async -> String? {
-        guard let webView else { return nil }
+        guard !isClosed, let webView else { return nil }
         let timeout = timeout ?? self.timeout
         return await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
             var finished = false
@@ -256,14 +279,14 @@ final class ChatGPTAdapter {
                     case .success(let value): finish(value as? String)
                     case .failure(let error):
                         let ns = error as NSError
-                        self.log("adapter", "脚本错误 \(ns.domain)#\(ns.code)")
+                        if !self.isClosed { self.log("adapter", "脚本错误 \(ns.domain)#\(ns.code)") }
                         finish(nil)
                     }
                 }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
                 MainActor.assumeIsolated {
-                    if !finished { self.log("adapter", "脚本超时") }
+                    if !finished, let self, !self.isClosed { self.log("adapter", "脚本超时") }
                     finish(nil)
                 }
             }

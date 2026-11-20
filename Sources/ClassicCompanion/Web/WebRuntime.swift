@@ -101,10 +101,10 @@ final class WebRuntime: NSObject {
         // 它也不是切换时那块空白的来源（2309 排查：改成红色，空白不变）。
 
         diagnostics.dataStoreIsPersistent = config.websiteDataStore.isPersistent
-        // 不设置 customUserAgent：不伪造浏览器身份
+        // 不设置 customUserAgent：不伪造浏览器身份。读回来时已经关闭（新标签页建好马上关了）就不写诊断。
         webView.evaluateJavaScript("navigator.userAgent") { [weak self] value, _ in
             MainActor.assumeIsolated {
-                if let ua = value as? String { self?.diagnostics.userAgent = ua }
+                if let self, !self.isClosed, let ua = value as? String { self.diagnostics.userAgent = ua }
             }
         }
 
@@ -148,24 +148,27 @@ final class WebRuntime: NSObject {
 
     /// 0217 实测：真实页面中 Esc 脚本不存在（探针 esc=null）。atDocumentEnd 用户脚本可能错过替换脚本时已在进行的加载
     /// （启动和模式切换都会重装脚本）。每次主框架加载完成后再注入一次（脚本可重复注入），并记录是否就位；失败只记脚本自身的异常。
+    /// 结果回来时已经关闭就不记（关闭以后这个运行时什么都不写）。
     private func ensureEscapeScript() {
         guard settings.webEnhancements else { return }
         // 小窗藏按钮的样式同理：每次加载完成后再注入一次（可重复注入）。
         webView.evaluateJavaScript(AdapterScripts.quickHideUserScript + "\n!!document.getElementById('cc-quick-hide')",
                                    in: nil, in: .defaultClient) { [weak self] result in
             MainActor.assumeIsolated {
-                if case .success(let value) = result { self?.log("esc", "小窗藏按钮样式就位=\((value as? Bool) == true)") }
+                guard let self, !self.isClosed else { return }
+                if case .success(let value) = result { self.log("esc", "小窗藏按钮样式就位=\((value as? Bool) == true)") }
             }
         }
         webView.evaluateJavaScript(AdapterScripts.escapeUserScript + "\ntypeof window.__ccRemoveEscape", in: nil, in: .defaultClient) { [weak self] result in
             MainActor.assumeIsolated {
+                guard let self, !self.isClosed else { return }
                 switch result {
                 case .success(let value):
-                    self?.log("esc", "Esc 脚本就位=\((value as? String) == "function")")
+                    self.log("esc", "Esc 脚本就位=\((value as? String) == "function")")
                 case .failure(let error):
                     let e = error as NSError
                     let message = (e.userInfo["WKJavaScriptExceptionMessage"] as? String).map { String($0.prefix(120)) } ?? "-"
-                    self?.log("esc", "Esc 脚本注入失败 \(e.domain)#\(e.code) \(message)")
+                    self.log("esc", "Esc 脚本注入失败 \(e.domain)#\(e.code) \(message)")
                 }
             }
         }
@@ -192,12 +195,13 @@ final class WebRuntime: NSObject {
     }
 
     /// 网页已经改成目标大小后调用，画好时回调。没有回调的情况由调用方的时限兜底。
+    /// 画好时已经关闭（或运行时已经释放）：不写分段那一行，照样回调（窗口按那一次的身份核对，不会再做事）。
     func prepareLayout(size: NSSize, done: @escaping @MainActor () -> Void) {
         let width = Self.cssWidth(points: size.width, zoom: webView.pageZoom)
         let started = Date()
-        webView.callAsyncJavaScript(AdapterScripts.layoutReadyScript, arguments: ["width": width], in: nil, in: .defaultClient) { [log] result in
+        webView.callAsyncJavaScript(AdapterScripts.layoutReadyScript, arguments: ["width": width], in: nil, in: .defaultClient) { [weak self, log] result in
             // 共计减去三段，是脚本开始之前的等待（网页忙或消息排队）。
-            if case .success(let value) = result, let steps = value as? [String: Any] {
+            if self?.isClosed == false, case .success(let value) = result, let steps = value as? [String: Any] {
                 let ms = { (key: String) in (steps[key] as? NSNumber)?.intValue ?? -1 }
                 log("window", "网页排版分段：共 \(Int(Date().timeIntervalSince(started) * 1000))ms 到宽度 \(ms("match"))ms "
                                 + "排版 \(ms("layout"))ms 放回 \(ms("restore"))ms 可滚动高度 \(ms("height"))")
@@ -416,17 +420,21 @@ final class WebRuntime: NSObject {
 
     // MARK: - 关闭
 
-    /// 关闭这个页面（关闭标签页时由 ChatTabs.close(_:) 调用；应用里现在还没有关闭标签页的入口）。
+    /// 关闭这个页面（关闭标签页时由 ChatTabs.close(_:) 调用；入口是 ChatTabs.closeTab(_:)，应用里现在还没有地方调用）。
     /// 先进入关闭态，之后这个运行时自己不再发起任何加载：定时重试、网络变化、窗口显示后、内容进程终止后的重新加载、
     /// ⌘R、新对话都不加载（load、reload、handle 都先看它），网页的导航事件（提交、加载完成、失败、取消）也不再改恢复状态、
     /// 不再转给窗口、不再排计时。所以下面停止加载引起的取消（-999）不会再排一次重试。
     /// 然后：取消排着的重试；停止加载；断开六个回调（接线的闭包持有页面状态，断开后不再驱动它）；
     /// 停掉地址观察和消息桥；关掉这个页面开的弹窗。
-    /// 关闭以后网页自己发起的导航、新窗口、提示框、确认框、文件选择也都按取消处理（见各代理方法）；
-    /// 记下、放回、丢弃阅读位置也不再碰网页。
+    /// 关闭以后网页自己发起的导航、新窗口、提示框、确认框、文件选择、媒体采集也都按取消处理（见各代理方法）；
+    /// 记下、放回、丢弃阅读位置也不再碰网页。关闭之前发出、之后才返回的网页脚本（加载完成后的 Esc 脚本、渲染自检、
+    /// 排版、确认阅读位置、读浏览器标识）回来时什么都不写。所以关闭以后这个运行时只写关闭的那一行；
+    /// 例外是关闭之前已经开始的下载：这里不取消它，运行时还在时下载代理照常写“下载完成/失败”（下载怎么处理还没定，D10）。
     /// 关两遍：第二遍什么都不做。
-    /// 不做的：从共用的网络状态上去掉（登记是 ChatTabs 做的，去掉也由它做）；从窗口拿掉网页视图（窗口只显示选中的标签页，
-    /// 关的不是选中的）；取消进行中的网页脚本（新对话、证据采集、媒体状态由 ChatTabs 在 holds 检查处停下，见 ChatTabs.close(_:)）。
+    /// 不做的：从共用的网络状态上去掉（登记是 ChatTabs 做的，去掉也由它做）；从窗口拿掉网页视图（关的不是显示着的：
+    /// ChatTabs.closeTab(_:) 先换上邻居，ChatTabs.close(_:) 再从窗口里拿出来）；取消进行中的网页脚本（没有办法取消：适配器的
+    /// 由它自己的关闭态挡住剩下的步骤，ChatTabs 的操作在 holds 检查处停下，见 ChatTabs.close(_:)）；停掉网页里正在播放的声音
+    /// （网页视图释放时随网页一起结束；关闭后要不要先显式停掉，等 M1 实测）。
     func close() {
         guard !isClosed else { return }
         isClosed = true
@@ -567,7 +575,7 @@ extension WebRuntime: WKNavigationDelegate {
         pageArrived()
         ensureEscapeScript()
         onMainFrameLoaded?()
-        // 无正文的渲染自检：只取数量。到点时已经关闭就不做。
+        // 无正文的渲染自检：只取数量。到点时已经关闭就不做；自检脚本返回时已经关闭也不记。
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, !self.isClosed else { return }
@@ -575,6 +583,7 @@ extension WebRuntime: WKNavigationDelegate {
                 let js = "JSON.stringify({rs: document.readyState, els: document.getElementsByTagName('*').length, vis: document.visibilityState})"
                 self.webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { result in
                     MainActor.assumeIsolated {
+                        guard !self.isClosed else { return }
                         let summary = (try? result.get()) as? String ?? "error"
                         self.log("render", "自检 frame=\(Int(size.width))x\(Int(size.height)) \(summary)")
                     }
@@ -650,7 +659,7 @@ extension WebRuntime: WKDownloadDelegate {
 
 // MARK: - UI 代理：新窗口、文件选择、JS 对话框、媒体权限
 
-/// 关闭以后（isClosed）：不开新窗口，提示框、确认框、文件选择都按取消处理（不显示）。
+/// 关闭以后（isClosed）：不开新窗口，提示框、确认框、文件选择都按取消处理（不显示），媒体采集照样拒绝、不写日志。
 /// 不显示的标签页的这些请求等它被选中再显示，是以后切换标签页的事；这里只管关闭以后。
 extension WebRuntime: WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
@@ -758,7 +767,8 @@ extension WebRuntime: WKUIDelegate {
 
     func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin,
                  initiatedBy frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
-        // Phase 0 不开启麦克风/摄像头（实时 Voice Chat 属于 P1）
+        // Phase 0 不开启麦克风/摄像头（实时 Voice Chat 属于 P1）。关闭以后也拒绝，不写日志。
+        guard !isClosed else { return .deny }
         log("media", "已拒绝媒体采集请求（Phase 0 不启用）")
         return .deny
     }
