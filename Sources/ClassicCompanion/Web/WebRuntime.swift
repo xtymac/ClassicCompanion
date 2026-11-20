@@ -30,6 +30,15 @@ final class WebRuntime: NSObject {
     var onEscapeRequest: (() -> Void)?
     /// 地址、能否后退或前进变了（顶部返回箭头跟着变）。
     var onHistoryChange: (() -> Void)?
+    /// ⌘ 点击、⇧⌘ 点击聊天链接（3.12，规则在 ChatLinkClick）：请这个页面所在的标签页那一组在新标签页打开 url。
+    /// ChatTabs.wire(_:) 接成 ChatTabs.openLink(_:from:_:)（来源就是这个标签页）。没接上（测试里单独建的运行时）：不打开，写一行。
+    /// 不管打不打开，这一页的导航都已经取消（不在这一页打开，也不交给浏览器）。
+    var onOpenLinkInTab: ((URL, ChatLinkClick.Opening) -> Void)?
+    /// 交给默认浏览器打开（外部链接、⌘ 点击不是聊天页面的链接）。正式运行就是 NSWorkspace.shared.open；
+    /// 只有测试换它：测试不能打开浏览器。
+    var openInBrowser: @MainActor (URL) -> Void = { _ = NSWorkspace.shared.open($0) }
+    /// 把登录等弹窗的窗口显示到前面（makeKeyAndOrderFront）。正式运行就是原来的做法；只有测试换它：测试不能显示窗口。
+    var showPopupWindow: @MainActor (NSWindow) -> Void = { $0.makeKeyAndOrderFront(nil) }
 
     /// 加载失败、窗口里没有页面时的恢复（2026-11-11 开机白屏）。见 LoadRecovery。
     private var recovery: LoadRecovery
@@ -447,7 +456,26 @@ final class WebRuntime: NSObject {
 
     private func openExternally(_ url: URL) {
         log("nav", "外部链接交给默认浏览器：\(Redactor.describe(url))")
-        NSWorkspace.shared.open(url)
+        openInBrowser(url)
+    }
+
+    /// 这次导航是不是在新标签页打开的 ⌘ 点击（3.12）：是这个页面自己的网页视图（不是它开的弹窗：弹窗里的 ⌘ 点击照原来交给
+    /// 浏览器），并且 ChatLinkClick 说是（点链接、按着 ⌘、聊天页面；⇧ 决定切不切过去）。不是就是 nil，照原来的路走。
+    private func tabOpening(for action: WKNavigationAction, in webView: WKWebView) -> ChatLinkClick.Opening? {
+        guard webView === self.webView else { return nil }
+        let flags = action.modifierFlags
+        return ChatLinkClick.opening(url: action.request.url, linkActivated: action.navigationType == .linkActivated,
+                                     command: flags.contains(.command), shift: flags.contains(.shift))
+    }
+
+    /// 在新标签页打开 url：交给标签页那一组（onOpenLinkInTab）。打不打开、放在哪由它定，这里不写日志（它写 [tabs] 那一行，
+    /// 没有地址）。没接上：不打开，写一行（没有地址）。调用方之后取消这一页的导航（或不给新窗口）。
+    private func openInTab(_ url: URL, _ opening: ChatLinkClick.Opening) {
+        guard let onOpenLinkInTab else {
+            log("nav", "⌘ 点击的聊天链接：没有接上标签页，不打开")
+            return
+        }
+        onOpenLinkInTab(url, opening)
     }
 
     // MARK: - 关闭
@@ -456,7 +484,8 @@ final class WebRuntime: NSObject {
     /// 先进入关闭态，之后这个运行时自己不再发起任何加载：定时重试、网络变化、窗口显示后、内容进程终止后的重新加载、
     /// ⌘R、新对话都不加载（load、reload、handle 都先看它），网页的导航事件（提交、加载完成、失败、取消）也不再改恢复状态、
     /// 不再转给窗口、不再排计时。所以下面停止加载引起的取消（-999）不会再排一次重试。
-    /// 然后：取消排着的重试；停止加载；断开六个回调（接线的闭包持有页面状态，断开后不再驱动它）；
+    /// 然后：取消排着的重试；停止加载；断开六个回调（接线的闭包持有页面状态，断开后不再驱动它）和在新标签页打开链接的那一个
+    /// （onOpenLinkInTab：关闭以后导航判断本来就先取消，这里只是不再拿着它）；
     /// 停掉地址观察和消息桥；关掉这个页面开的弹窗；网页的对话框按取消处理（cancelDialogs()：排着的不再显示，
     /// 显示着的文件选择收起，每一个都按取消回答 WebKit，各正好一次；关闭显示着的标签页时 ChatTabs 已经先做过，这里不再做）。
     /// 关闭以后网页自己发起的导航、新窗口、提示框、确认框、文件选择、媒体采集也都按取消处理（见各代理方法）；
@@ -481,6 +510,7 @@ final class WebRuntime: NSObject {
         onLoadFailed = nil
         onEscapeRequest = nil
         onLoadProblemChange = nil
+        onOpenLinkInTab = nil
         observations.forEach { $0.invalidate() }
         observations = []
         pathMonitor?.cancel()
@@ -534,6 +564,12 @@ extension WebRuntime: HistoryPage {
 // MARK: - 导航策略
 
 /// 关闭以后（isClosed）：网页自己发起的导航、下载一律取消，导航事件一律不理（不改状态、不写日志、不转给窗口）。
+///
+/// ⌘ 点击链接（点链接并按着 ⌘，原来整支交给默认浏览器）：这个页面自己的网页视图里点的聊天页面链接（ChatLinkClick）改为
+/// 在新标签页打开（3.12：⌘ 在后台，⇧⌘ 切换过去，见 openInTab(_:_:)），这一页的导航取消；打不打开都一样取消
+/// （到上限、启动画面还在、点击来自不显示的标签页等不打开时，这一页也不跳转、也不交给浏览器）。别的 ⌘ 点击照原来交给浏览器。
+/// 目标是新窗口的链接（target=_blank）：WebKit 先在这里问一次（没有目标 frame，照原来放行），再要新窗口
+/// （webView(_:createWebViewWith:for:windowFeatures:)），在那里判断。
 extension WebRuntime: WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  preferences: WKWebpagePreferences) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
@@ -555,6 +591,10 @@ extension WebRuntime: WKNavigationDelegate {
         switch kind {
         case .chat, .auth:
             if userOpensElsewhere, let url {
+                if let opening = tabOpening(for: navigationAction, in: webView) {
+                    openInTab(url, opening)
+                    return (.cancel, preferences)
+                }
                 openExternally(url)
                 return (.cancel, preferences)
             }
@@ -712,6 +752,7 @@ extension WebRuntime: WKDownloadDelegate {
 /// 网页要求输入文字（prompt）：这里没有实现，WebKit 不调用代理、网页直接得到 null，什么都不显示（原来就这样，没有改）。
 ///
 /// 新窗口（登录等弹窗）：不是选中的标签页要开，不开（返回 nil，写一行）。WebKit 要当场拿到弹窗的网页视图，不能像对话框那样等。
+/// 例外（3.12）：⌘ 点击目标是新窗口的聊天页面链接，不开弹窗，在新标签页打开（返回 nil），在上面这条之前判断。
 extension WebRuntime: WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
@@ -729,6 +770,13 @@ extension WebRuntime: WKUIDelegate {
             return nil
         }
         if kind == .blocked { return nil }
+        // ⌘ 点击目标是新窗口（target=_blank）的聊天页面链接（3.12）：不开弹窗，在新标签页打开（openInTab），给 WebKit nil
+        // （没有新窗口，链接什么都不做）。放在下面“不显示的标签页不开弹窗”之前：点击来自不显示的标签页时由标签页那一组不打开、
+        // 写它自己的那一行，不写弹窗那一行。window.open() 不是点链接（WebKit 报 .other），不算，照下面原来的路走。
+        if let url, let opening = tabOpening(for: navigationAction, in: webView) {
+            openInTab(url, opening)
+            return nil
+        }
         // 不是选中的标签页：不开。开了就是一个新窗口出现在显示着的那一页上面；网页拿到 null（和弹窗被拦下一样），
         // 用户切回这一页再点一次。不写地址。
         guard isSelectedTab() else {
@@ -751,7 +799,7 @@ extension WebRuntime: WKUIDelegate {
         window.title = L10n.string("window.popup")
         window.contentView = view
         window.center()
-        if show { window.makeKeyAndOrderFront(nil) }
+        if show { showPopupWindow(window) }
         popupWindows.append(window)
     }
 

@@ -239,7 +239,13 @@ final class TabHintTests: XCTestCase {
 
         let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/ClassicCompanion/Tabs/ChatTabs.swift"), encoding: .utf8)
-        XCTAssertEqual(source.components(separatedBy: "offerSeveralTabsTip()\n").count - 1, 1, "只在 open 里调用")
+        // 3.12 起两处：新增、重新打开共用的 open 里一处，⌘ 点击链接打开的 openLink 里一处（LinkTabOpenTests 核对它照样提示）。
+        // 每一处往前找最近的“func ”，就是调用它的函数。
+        let callers = source.components(separatedBy: "offerSeveralTabsTip()\n").dropLast().map { before -> String in
+            guard let declaration = before.range(of: "func ", options: .backwards) else { return "?" }
+            return String(before[declaration.upperBound...].prefix { $0 != "(" })
+        }
+        XCTAssertEqual(callers, ["open", "openLink"], "只在 open 和 openLink 里调用")
     }
 
     // MARK: - 共存
