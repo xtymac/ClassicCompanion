@@ -512,13 +512,20 @@ final class ChatTabs {
     /// 不新增（列表、选中项都不变，不建网页；写一行“[tabs] 不新增标签页：…”，不带标签）：
     /// - 启动画面还在（isLaunchScreenUp，计划 4.3）：别的什么都不做（不找回窗口）。新标签页的遮挡不算，还盖着也能再新增。
     /// - 已到上限（list.isFull，上限由 TabList 定）：写那一行；窗口没显示（菜单栏图标的菜单，D9）就再写一行、先找回窗口；
+    ///   菜单栏图标的菜单（bringingWindowForward）窗口显示着也再写一行、先把窗口带到前面（好让人看见提示）；
     ///   然后请窗口显示“最多打开 N 个标签页”的提示（showHint(.limit)，N 是 list.capacity；不出声，3 秒后自己收起，
     ///   见 TabHintPresenter）。按键和菜单都经这里，提示一样。
     /// 两样都有时按启动画面算（不提示）。
     ///
+    /// bringingWindowForward：菜单栏图标的菜单的“新建标签页”（TabMenus.statusNewTab(_:)）交 true（第 3 阶段之后用户定）：
+    /// 点它的时候窗口可能藏在别的窗口、别的应用后面，新的标签页（或到上限的提示）要让人看见。别的入口（⌘T、文件菜单）
+    /// 是在窗口里、或者应用在前面时按的，交 false，照原来只在窗口没显示时找回。找回都经 revealWindow
+    /// （windowController.reveal()：没显示、最小化的显示出来；显示着、但不在前面或应用不在前面的激活、放到前面；已经在前面的不动）。
+    ///
     /// 顺序：
     /// 1. 窗口没显示（隐藏、最小化，windowIsVisible）：写一行，先找回窗口（revealWindow，D9），窗口照常显示这时选中的那一页
-    ///    （窗口显示后的聚焦、提前重试也照常给它），再往下做。窗口显示着就不找回。
+    ///    （窗口显示后的聚焦、提前重试也照常给它），再往下做。窗口显示着就不找回；bringingWindowForward 时显示着也写一行、
+    ///    先把窗口带到前面（同一个 revealWindow）。
     /// 2. 加一个标签页（add(_:)，建法是 makeTab：和启动时的那个一样，建的时候就照现在的设置；接好线、登记到网络状态），
     ///    放在最右，不选中，窗口不变。写一行“新增”（带它的标签，有现在的个数，没有地址）。
     /// 3. 它的页面开始新标签页的遮挡（ChatWindowController.beginNewTabCover(for:)）。这时它不显示：只改它自己的状态
@@ -533,8 +540,9 @@ final class ChatTabs {
     /// 6. 第一次有多个标签页的提示（offerSeveralTabsTip()）。
     /// 这条路和重新打开（reopenClosedTab()）共用（open(_:place:line:)），只有放在哪、加载什么、日志的说法不同。
     @discardableResult
-    func newTab() -> ChatTab? {
-        open("新增", place: { make in add(make).map { ($0, nil) } }) { _ in "新增（现在 \(tabs.count) 个）" }
+    func newTab(bringingWindowForward: Bool = false) -> ChatTab? {
+        open("新增", bringingWindowForward: bringingWindowForward,
+             place: { make in add(make).map { ($0, nil) } }) { _ in "新增（现在 \(tabs.count) 个）" }
     }
 
     /// 新增（newTab()）和重新打开（reopenClosedTab()）共用的一条路，规则写在 newTab() 上：
@@ -544,10 +552,12 @@ final class ChatTabs {
     /// 第一次有多个标签页的提示（offerSeveralTabsTip()）。
     /// 返回放进来的那一个；不打开时返回 nil。
     /// - verb：日志里怎么说这件事（“新增”“重新打开”），不打开和先找回窗口的那几行用它。
+    /// - bringingWindowForward：窗口显示着也先把它带到前面（见 newTab(bringingWindowForward:)）。
     /// - place：用 makeTab 建一个标签页放进这组（list 和 tabs 一起改、不选中、接好线、登记到网络状态），返回它和要加载的地址。
     ///   前面看过没到上限，所以总能放进来；放不进来是用错了（断言）。
     /// - line：放进来以后写的那一行（带它的标签，没有地址）。
-    private func open(_ verb: String, place: ((TabID) -> ChatTab) -> (tab: ChatTab, url: URL?)?,
+    private func open(_ verb: String, bringingWindowForward: Bool = false,
+                      place: ((TabID) -> ChatTab) -> (tab: ChatTab, url: URL?)?,
                       line: (ChatTab) -> String) -> ChatTab? {
         guard let makeTab, let revealWindow else { preconditionFailure("\(verb)标签页要有建法和找回窗口（AppDelegate 交进来）") }
         guard !isLaunchScreenUp else {
@@ -559,12 +569,18 @@ final class ChatTabs {
             if !windowIsVisible() {
                 logGroup("tabs", "窗口没有显示，先找回窗口再提示")
                 revealWindow()
+            } else if bringingWindowForward {
+                logGroup("tabs", "先把窗口带到前面再提示")
+                revealWindow()
             }
             showHint(.limit(capacity: list.capacity), nil)
             return nil
         }
         if !windowIsVisible() {
             logGroup("tabs", "\(verb)标签页：窗口没有显示，先找回窗口")
+            revealWindow()
+        } else if bringingWindowForward {
+            logGroup("tabs", "\(verb)标签页：先把窗口带到前面")
             revealWindow()
         }
         guard let (tab, url) = place(makeTab) else { preconditionFailure("上面看过没到上限，找回窗口不加标签页、不动记录") }

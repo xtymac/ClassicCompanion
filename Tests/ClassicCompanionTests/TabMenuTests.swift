@@ -276,6 +276,64 @@ final class TabMenuTests: XCTestCase {
         XCTAssertEqual(rig.tabs.list, list, "不新增")
     }
 
+    /// 窗口显示着（可能在别的窗口、别的应用后面）：菜单栏图标的“新建标签页”也先把窗口带到前面（同一个找回窗口的入口，
+    /// 它自己看要不要激活、放到前面），再新增。聊天窗口是 key 窗口、别的窗口是 key 窗口、没有 key 窗口（别的应用在前面）都一样。
+    func testStatusNewTabBringsAShownWindowForwardFirst() throws {
+        let rig = make()
+        let built = try build(rig)
+        for front in [nil, other, rig.controller.window] {
+            key = front
+            let mark = rig.mark()
+            let count = rig.tabs.tabs.count
+            built.menus.statusNewTab(nil)
+            let lines = rig.lines(since: mark)
+            XCTAssertEqual(Array(lines.prefix(3)), ["[menu] 菜单 新建标签页（菜单栏图标）", "[tabs] 新增标签页：先把窗口带到前面", "找回窗口"])
+            XCTAssertEqual(lines.filter { $0 == "找回窗口" }.count, 1)
+            XCTAssertEqual(rig.tabs.tabs.count, count + 1)
+        }
+    }
+
+    /// 窗口显示着、到上限：菜单栏图标的“新建标签页”先把窗口带到前面，再显示到上限的提示（好让人看见），不新增。
+    func testStatusNewTabAtTheLimitBringsAShownWindowForwardThenShowsTheLimitHint() throws {
+        let rig = make()
+        let built = try build(rig)
+        for _ in 0..<3 { _ = try XCTUnwrap(rig.tabs.newTab()) }
+        XCTAssertTrue(rig.tabs.list.isFull)
+        key = nil
+        let list = rig.tabs.list, hints = rig.limitHints
+        let mark = rig.mark()
+        built.menus.statusNewTab(nil)
+        XCTAssertEqual(rig.lines(since: mark), [
+            "[menu] 菜单 新建标签页（菜单栏图标）", "[tabs] 不新增标签页：已到上限（4 个）",
+            "[tabs] 先把窗口带到前面再提示", "找回窗口", "[hint] 显示 到上限（4 个）的提示",
+        ])
+        XCTAssertEqual(rig.limitHints, hints + 1)
+        XCTAssertEqual(rig.tabs.list, list, "不新增")
+    }
+
+    /// 只有菜单栏图标的那一项把显示着的窗口带到前面：文件菜单的“新建标签页”和 ⌘T 照原来，窗口显示着就不找回
+    /// （新增时、⌘T 到上限时都不），也不写“带到前面”的行。到上限时文件菜单的那一项本来就置灰、不做。
+    func testTheFileMenuAndCommandTDoNotBringAShownWindowForward() throws {
+        let rig = make()
+        let built = try build(rig)
+        let newTabKey = TabKeys.Match(.newTab, "⌘T")
+        let inChat = TabKeys.Context(inChatWindow: true)
+        let mark = rig.mark()
+        built.menus.newTab(nil)
+        XCTAssertTrue(rig.tabs.handleKey(newTabKey, inChat))
+        XCTAssertEqual(rig.tabs.tabs.count, 3)
+        built.menus.newTab(nil)
+        XCTAssertTrue(rig.tabs.list.isFull)
+        built.menus.newTab(nil)
+        XCTAssertTrue(rig.tabs.handleKey(newTabKey, inChat))
+        let lines = rig.lines(since: mark)
+        XCTAssertTrue(lines.contains("[menu] 菜单 新建标签页：现在不能用，不做"), "到上限时文件菜单的那一项置灰")
+        XCTAssertEqual(lines.filter { $0.hasPrefix("[tabs] 不新增标签页") }.count, 1)
+        XCTAssertEqual(lines.filter { $0.hasPrefix("[hint] 显示 到上限") }.count, 1, "⌘T 到上限照样提示")
+        XCTAssertFalse(lines.contains("找回窗口"))
+        XCTAssertFalse(lines.contains { $0.contains("带到前面") || $0.contains("找回窗口") })
+    }
+
     /// 不能点的时候直接调用动作（菜单是一会儿之前验证的）：再看一遍，写一行，不做。按住不放的重复按键也不做。
     func testActionsThatCannotActNowDoNothing() throws {
         let rig = make()
