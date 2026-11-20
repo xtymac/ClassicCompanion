@@ -9,7 +9,7 @@ final class ChatWindow: NSPanel {
     var onCancel: (() -> Void)?
 
     /// 网页获得焦点时，Esc 是否隐藏窗口由适配脚本判断（可识别 IME 组合与网页弹层），这里不处理。
-    /// 指向窗口里当前显示的网页视图（不是放网页的容器），换网页视图时由控制器跟着换，见 replaceWebView。
+    /// 指向窗口里当前显示的网页视图（不是放网页的容器），换网页视图时由控制器跟着换，见 display(_:webView:)、replaceWebView。
     weak var webView: NSView?
 
     override func cancelOperation(_ sender: Any?) {
@@ -72,11 +72,17 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private var resizingByHand = false
     /// 切到完整窗口或放好它时的左上角。切回小窗时还在这里，说明用户没有移动过它。
     private var fullTopLeftWhenPlaced: NSPoint?
-    /// 窗口里当前显示的网页视图。只经 replaceWebView 换。
+    /// 窗口里当前显示的网页视图。只经 display(_:webView:)（切换标签页）和 replaceWebView 换。
     private(set) var webView: WKWebView
-    /// 网页在窗口里占的位置（顶部一条下面的整块区域）。网页视图放在里面铺满；
+    /// 网页在窗口里占的位置（顶部一条下面的整块区域）。显示着的网页视图放在里面铺满；
     /// 窗口里的约束、启动画面、提示、旧画面和切换时的固定大小都对着它，不直接对着网页视图。
+    /// 切换标签页时换下去的网页视图也留在里面，藏着、固定在离开时的大小（见 display(_:webView:)）。
     private let webContainer: NSView
+    /// 显示着的网页视图铺满 webContainer 的四条约束（换下去时要停掉它们）。
+    private var webFill: [NSLayoutConstraint]
+    /// 藏在 webContainer 里的网页视图（切换标签页时换下去的）和把它固定在离开时的位置、大小的约束。
+    /// 再显示时、关闭标签页时（removeHiddenWebView(_:)）拿掉。容器持有这些网页视图，直到它们再显示或被拿出来。
+    private var hiddenWebViews: [ObjectIdentifier: [NSLayoutConstraint]] = [:]
     private let diagnostics: Diagnostics
     private var previousApp: NSRunningApplication?
     private var screenObserver: Any?
@@ -109,6 +115,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// showLoadProblem(_:for:)、endLaunchScreen(_:for:)）：先改那个页面自己的状态，只有它就是这里的 page 时才动窗口
     /// （提示那层、淡出、启动画面、颜色、写窗口的日志）。不带页面的旧入口就是对 page 调用。
     /// 已经关闭的页面（pageClosed(_:)）的事件和排着的回调什么都不做。
+    /// 换显示的页面只经 display(_:webView:)（切换标签页，连同它的网页视图一起换，并把它的状态投到窗口上）。
     private(set) var page: PageLoadState
     private var lastDragLog = Date.distantPast
     /// 窗口已最小化到 Dock。
@@ -154,7 +161,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private let bar: NSView
     private var backgroundObservation: NSKeyValueObservation?
     private var pendingBackground: DispatchWorkItem?
-    /// 进入和解除启动保护、换网页视图时加一。排着队的颜色更新只在代号没变时生效，旧回调不会把临时颜色采用或保存。
+    /// 进入和解除启动保护、换网页视图、换显示的页面时加一。排着队的颜色更新只在代号没变时生效，旧回调不会把临时颜色采用或保存。
     private var pageColorGeneration = 0
     /// 解除启动保护后，加载完成前就有的颜色最多等多久。复现里真实颜色在加载完成后约 24–68 ms 报出（按日志时间推算）。
     var pageColorSettleLimit: TimeInterval = 1
@@ -223,6 +230,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         let edges = [webContainer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
                      webContainer.bottomAnchor.constraint(equalTo: container.bottomAnchor)]
         webEdges = edges
+        let fill = Self.fill(webView, in: webContainer)
+        webFill = fill
         NSLayoutConstraint.activate(edges + [
             // 顶部一条占住原来的标题栏位置，按钮在里面。
             bar.topAnchor.constraint(equalTo: container.topAnchor),
@@ -230,7 +239,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
             bar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             webContainer.topAnchor.constraint(equalTo: bar.bottomAnchor),
             webContainer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-        ] + Self.fill(webView, in: webContainer) + [
+        ] + fill + [
             launchCover.topAnchor.constraint(equalTo: webContainer.topAnchor),
             launchCover.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor),
             launchCover.trailingAnchor.constraint(equalTo: webContainer.trailingAnchor),
@@ -624,7 +633,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// 把页面 p 的提示状态投到窗口的提示上：先改提示内容，再改那一层显不显示（和原来各处的顺序一样）。
-    /// 只对显示着的页面调用（调用的地方先判断 p === page），每次改了它的 notice 之后都调用；
+    /// 只对显示着的页面调用（调用的地方先判断 p === page），每次改了它的 notice 之后、换上它显示时（display(_:webView:)）都调用；
     /// 只写这两样，不记日志、不碰淡出那层和别的状态。
     private func applyNotice(_ p: PageLoadState) {
         loadProblem.status = p.notice
@@ -640,7 +649,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     // 页面显不显示都照这套规则改它自己的遮挡状态，时限和上限到点也照常；
     // 窗口只在页面显示着时跟着动：遮挡那层和它的样子（applyCover(_:)）、淡出、启动保护的窗口部分、窗口的日志（不带标签，
     // 两种遮挡写的行一样）。不显示的页面的遮挡变了，窗口上什么都不变；只在它的遮挡结束时写一行带它的标签的日志
-    // （见 endLaunchScreen(_:for:)）。它再显示时，窗口照它那时的状态显示，计时还是它自己开始时排下的（由切换的入口投上去，以后做）。
+    // （见 endLaunchScreen(_:for:)）。它再显示时，窗口照它那时的状态显示，计时还是它自己开始时排下的
+    // （切换的入口 display(_:webView:) 投上去，不重新开始）。
     // 关闭的页面（pageClosed(_:)）不开始遮挡，它的事件和排着的时限、上限都不再改它的遮挡，也不动窗口。
     // 遮挡的计时只弱引用页面：页面释放了，它的遮挡和计时一起作废；窗口显示着的页面由窗口持有，不会在显示时释放。
 
@@ -651,7 +661,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
 
     /// 新标签页：页面 p 开始第一次加载的遮挡，样子是新标签页的（页面底色加小进度圈，没有图标和应用名）。
     /// 规则、时限、上限和启动画面完全相同（beginCover(for:kind:)）。
-    /// 用法（3.6）：建好标签页、还没显示时对它的页面调用，再开始加载；切换的入口之后把它的遮挡投到窗口上。
+    /// 用法（3.6）：建好标签页、还没显示时对它的页面调用，再开始加载；切换的入口（ChatTabs.select(_:)）之后把它的遮挡投到窗口上。
     /// p 不显示时窗口一点不变（遮挡那层和样子、启动保护的窗口部分、日志），p 的启动保护和计时照常开始；
     /// p 显示着时和启动画面一样马上盖上，样子是新标签页的。p 已经关闭时什么都不做。
     /// 应用里现在没有地方调用（新增标签页的入口在 3.6）。
@@ -739,7 +749,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// 把页面 p 的遮挡状态投到窗口的遮挡那层上：先换成它那一种的样子（和那层现在的不同时才换），再盖着就显示、没有就藏起。
-    /// 只对显示着的页面调用（调用的地方先判断 p === page），每次改了它的 isCovered 之后、换上它显示时都调用；
+    /// 只对显示着的页面调用（调用的地方先判断 p === page），每次改了它的 isCovered 之后、换上它显示时（display(_:webView:)）都调用；
     /// 只写这两样，不记日志、不碰淡出那层和别的状态。
     private func applyCover(_ p: PageLoadState) {
         if launchCover.rootView.kind != p.coverKind {
@@ -856,7 +866,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 启动保护只有还在时起作用。解除时报的颜色不马上采用：它可能还是加载完成前的临时颜色。页面颜色变了再按原来的规则采用；
     /// 一直不变就在 pageColorSettleLimit 后按它采用。
     /// 不显示的页面解除启动保护时只改它自己的状态：不换窗口的颜色代号、不取消排着队的颜色更新、不影响显示着的页面的等待；
-    /// 它报的颜色只记在 colorAtLastFinish，切换到它时能不能采用留到下一阶段。
+    /// 它报的颜色只记在 colorAtLastFinish，再记下解除的时刻（releasedWhileHidden）：窗口没有替它等颜色，
+    /// 换上它时（display(_:webView:)）按这两样决定还要不要等，见 showPageColor(of:)。
     /// p 已经关闭时什么都不做。
     func pageDidFinishLoading(_ p: PageLoadState, reportedColor: NSColor?) {
         guard !p.isClosed else { return }
@@ -876,15 +887,25 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         }
         guard p.holdsPageColor else { return }
         p.holdsPageColor = false
-        guard p === page else { return }
+        guard p === page else {
+            p.releasedWhileHidden = Date()
+            return
+        }
         pageColorGeneration += 1
-        let generation = pageColorGeneration
         p.colorBeforeFirstLoad = reportedColor
         diagnostics.log("appearance", "启动保护解除：加载完成时报的是\(Self.shade(reportedColor))，等页面颜色变化再采用")
+        awaitPageColor(p, within: pageColorSettleLimit)
+    }
+
+    /// 显示着的页面 p 的“加载完成前的颜色”（colorBeforeFirstLoad）可能还是临时的：等它变化再采用，最多等 delay，
+    /// 到点还没变就按当前颜色采用；同时马上按平常的规则看一次（150ms 后它已经和那个颜色不同就采用）。
+    /// 解除启动保护时（等 pageColorSettleLimit）和换上一个还有没等完的颜色的页面时（showPageColor(of:)）调用。
+    private func awaitPageColor(_ p: PageLoadState, within delay: TimeInterval) {
+        let generation = pageColorGeneration
         // 这次颜色等待属于 p 和窗口此刻的颜色代号：到点时 p 已经释放、关闭或不再显示，或者窗口的颜色代号（pageColorGeneration）变了
-        // （显示着的页面进入或解除启动保护、换网页视图），都不起作用。
+        // （显示着的页面进入或解除启动保护、换网页视图、换显示的页面），都不起作用。
         // 故意不跟 p 的加载代号（commitGeneration）绑在一起：加载完成后不久又提交（例如重定向）不能取消这次颜色等待。
-        DispatchQueue.main.asyncAfter(deadline: .now() + pageColorSettleLimit) { [weak self, weak p] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak p] in
             MainActor.assumeIsolated {
                 guard let self, let p, !p.isClosed, p === self.page, self.pageColorGeneration == generation,
                       p.colorBeforeFirstLoad != nil else { return }
@@ -917,16 +938,21 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
                     guard !PageAppearance.sameColor(color, before) else { return }
                     p.colorBeforeFirstLoad = nil
                 }
-                let wasDark = self.appearance.isDark
-                self.appearance.update(color)
-                if self.appearance.isDark != wasDark {
-                    self.diagnostics.log("appearance", "页面底色：\(self.appearance.isDark == true ? "深色" : "浅色")")
-                }
-                self.applyAppearance()
+                self.adoptPageColor(color)
             }
         }
         pendingBackground = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    /// 采用页面颜色：记下（下次启动用），深浅变了写一行，顶部一条、遮挡、提示和窗口底色跟着变。
+    private func adoptPageColor(_ color: NSColor?) {
+        let wasDark = appearance.isDark
+        appearance.update(color)
+        if appearance.isDark != wasDark {
+            diagnostics.log("appearance", "页面底色：\(appearance.isDark == true ? "深色" : "浅色")")
+        }
+        applyAppearance()
     }
 
     /// 日志里只写深浅，不写颜色值。
@@ -956,8 +982,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// - p 的网页视图报的颜色不再采用。
     /// p 的其余状态停在这一刻。关两遍和关一个从没显示过的页面都可以。这里不写日志（运行时关闭时写了一行）。
     /// p 是显示着的页面时也照这样做：窗口停在关闭时的样子，不会再因 p 而变（启动画面还盖着的就一直盖着，直到换上别的页面）。
-    /// 换上哪个页面显示、它的提示、遮挡和颜色，是切换标签页的入口的事（以后做）：遮挡照换上来的页面自己的状态投（applyCover(_:)），
-    /// 和关闭的页面无关。正式的关闭入口 ChatTabs.close(_:) 只关不选中、不显示的标签页。
+    /// 换上哪个页面显示、它的提示、遮挡和颜色，是切换标签页的入口 display(_:webView:) 的事：照换上来的页面自己的状态投，
+    /// 和关闭的页面无关。关闭的页面不能再换上来。正式的关闭入口 ChatTabs.close(_:) 只关不选中、不显示的标签页
+    /// （它的网页视图还藏在容器里的话，由 removeHiddenWebView(_:) 拿出来）。
     func pageClosed(_ p: PageLoadState) {
         p.isClosed = true
     }
@@ -968,9 +995,142 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         show(mode: mode == .quick ? .full : .quick)
     }
 
-    // MARK: - 换网页视图
+    // MARK: - 切换显示的页面（切换标签页）
 
-    /// 换掉窗口里显示的网页视图。为以后的聊天标签页准备，现在还没有地方调用；从不调用时一切和以前一样。
+    /// 切换标签页的入口（ChatTabs.select(_:) 调用，选中项已经先改好）：窗口改为显示页面 p 和它的网页视图 newWebView，
+    /// 并把 p 自己的状态投到窗口上。p 已经是显示着的页面、或已经关闭（关闭的页面不再显示：它的状态停在关闭时，投上来窗口就停住了）：
+    /// 什么都不做。
+    ///
+    /// 没有 replaceWebView 那个“页面加载状态已停下来”的前提：状态是每个页面自己的，跟着页面一起换，
+    /// 所以换到、换走还盖着遮挡、还在加载、有提示、在等颜色的页面都是正常的。剩下的前提只有两条：p 没有关闭（上面）；
+    /// newWebView 就是 p 的网页视图（窗口分不出来，由调用方保证：ChatTab 的 page 和运行时的网页视图都是常量）。
+    ///
+    /// 顺序：
+    /// 1. 进行中的切模式先结束（和隐藏、显示、拖边一样）。结束时窗口说“排版结束”（onDidChangeLayout）：选中项已经先改了，
+    ///    所以换下去的那一页排版前记下的阅读位置留在它自己身上，等它再显示（不会放回到正要藏起的那一页）。
+    ///    之后这次切模式的快照、排版完成和时限回调晚到都不起作用（layoutChange 已经不是它们那次）。
+    /// 2. 还在淡出的那层（启动画面的、提示的）是换下去的页面的：马上拿掉（D7），不盖在换上来的页面上。
+    /// 3. 换网页视图：newWebView 放进容器铺满、显示，键盘焦点交给它，Esc 判断和页面底色观察跟着换。
+    ///    换下去的网页视图留在容器里藏起，固定在离开时的大小（D3）：之后窗口变大小它也不重新排版；不拆掉，网页内容留着。
+    ///    排着的颜色更新作废（取消，颜色代号加一）：换下去的页面排下的 150ms 更新和颜色等待到点时都不起作用。
+    /// 4. 显示的页面换成 p，p 的遮挡（applyCover，不重新开始，计时还是它自己开始时排下的）和提示（applyNotice）投上来。
+    ///    换下去的页面的遮挡、提示、颜色等待都留在它自己的状态里；它之后的事件和迟到的回调只改它自己的状态，不动窗口。
+    /// 5. 颜色（D4）：见 showPageColor(of:)。
+    /// 这里不写日志（切换的那一行由 ChatTabs.select(_:) 写；结束切模式、采用颜色照常写它们自己的行）。
+    ///
+    /// 换上来的网页视图按现在的容器大小排版：这里不补排版、不等它排好、不管它离开时是多大（每页的排版大小、切回来时先盖住
+    /// 补排版再揭开是 3.5 的事；那时补排版要放在第 4 步之后，排好时再告诉 ChatTabs，见 ChatTabs.select(_:) 里的 3.5 那一步）。
+    func display(_ p: PageLoadState, webView newWebView: WKWebView) {
+        guard p !== page, !p.isClosed else { return }
+        finishLayoutChange(animated: false)
+        dropFades()
+        dropQueuedPageColor()
+        // newWebView 已经显示着：只在测试的接缝把显示的页面单独换过（setDisplayedPageForTesting）时会这样，不用换网页视图。
+        if newWebView !== webView {
+            // 先把还没做的排版做完，离开时的大小才是它现在真正的大小。
+            webContainer.layoutSubtreeIfNeeded()
+            let old = webView, oldFill = webFill, leaveSize = old.frame.size
+            putOnDisplay(newWebView)
+            // 要在藏起旧网页之前交：藏起含第一响应者的视图时 AppKit 会把焦点交给别处。
+            window?.makeFirstResponder(newWebView)
+            hideInContainer(old, fill: oldFill, size: leaveSize)
+        }
+        page = p
+        applyCover(p)
+        applyNotice(p)
+        showPageColor(of: p)
+    }
+
+    /// 换上来的页面 p 的颜色（D4，display(_:webView:) 的最后一步；颜色代号已经加过一）。用的都是原来的规则：
+    /// - p 在启动保护里，或第一次加载还没完成：窗口的颜色不动（顶部一条、窗口底色、遮挡的底色还是上一个页面采用的）。
+    ///   之后它报的颜色照启动保护不采用，到它第一次加载完成（pageDidFinishLoading(_:reportedColor:)）再照原来的等待。
+    /// - p 有没等完的“加载完成前的颜色”（colorBeforeFirstLoad：它显示着解除启动保护、还在等颜色变化时被换走了）：
+    ///   重新等一次（awaitPageColor，最多 pageColorSettleLimit）。
+    /// - p 不显示时解除了启动保护（releasedWhileHidden）、离那时还不到 pageColorSettleLimit：窗口没有替它等过，
+    ///   加载完成时它报的颜色（colorAtLastFinish）可能还是临时的：照刚解除时一样等，只等剩下的时间。
+    ///   已经过了这么久：原来的等待这时也早就按当前颜色采用了，当作已经稳定。
+    /// - p 已提交、还没加载完成（又在加载）：它此刻的颜色可能是导航中的临时颜色，照平常的规则稳定 150ms 再采用。
+    /// - 其余（第一次加载完成过、颜色已经稳定）：马上采用它此刻报的颜色。
+    private func showPageColor(of p: PageLoadState) {
+        let releasedWhileHidden = p.releasedWhileHidden
+        p.releasedWhileHidden = nil
+        if p.holdsPageColor || !p.hasFinishedFirstLoad { return }
+        if p.colorBeforeFirstLoad != nil { return awaitPageColor(p, within: pageColorSettleLimit) }
+        if let released = releasedWhileHidden {
+            let left = pageColorSettleLimit - Date().timeIntervalSince(released)
+            if left > 0 {
+                p.colorBeforeFirstLoad = p.colorAtLastFinish
+                return awaitPageColor(p, within: left)
+            }
+        }
+        if p.awaitingFinish { return pageBackgroundChanged(for: p) }
+        adoptPageColor(webView.underPageBackgroundColor)
+    }
+
+    /// 换下去的页面还在淡出的那层（启动画面的、提示的）马上拿掉（D7）。
+    private func dropFades() {
+        launchFade?.removeFromSuperview()
+        launchFade = nil
+        loadProblemFade?.removeFromSuperview()
+        loadProblemFade = nil
+    }
+
+    /// 排着队的页面颜色更新作废：取消，并把 pageColorGeneration 加一（和进入启动保护同一个办法），
+    /// 所以已经排下的 150ms 更新和颜色等待到点时都不生效。
+    private func dropQueuedPageColor() {
+        pendingBackground?.cancel()
+        pendingBackground = nil
+        pageColorGeneration += 1
+    }
+
+    /// 让 newWebView 成为窗口显示的网页视图：放进容器（藏在里面的先去掉固定大小的约束）铺满、显示出来，
+    /// ChatWindow.webView（Esc 判断）和页面底色观察跟着换（先停掉旧的，旧网页之后报什么都不起作用）。
+    /// 不碰键盘焦点和换下去的网页视图（它还铺满、还显示着），由调用方处理。
+    private func putOnDisplay(_ newWebView: WKWebView) {
+        backgroundObservation?.invalidate()
+        backgroundObservation = nil
+        if let fixed = hiddenWebViews.removeValue(forKey: ObjectIdentifier(newWebView)) {
+            NSLayoutConstraint.deactivate(fixed)
+        }
+        if newWebView.superview !== webContainer {
+            newWebView.translatesAutoresizingMaskIntoConstraints = false
+            webContainer.addSubview(newWebView)
+        }
+        let fill = Self.fill(newWebView, in: webContainer)
+        NSLayoutConstraint.activate(fill)
+        webFill = fill
+        newWebView.isHidden = false
+        webView = newWebView
+        (window as? ChatWindow)?.webView = newWebView
+        observePageBackground(of: newWebView)
+    }
+
+    /// 换下去的网页视图（D3）：留在容器里藏起，不拿掉（网页内容留着、不重建；藏起以后 WebKit 会不会放慢它，要真实页面看），
+    /// 固定在离开时的位置和大小 size（离开时排好的那个大小）：之后窗口变大小它也不跟着重新排版。再显示时（putOnDisplay）回到铺满。
+    /// 3.5 要的“每页排版大小”就是这个固定的大小：再显示时拿它和现在的容器大小比，决定要不要先盖住补排版。
+    private func hideInContainer(_ view: WKWebView, fill: [NSLayoutConstraint], size: NSSize) {
+        NSLayoutConstraint.deactivate(fill)
+        let fixed = [view.topAnchor.constraint(equalTo: webContainer.topAnchor),
+                     view.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor),
+                     view.widthAnchor.constraint(equalToConstant: size.width),
+                     view.heightAnchor.constraint(equalToConstant: size.height)]
+        NSLayoutConstraint.activate(fixed)
+        hiddenWebViews[ObjectIdentifier(view)] = fixed
+        view.isHidden = true
+    }
+
+    /// 关闭标签页时（ChatTabs.close(_:)）：view 藏在容器里（它的页面显示过、又换下去了）就拿出来，窗口不再持有它，
+    /// 标签页放手后它就能释放。从没显示过的不在容器里；显示着的那个不算藏着（关闭显示着的标签页要先换走，3.7）：什么都不做。
+    func removeHiddenWebView(_ view: WKWebView) {
+        guard let fixed = hiddenWebViews.removeValue(forKey: ObjectIdentifier(view)) else { return }
+        NSLayoutConstraint.deactivate(fixed)
+        view.removeFromSuperview()
+    }
+
+    // MARK: - 换网页视图（同一个页面）
+
+    /// 换掉窗口里显示的网页视图，显示的页面不换。应用里没有地方调用（切换标签页用 display(_:webView:)，页面和网页视图一起换）；
+    /// 测试用它核对换网页视图的那几样。
     ///
     /// 跟着换的：webContainer 里的视图和铺满它的约束（旧网页视图连同它的约束从容器里拿掉，这里不再持有它）、
     /// ChatWindow.webView（Esc 判断）、页面底色观察（先停掉旧的，旧网页之后报什么都不起作用）、
@@ -979,14 +1139,12 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 进行中的模式切换先结束，和隐藏、显示、拖边一样：快照和排版都是旧网页的，
     /// 晚到的快照、排版完成和时限回调因为 layoutChange 已经不是它们那次而不起作用。
     ///
-    /// 页面加载状态（hasCommittedPage、awaitingFinish、commitGeneration、noticeAwaitsLoad、遮挡的 isCovered 和 coverAwaitsCommit、
-    /// holdsPageColor、colorBeforeFirstLoad、hasFinishedFirstLoad、colorAtLastFinish 和“无法连接”提示的状态 notice）
-    /// 在阶段 2 之前还是窗口一份（显示着的 page 不跟着换）。这里不保存、不恢复、不重设，
-    /// 换过之后它们就当作新网页视图的。所以前提是换的时候这些状态都已经停下来（pageStateIsSettled）；
-    /// 没停下来时记一行日志，调试版断言。
+    /// 显示的页面（page）不跟着换，它的加载状态不保存、不恢复、不重设，换过之后就当作新网页视图的。
+    /// 所以前提是换的时候这些状态都已经停下来（pageStateIsSettled）；没停下来时记一行日志，调试版断言。
+    /// （切换标签页没有这个前提：那时状态跟着页面一起换，见 display(_:webView:)。）
     /// 只动排着队的页面颜色更新：取消，并把 pageColorGeneration 加一（和进入启动保护同一个办法），
     /// 所以旧网页排下的 150ms 更新和加载完成后的等待到点时都不生效，不会把旧网页的颜色、也不会把新网页的颜色当成这次的结果。
-    /// 新网页此刻报着的颜色不马上采用：顶部一条和窗口底色保持原样，等新网页的颜色变化（切换时要不要马上采用留给阶段 3）。
+    /// 新网页此刻报着的颜色不马上采用：顶部一条和窗口底色保持原样，等新网页的颜色变化。
     func replaceWebView(with newWebView: WKWebView) {
         guard newWebView !== webView else { return }
         finishLayoutChange(animated: false)
@@ -997,25 +1155,15 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         assert(settled, "换网页视图的前提：页面加载状态已经停下来（见 replaceWebView）")
         let old = webView
         let hadFocus = (window?.firstResponder as? NSView)?.isDescendant(of: old) ?? false
-        backgroundObservation?.invalidate()
-        backgroundObservation = nil
-        pendingBackground?.cancel()
-        pendingBackground = nil
-        pageColorGeneration += 1
-
-        newWebView.translatesAutoresizingMaskIntoConstraints = false
-        webContainer.addSubview(newWebView)
-        NSLayoutConstraint.activate(Self.fill(newWebView, in: webContainer))
-        webView = newWebView
-        (window as? ChatWindow)?.webView = newWebView
-        observePageBackground(of: newWebView)
+        dropQueuedPageColor()
+        putOnDisplay(newWebView)
         // 要在拿掉旧网页之前交：拿掉第一响应者时 AppKit 会把焦点交给窗口本身。
         if hadFocus { window?.makeFirstResponder(newWebView) }
         old.removeFromSuperview()
         diagnostics.log("window", "换网页视图：焦点\(hadFocus ? "在旧网页里，交给新网页" : "不在网页里，没动")")
     }
 
-    /// 换网页视图的前提（见 replaceWebView）：没有启动画面和启动保护、没有在等加载完成前的颜色、
+    /// 换网页视图（replaceWebView，同一个页面）的前提：没有启动画面和启动保护、没有在等加载完成前的颜色、
     /// 不在“已提交、还没加载完成”中、没有显示或留着“无法连接”提示。
     private var pageStateIsSettled: Bool {
         !isShowingLaunchScreen && !page.coverAwaitsCommit && !page.holdsPageColor && page.colorBeforeFirstLoad == nil
@@ -1023,16 +1171,28 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     }
 
     #if DEBUG
-    /// 只给测试用（调试版才有）：把窗口当作显示着的页面换成 p，别的什么都不做——不投 p 的提示、不动启动画面和颜色、
-    /// 不换网页视图、不换颜色代号、不写日志。这不是切换页面的规则（“显示这个页面的状态”的入口留到下一阶段），
-    /// 只用来验证：换走再换回来以后，排着的回调仍只按排下它的那一次的代号起作用；不显示的页面的事件和计时只改它自己的状态。
+    /// 只给测试用（调试版才有）：把窗口当作显示着的页面换成 p，别的什么都不做——不投 p 的遮挡和提示、不动颜色、
+    /// 不换网页视图、不换颜色代号、不写日志。这不是切换页面的入口（那是 display(_:webView:)，它一定连带换颜色代号、
+    /// 投遮挡和提示、去掉淡出层），只用来单独验证一处保护：换走再换回来、而颜色代号没变时，排着的回调仍只对排下它的页面起作用；
+    /// 不显示的页面的事件和计时只改它自己的状态；只有显示着的页面能开始启动画面（beginLaunchScreen()）时，让别的页面开始一次。
     /// 所以换过以后窗口的启动画面和提示可能还是换走的那个页面的样子。
-    /// showingItsCover：再把 p 的遮挡状态（盖不盖、哪一种样子）投到窗口的遮挡那层上（applyCover(_:)，以后切换标签页的入口
-    /// 也要这样投），用来验证不显示时照常结束或还盖着的遮挡，换上来时窗口照它显示。只投这一样，不淡出、不写日志、不重新计时。
-    func setDisplayedPageForTesting(_ p: PageLoadState, showingItsCover: Bool = false) {
+    func setDisplayedPageForTesting(_ p: PageLoadState) {
         page = p
-        if showingItsCover { applyCover(p) }
     }
+
+    /// 只给测试用（调试版才有）：窗口不显示也开始一次切模式的排版变化，和显示着的窗口按切换键时一样走
+    /// （排版变化前的回调、快照、拍好后窗口到 frame、网页排好或到时限才结束），只是不改模式、不显示窗口。
+    /// 用来验证切换标签页时进行中的那次怎么结束、它迟到的快照和排版回调不动之后的那次。快照和排版没接上时什么都不做。
+    func beginLayoutChangeForTesting(to frame: NSRect) {
+        guard onSnapshotPage != nil, onPrepareLayout != nil else { return }
+        onWillChangeLayout?()
+        guard let change = beginLayoutChange() else { return }
+        change.frame = frame
+        continueLayoutChange(change)
+    }
+
+    /// 有一次切模式的排版变化在进行（测试用）。
+    var isChangingLayout: Bool { layoutChange != nil }
     #endif
 
     /// 网页视图铺满 webContainer 的四条约束。
