@@ -398,6 +398,58 @@ final class WebKitAfterCloseTests: XCTestCase {
         withExtendedLifetime((closedWeb, controlWeb)) {}
     }
 
+    /// 网页一直忙（4 秒），聚焦脚本到时限（2.5 秒）还没返回，适配器按没有结果返回，网页视图随即释放（标签页释放时就是这样）。
+    /// 实测 WebKit 不是在网页视图释放时、而是等网页忙完才让那个还没返回的脚本出错（WKErrorDomain#5）。三个一起跑：
+    /// - 对照（没关闭、还拿着）：写“脚本超时”和“脚本错误”两行；
+    /// - 关闭了、还有人拿着适配器：两行都不写；
+    /// - 关闭了、没人拿着：时限一到它就释放（脚本的回调只弱引用它），不等网页忙完。
+    /// 三个网页视图都在时限时释放：还没返回的脚本不拿着网页视图。
+    func testAScriptThatFailsAfterItsWebViewWentWritesNothingAndHoldsNothing() async throws {
+        let logs = [Diagnostics(), Diagnostics(), Diagnostics()]
+        var adapters: [ChatGPTAdapter] = []
+        var views: [WeakBox<WKWebView>] = []
+        var tasks: [Task<String, Never>] = []
+        do {
+            var webs: [WKWebView] = []
+            for log in logs {
+                let web = plainWebView()
+                try await open(web, "<html><body>x</body></html>")
+                webs.append(web)
+                adapters.append(ChatGPTAdapter(webView: web, diagnostics: log, settings: settings()))
+            }
+            for web in webs { try await busy(web, for: 4) }
+            try await pause(0.05)
+            for adapter in adapters { tasks.append(Task { await adapter.focusInput() }) }
+            try await pause(0.1)
+            adapters[1].close()
+            adapters[2].close()
+            views = webs.map { WeakBox($0) }
+        }
+        let dropped = WeakBox(adapters[2])
+        adapters.removeLast()
+        let (control, kept) = (adapters[0], adapters[1])
+        adapters = []
+        for task in tasks {
+            let result = await task.value
+            XCTAssertEqual(result, "timeout")
+        }
+        tasks = []
+        let timedOut = Date()
+        try await waitUntil(1) { views.allSatisfy { $0.value == nil } && dropped.value == nil }
+        XCTAssertTrue(views.allSatisfy { $0.value == nil }, "网页视图在时限时释放")
+        XCTAssertNil(dropped.value, "关闭了、没人拿着：时限一到就释放")
+        XCTAssertLessThan(Date().timeIntervalSince(timedOut), 0.5)
+        XCTAssertEqual(lines(logs[0]), ["[adapter] 脚本超时"], "这时脚本还没出错")
+        try await waitUntil(4) { lines(logs[0]).count == 2 }
+        try await pause(0.3)
+        XCTAssertEqual(lines(logs[0]).count, 2, "对照：\(lines(logs[0]))")
+        XCTAssertEqual(lines(logs[0]).first, "[adapter] 脚本超时", "对照")
+        XCTAssertTrue(lines(logs[0]).last?.hasPrefix("[adapter] 脚本错误 WKErrorDomain#") == true, "对照：\(lines(logs[0]))")
+        XCTAssertEqual(lines(logs[1]), [])
+        XCTAssertEqual(lines(logs[2]), [])
+        withExtendedLifetime((control, kept)) {}
+    }
+
     /// 脚本返回以后适配器马上可以释放（到时限的那一次只弱引用它），不等 2.5 秒的时限。关闭的也一样。
     func testAnAdapterIsReleasedWhenItsScriptReturnsNotAtTheTimeout() async throws {
         let web = plainWebView()
@@ -415,6 +467,12 @@ final class WebKitAfterCloseTests: XCTestCase {
             XCTAssertNil(released, "关闭=\(closes)")
         }
     }
+}
+
+/// 弱引用一个对象。
+private final class WeakBox<T: AnyObject> {
+    weak var value: T?
+    init(_ value: T) { self.value = value }
 }
 
 /// 记下网页视图的导航动作和导航响应（都放行）。
