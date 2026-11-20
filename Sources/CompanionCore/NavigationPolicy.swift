@@ -79,6 +79,9 @@ public enum NavigationPolicy {
     /// 最近关闭的记录（RecentlyClosedTabs）和下次启动恢复的对话地址（lastConversationURL）都经这里，所以两处都不记它
     /// （用户 11-20 裁定：临时聊天不进最近关闭；认不准时，确认不了能恢复的地址不记）。
     /// 真实页面上临时聊天有了对话 id 以后地址还带不带这个参数，还没核对（M1）：不带的话这里认不出来。
+    /// 有这条规则以前已经记下的值也认不出来：记下的是去掉查询参数的地址，那时从临时聊天记下的看起来就是普通对话（/c/<id>）。
+    /// 启动时直接打开记下的 lastConversationURL，不再经过这里，所以这条规则管不到已经记下的值。
+    /// （最近关闭的记录只在内存里，没有以前记下的。）
     public static func restorableConversationURL(_ url: URL?) -> URL? {
         guard let url, classify(url) == .chat, url.scheme == "https",
               let host = url.host?.lowercased(), chatHosts.contains(host), !isTemporaryChat(url) else { return nil }
