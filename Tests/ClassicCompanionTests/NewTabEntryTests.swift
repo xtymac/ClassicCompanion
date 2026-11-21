@@ -314,7 +314,7 @@ final class NewTabEntryTests: XCTestCase {
         XCTAssertTrue(rig.lines(since: online).contains("[net] 网络可用 【标签2】"))
     }
 
-    /// 新的那一页（显示着）自己的第一次加载经接线结束它的遮挡：窗口写的是和启动画面一样的那一行（不带标签），揭开、淡出，
+    /// 新的那一页（显示着）自己的第一次加载经接线结束它的遮挡：窗口写的是和启动画面一样的那一行（末尾带它的标签，11-21），揭开、淡出，
     /// 再解除启动保护；窗口是 key 窗口就聚焦它。
     func testTheNewTabsFirstLoadEndsItsCoverThroughTheSameWiring() async throws {
         let rig = make()
@@ -328,7 +328,7 @@ final class NewTabEntryTests: XCTestCase {
         XCTAssertNotNil(rig.controller.launchFadeView)
         XCTAssertFalse(b.page.holdsPageColor)
         let window = rig.lines(since: mark).filter { $0.hasPrefix("[launch]") || $0.hasPrefix("[appearance]") }
-        XCTAssertEqual(window.first, "[launch] 启动画面结束：网页已加载（…ms）")
+        XCTAssertEqual(window.first, "[launch] 启动画面结束：网页已加载（…ms） 【标签2】")
         XCTAssertEqual(window.count, 2)
         let released = window.dropFirst().first ?? ""
         XCTAssertTrue(released.hasPrefix("[appearance] 启动保护解除："), released)

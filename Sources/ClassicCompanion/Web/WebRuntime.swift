@@ -30,6 +30,10 @@ final class WebRuntime: NSObject {
     var onEscapeRequest: (() -> Void)?
     /// 地址、能否后退或前进变了（顶部返回箭头跟着变）。
     var onHistoryChange: (() -> Void)?
+    /// 网页视图报的页面底色（underPageBackgroundColor）变了，参数是它此刻报的颜色。WebKit 只在颜色真的变了时报；
+    /// 显示着的、藏着的网页视图都报。ChatTabs.wire(_:) 接到窗口，只用来让新标签页的遮挡在页面开始显示时就撤
+    /// （ChatWindowController.pageDidReportColor(_:_:)）；顶部一条和窗口底色跟不跟页面颜色，仍是窗口自己观察显示着的网页视图。
+    var onPageColorChange: ((NSColor?) -> Void)?
     /// ⌘ 点击、⇧⌘ 点击聊天链接（3.12，规则在 ChatLinkClick）：请这个页面所在的标签页那一组在新标签页打开 url。
     /// ChatTabs.wire(_:) 接成 ChatTabs.openLink(_:from:_:)（来源就是这个标签页）。没接上（测试里单独建的运行时）：不打开，写一行。
     /// 不管打不打开，这一页的导航都已经取消（不在这一页打开，也不交给浏览器）。
@@ -166,6 +170,9 @@ final class WebRuntime: NSObject {
         })
         observations.append(webView.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.onHistoryChange?() }
+        })
+        observations.append(webView.observe(\.underPageBackgroundColor) { [weak self] webView, _ in
+            MainActor.assumeIsolated { self?.onPageColorChange?(webView.underPageBackgroundColor) }
         })
     }
 
@@ -515,9 +522,9 @@ final class WebRuntime: NSObject {
     /// 先进入关闭态，之后这个运行时自己不再发起任何加载：定时重试、网络变化、窗口显示后、内容进程终止后的重新加载、
     /// ⌘R、新对话都不加载（load、reload、handle 都先看它），网页的导航事件（提交、加载完成、失败、取消）也不再改恢复状态、
     /// 不再转给窗口、不再排计时。所以下面停止加载引起的取消（-999）不会再排一次重试。
-    /// 然后：取消排着的重试；停止加载；断开六个回调（接线的闭包持有页面状态，断开后不再驱动它）和在新标签页打开链接的那一个
-    /// （onOpenLinkInTab：关闭以后导航判断本来就先取消，这里只是不再拿着它）；
-    /// 停掉地址观察和消息桥；关掉这个页面开的弹窗；网页的对话框按取消处理（cancelDialogs()：排着的不再显示，
+    /// 然后：取消排着的重试；停止加载；断开七个回调（接线的闭包持有页面状态，断开后不再驱动它；含报页面底色的 onPageColorChange）
+    /// 和在新标签页打开链接的那一个（onOpenLinkInTab：关闭以后导航判断本来就先取消，这里只是不再拿着它）；
+    /// 停掉地址和页面底色的观察、消息桥；关掉这个页面开的弹窗；网页的对话框按取消处理（cancelDialogs()：排着的不再显示，
     /// 显示着的文件选择收起，每一个都按取消回答 WebKit，各正好一次；关闭显示着的标签页时 ChatTabs 已经先做过，这里不再做）。
     /// 关闭以后网页自己发起的导航、新窗口、提示框、确认框、文件选择、媒体采集也都按取消处理（见各代理方法）；
     /// 记下、放回、丢弃阅读位置也不再碰网页。关闭之前发出、之后才返回的网页脚本（加载完成后的 Esc 脚本、渲染自检、
@@ -541,6 +548,7 @@ final class WebRuntime: NSObject {
         onLoadFailed = nil
         onEscapeRequest = nil
         onLoadProblemChange = nil
+        onPageColorChange = nil
         onOpenLinkInTab = nil
         observations.forEach { $0.invalidate() }
         observations = []

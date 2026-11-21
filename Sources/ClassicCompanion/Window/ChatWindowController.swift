@@ -149,6 +149,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private let webEdges: [NSLayoutConstraint]
     private var webPin: [NSLayoutConstraint] = []
     /// 只在页面第一次加载完之前盖着（启动时的启动画面、以后新标签页的遮挡），免得先露出一片空白。不是隐私遮罩，网页从不被挡住。
+    /// 新标签页的遮挡在页面开始显示时就撤，不等加载完成（pageDidReportColor(_:_:)）。
     /// 两种遮挡用这同一层，只换样子（LaunchScreen.kind）。盖不盖、什么样子只照显示着的页面的遮挡状态
     /// （page.isCovered、page.coverKind）改（applyCover(_:)），别处不直接改。
     private let launchCover: NSHostingView<LaunchScreen>
@@ -686,13 +687,15 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - 第一次加载的遮挡（启动画面、新标签页的遮挡）
     //
     // 遮挡是每个页面自己的（PageLoadState 的 isCovered、coverKind、coverAwaitsCommit、coverGeneration、coverStarted），
-    // 两种遮挡（启动画面、新标签页的遮挡）只是样子不同，规则只有这一套：
+    // 两种遮挡（启动画面、新标签页的遮挡）样子不同，规则是这一套：
     // 开始（beginCover(for:kind:)）、到时限（coverLimitReached(for:)）、结束（endLaunchScreen(_:for:)：加载完成、加载失败、
     // 到时限时已提交、到时限后提交兜底、到上限）。时限和上限两种都用 launchScreenLimit、launchScreenCap、pageRevealLimit。
+    // 新标签页的遮挡另外多一条，更早结束（用户 11-21 定）：提交以后页面报出和遮挡同一深浅的底色，就是页面开始显示了
+    // （pageDidReportColor(_:_:)）；上面那几样留作兜底，所以不会比原来盖得久。启动画面没有这一条。
     // 页面显不显示都照这套规则改它自己的遮挡状态，时限和上限到点也照常；
-    // 窗口只在页面显示着时跟着动：遮挡那层和它的样子（applyCover(_:)）、淡出、启动保护的窗口部分、窗口的日志（不带标签，
-    // 两种遮挡写的行一样）。不显示的页面的遮挡变了，窗口上什么都不变；只在它的遮挡结束时写一行带它的标签的日志
-    // （见 endLaunchScreen(_:for:)）。它再显示时，窗口照它那时的状态显示，计时还是它自己开始时排下的
+    // 窗口只在页面显示着时跟着动：遮挡那层和它的样子（applyCover(_:)）、淡出、启动保护的窗口部分、窗口的日志（启动画面那一行
+    // 不带标签；新标签页的遮挡同样的一行末尾带它的标签）。不显示的页面的遮挡变了，窗口上什么都不变；只在它的遮挡结束时写一行
+    // 带它的标签的日志（见 endLaunchScreen(_:for:)）。它再显示时，窗口照它那时的状态显示，计时还是它自己开始时排下的
     // （切换的入口 display(_:webView:) 投上去，不重新开始）。
     // 关闭的页面（pageClosed(_:)）不开始遮挡，它的事件和排着的时限、上限都不再改它的遮挡，也不动窗口。
     // 遮挡的计时只弱引用页面：页面释放了，它的遮挡和计时一起作废；窗口显示着的页面由窗口持有，不会在显示时释放。
@@ -703,7 +706,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// 新标签页：页面 p 开始第一次加载的遮挡，样子是新标签页的（页面底色加小进度圈，没有图标和应用名）。
-    /// 规则、时限、上限和启动画面完全相同（beginCover(for:kind:)）。
+    /// 规则、时限、上限和启动画面相同（beginCover(for:kind:)），只多一条更早的结束：页面开始显示时就撤（pageDidReportColor(_:_:)）。
     /// 用法（ChatTabs.newTab()、reopenClosedTab()、openLink(_:from:_:)）：建好标签页、还没显示时对它的页面调用，再开始加载；
     /// 要显示它时切换的入口（ChatTabs.select(_:)）把它的遮挡投到窗口上（⌘ 点击在后台打开的可能一直不显示，遮挡只在它自己的状态里结束）。
     /// p 不显示时窗口一点不变（遮挡那层和样子、启动保护的窗口部分、日志），p 的启动保护和计时照常开始；
@@ -770,17 +773,26 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         endLaunchScreen(outcome, for: page)
     }
 
-    /// 页面 p 加载完、加载失败、到时限（已提交）、提交后兜底或到上限时调用。p 的这一次遮挡结束，之后不再出现。
+    /// 页面 p 加载完、加载失败、到时限（已提交）、提交后兜底、到上限，或者（只有新标签页的遮挡）开始显示时调用
+    /// （pageDidReportColor(_:_:)）。p 的这一次遮挡结束，之后不再出现。
     /// 只在 p 的遮挡还盖着、p 没有关闭时起作用；p 没有遮挡时什么都不做。p 自己的遮挡状态显不显示都照样结束。
-    /// p 显示着：窗口写日志（两种遮挡都是原来那一行，不带标签）、撤掉遮挡、淡出。
-    /// p 不显示：窗口不动，只写一行带 p 的标签的日志（哪一种、原因和耗时，没有地址）；p 没有标签（只在测试里单独建）时不写，
+    /// 日志里的原因就是哪一条规则结束的：“网页开始显示…”是提前撤，“网页已加载”“加载失败”“超过时限”“提交后…还没加载完成”
+    /// “超过上限”是兜底；都带耗时（从这一次遮挡开始算），没有地址。
+    /// p 显示着：窗口写日志、撤掉遮挡、淡出。启动画面是原来那一行（不带标签）；新标签页的遮挡是同样的一行，末尾带 p 的标签
+    /// （p 没有标签时不带）。
+    /// p 不显示：窗口不动，只写一行带 p 的标签的日志（哪一种、原因和耗时）；p 没有标签（只在测试里单独建）时不写，
     /// 分不出是哪一页的行不写。
     /// 启动保护不在这里解除，见 pageDidFinishLoading(_:reportedColor:)。
     func endLaunchScreen(_ outcome: String, for p: PageLoadState) {
         guard isCovering(p) else { return }
         let elapsed = Int(Date().timeIntervalSince(p.coverStarted) * 1000)
         if p === page {
-            diagnostics.log("launch", "启动画面结束：\(outcome)（\(elapsed)ms）")
+            let line = "启动画面结束：\(outcome)（\(elapsed)ms）"
+            if p.coverKind == .newTab {
+                TabLog(diagnostics: diagnostics, tab: p.logTag)("launch", line)
+            } else {
+                diagnostics.log("launch", line)
+            }
         } else if let tag = p.logTag {
             let kind = p.coverKind == .launch ? "启动时" : "新标签页"
             TabLog(diagnostics: diagnostics, tab: tag)("launch", "不显示的页面的遮挡结束（\(kind)）：\(outcome)（\(elapsed)ms）")
@@ -790,6 +802,30 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         guard p === page else { return }
         applyCover(p)
         fadeOutLaunchScreen()
+    }
+
+    /// 页面 p 的网页视图报了页面底色 color（ChatTabs.wire(_:) 接到网页运行时的底色观察；显示着的、不显示的页面都报，
+    /// WebKit 只在颜色真的变了时报）。只用来提前结束新标签页的遮挡（用户 11-21 定：新标签页的遮挡太显眼、太久，
+    /// 页面开始显示内容时就撤，不等加载完成；看着页面像浏览器那样一点点出来可以接受）。启动画面不看它，照原来的规则。
+    /// 三样都对才结束：
+    /// 1. p 盖着新标签页的遮挡、没有关闭。
+    /// 2. p 的主框架提交过（hasCommittedPage）。之前报的是还没加载的空白网页的颜色（深色外观下它报白色，
+    ///    启动保护就是为它，见 PageLoadState.holdsPageColor），不算。新标签页的页面是新建的，遮挡开始时还没提交过，
+    ///    所以这就是“这一次加载提交过”。光提交不够：提交时网页还没画出来（2026-11-15 对照，见 showLoadProblem(_:for:)）；
+    ///    提交以后网页视图报出颜色，才算新页面画出来了。
+    /// 3. 报的颜色不透明，和遮挡此刻的底色（fixedFill：记下的页面颜色，没有就按遮挡这一刻的外观取系统颜色；淡出那层也是它）
+    ///    同一深浅（PageAppearance.isDark）：撤掉以后露出来的和遮挡同一深浅，深色里不闪白、浅色里不闪黑。
+    ///    p 不显示时也拿这个颜色比（它显示时遮挡就是这个颜色）。深浅不同（提交后报的还是空白网页的颜色，或页面真换了主题）、
+    ///    透明：不撤，等下一次报颜色，或照原来的规则（加载完成、失败、时限、上限）结束。
+    /// 结束走 endLaunchScreen(_:for:)，原因写“网页开始显示”和报的深浅；和别的结束方式一样只结束一次，之后的加载完成、
+    /// 失败、时限、上限都不再做事。启动保护照旧到第一次加载完成才解除（pageDidFinishLoading(_:reportedColor:)）：
+    /// 这时报的颜色不采用，顶部一条和窗口底色不变。读屏和焦点和别的结束方式一样（同一个结束入口）。
+    func pageDidReportColor(_ p: PageLoadState, _ color: NSColor?) {
+        guard isCovering(p), p.coverKind == .newTab, p.hasCommittedPage,
+              let reported = color?.usingColorSpace(.sRGB), reported.alphaComponent > 0.5,
+              let cover = fixedFill(launchCover.effectiveAppearance),
+              PageAppearance.isDark(reported) == PageAppearance.isDark(cover) else { return }
+        endLaunchScreen("网页开始显示，提交后页面底色报为\(Self.shade(reported))", for: p)
     }
 
     /// 把页面 p 的遮挡状态投到窗口的遮挡那层上：先换成它那一种的样子（和那层现在的不同时才换），再盖着就显示、没有就藏起。
@@ -1129,7 +1165,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 换上来的网页视图 view 要不要补排版；要的话返回原因（写日志用），不要是 nil。
     /// - 切模式的排版没接上（onPrepareLayout 是 nil，切模式也就直接切换）：没法等，不补。
     /// - 从没在这个窗口里显示过（不在藏着的里面：新标签页第一次显示）：不补。它的第一次加载有自己的遮挡（新标签页的遮挡），
-    ///   那块盖到加载完成；补排版不和那块遮挡掺在一起。
+    ///   那块盖到页面开始显示或加载完成；补排版不和那块遮挡掺在一起。
     ///   例外是在后台打开的标签页（⌘ 点击链接）：它加载前就按当时的大小藏进了容器（addHiddenWebView(_:)），
     ///   第一次显示时和别的藏着的一样比；要补时补排版那块和它第一次加载的遮挡同时在，各按自己的规则结束。
     /// - 离开时没排好（那时正在切模式或补排版，被这次切换先结束了）：补，哪怕大小没变。
