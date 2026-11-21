@@ -284,7 +284,7 @@ final class TabCatchUpTests: XCTestCase {
                 XCTAssertNil(rig.controller.shownCoverKind)
             }
             XCTAssertEqual(rig.events.filter { $0 == "排好 p0" }.count, 1)
-            XCTAssertEqual(rig.lines.filter { $0.hasPrefix("[launch]") }, ["[launch] 启动画面结束：网页已加载（…ms）"])
+            XCTAssertEqual(rig.lines.filter { $0.hasPrefix("[launch]") }, ["[launch] 启动画面结束：网页已加载（…ms） 【标签1】"])
         }
     }
 

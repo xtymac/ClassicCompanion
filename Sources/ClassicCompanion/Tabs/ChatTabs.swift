@@ -283,8 +283,8 @@ final class ChatTabs {
     /// tab 已经不在这组里（关过了，或者不是这组的）：什么都不做，所以关两遍是安全的。这里不写 [tabs] 那一行（closeTab 写）。
     ///
     /// 顺序：先进入关闭态，再收尾。
-    /// 1. 运行时关闭（WebRuntime.close()）：不再自己发起加载、不再排重试，排着的重试取消，停止加载，回调断开，停掉地址观察和
-    ///    消息桥，弹窗关掉；排着的网页对话框不再显示、显示着的文件选择收起，都按取消回答网页（关显示着的标签页时 closeTab
+    /// 1. 运行时关闭（WebRuntime.close()）：不再自己发起加载、不再排重试，排着的重试取消，停止加载，回调断开，停掉地址和
+    ///    页面底色的观察、消息桥，弹窗关掉；排着的网页对话框不再显示、显示着的文件选择收起，都按取消回答网页（关显示着的标签页时 closeTab
     ///    在切换之前已经取消过，这里不再做）；之后迟到的导航事件、网页脚本的回调都不做事、不写日志。
     /// 2. 适配器关闭（ChatGPTAdapter.close()）：不再在网页里跑脚本、不再读媒体状态，进行中的脚本返回或超时以后不写日志、
     ///    不写诊断。
@@ -375,6 +375,12 @@ final class ChatTabs {
             guard let self else { return }
             self.windowController.pageDidCommit(page)
             if let tab { self.mainFrameCommitted(tab) }
+        }
+        // 网页视图报的页面底色（显示着、藏着都报）带着这个标签页的页面交给窗口：只用来让它新标签页的遮挡在页面开始显示时
+        // 就撤（规则在 ChatWindowController.pageDidReportColor(_:_:)；不显示时也照这条规则结束）。
+        // 颜色跟不跟、采用不采用不经这里：仍是窗口自己观察显示着的网页视图。
+        tab.runtime.onPageColorChange = { [weak self] color in
+            self?.windowController.pageDidReportColor(page, color)
         }
         // 网页的对话框（提示框、确认框、文件选择）和新窗口按“它是不是选中的标签页”：是就和原来一样马上显示、照常开；
         // 不是就把对话框排在它自己身上，等它被选中再显示（select(_:) 最后放出来），新窗口不开（规则在 WebRuntime 的

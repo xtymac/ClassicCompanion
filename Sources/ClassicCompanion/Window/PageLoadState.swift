@@ -7,9 +7,10 @@ import CompanionCore
 /// 先改那个页面自己的这些状态，只有它显示着时窗口才跟着变；不显示的页面的事件只改它自己的状态。
 @MainActor
 final class PageLoadState {
-    /// 第一次加载的遮挡是哪一种。两种的规则、时限、上限完全相同（同一套，在 ChatWindowController 里），只有样子不同：
+    /// 第一次加载的遮挡是哪一种。两种的规则、时限、上限相同（同一套，在 ChatWindowController 里），样子不同：
     /// - launch：启动画面，启动时的那个页面用（图标、应用名、小进度圈）。
-    /// - newTab：新标签页的遮挡（只有页面底色和小进度圈，没有图标和应用名）。
+    /// - newTab：新标签页的遮挡（只有页面底色和小进度圈，没有图标和应用名）。它另外在页面开始显示时就撤，不等加载完成
+    ///   （ChatWindowController.pageDidReportColor(_:_:)，用户 11-21 定）；日志那一行带它的标签。
     enum CoverKind { case launch, newTab }
 
     /// 这个页面属于哪个标签页：它的日志带的标签（TabLog）。正式运行时每个页面都有（ChatTab 建页面时给它的运行时的标签，

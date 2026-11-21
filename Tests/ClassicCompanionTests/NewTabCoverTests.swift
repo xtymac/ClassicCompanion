@@ -12,9 +12,10 @@ import CompanionCore
 /// - 给不显示的 A 开始新标签页的遮挡（beginNewTabCover(for:)）：A 盖着、进入它自己的启动保护、计时开始；窗口一点不变
 ///   （启动画面那层和它的样子、淡出、启动保护、提示、颜色、日志），B 也不变。
 /// - 窗口照显示着的页面的遮挡显示样子：换显示着的页面（display(_:webView:)）时启动画面 ↔ 新标签页的遮挡跟着换；淡出那层是结束的那种。
-/// - 显示着的页面盖着新标签页的遮挡时，规则和日志和启动画面一行不差（每种结束方式各走两遍逐步比）。
+/// - 显示着的页面盖着新标签页的遮挡时，规则和日志和启动画面一行不差（每种结束方式各走两遍逐步比），只是结束的那一行
+///   带它的标签（11-21）。新标签页的遮挡另外在页面开始显示时就撤：这里的页面不报颜色，那条在 NewTabEarlyRevealTests 里测。
 /// - 不显示的页面的遮挡结束时写一行带它的标签的日志（原因和耗时，没有地址），窗口和 B 不变；没有标签的页面不写。
-///   到时限还没提交时继续盖着、不写日志。显示着的页面的日志不变。
+///   到时限还没提交时继续盖着、不写日志。显示着的页面的其余日志不变。
 /// - 还盖着的页面被显示时沿用它自己的计时（不重新开始）。
 /// - 关闭的页面不开始遮挡。
 /// - “启动画面还在”（ChatTabs.isLaunchScreenUp）：只看启动时的那种遮挡还盖着，新标签页的遮挡不算。
@@ -260,7 +261,7 @@ final class NewTabCoverTests: XCTestCase {
     #if DEBUG
     /// 换显示着的页面（display(_:webView:)，投上它的遮挡）：B 盖着启动画面、A 盖着新标签页的遮挡。
     /// 换到 A → 新标签页的样子；换回 B → 启动画面；B 结束后换到 A → 新标签页的样子，A 自己结束 → 撤掉、淡出新标签页的样子；
-    /// 换到没有遮挡的页面 → 不盖。日志只有两行显示着时结束的（和以前一样，不带标签）。
+    /// 换到没有遮挡的页面 → 不盖。日志只有两行显示着时结束的：启动画面那行不带标签（和以前一样），新标签页的遮挡那行带 A 的标签（11-21）。
     func testTheWindowFollowsTheDisplayedPagesCoverKind() {
         make()
         controller.beginLaunchScreen()
@@ -284,7 +285,7 @@ final class NewTabCoverTests: XCTestCase {
         controller.display(c, webView: makeWeb())
         XCTAssertNil(controller.shownCoverKind, "没有遮挡的页面：不盖")
         XCTAssertEqual(lines().filter { $0.hasPrefix("[launch]") },
-                       ["[launch] 启动画面结束：网页已加载（…ms）", "[launch] 启动画面结束：加载失败（…ms）"])
+                       ["[launch] 启动画面结束：网页已加载（…ms）", "[launch] 启动画面结束：加载失败（…ms） 【标签2】"])
     }
     #endif
 
@@ -356,13 +357,19 @@ final class NewTabCoverTests: XCTestCase {
     }
 
     /// 每种结束方式（加载完成、加载失败、到时限时已提交、到时限后提交兜底、上限）各走两遍：显示着的页面盖着启动画面、
-    /// 盖着新标签页的遮挡。每一步窗口一样、日志一行不差（显示着的页面的日志就是原来那几行），只有样子不同。
+    /// 盖着新标签页的遮挡。每一步窗口一样、日志一行不差（显示着的页面的日志就是原来那几行），只有样子不同；
+    /// 只有新标签页的遮挡结束的那一行末尾多 B 的标签（11-21：那一行要写是哪个标签页），启动画面的行照旧不带。
+    /// （新标签页的遮挡另外在页面开始显示时就撤，这里的页面不报颜色，走不到那条；见 NewTabEarlyRevealTests。）
     func testADisplayedNewTabCoverFollowsTheLaunchScreensRulesLineForLine() async throws {
         for way in Way.allCases {
             let launch = try await displayedTimeline(way, .launch)
+            XCTAssertFalse(lines().contains { $0.contains("【标签") }, "\(way.rawValue)：启动画面的行不带标签")
             let newTab = try await displayedTimeline(way, .newTab)
-            XCTAssertEqual(newTab, launch, way.rawValue)
-            XCTAssertFalse(lines().contains { $0.contains("【标签") }, "\(way.rawValue)：显示着的页面的行不带标签")
+            XCTAssertEqual(newTab.map { $0.replacingOccurrences(of: " 【标签1】", with: "") }, launch, way.rawValue)
+            let tagged = lines().filter { $0.contains("【标签") }
+            XCTAssertEqual(tagged.count, 1, "\(way.rawValue)：只有结束的那一行带标签")
+            XCTAssertTrue(tagged.allSatisfy { $0.hasPrefix("[launch] 启动画面结束：") && $0.hasSuffix("（…ms） 【标签1】") },
+                          "\(way.rawValue)：\(tagged)")
         }
     }
 
@@ -452,7 +459,7 @@ final class NewTabCoverTests: XCTestCase {
 
     #if DEBUG
     /// A 不显示时开始（时限 0.05、上限 0.6），到时限还没提交、在等；0.25 秒后换上 A（投它的遮挡）：窗口盖着、新标签页的样子。
-    /// 之后照 A 自己开始时排下的上限结束（不从显示那一刻重新算）：写显示着时的那一行（不带标签），耗时从 A 开始时算；
+    /// 之后照 A 自己开始时排下的上限结束（不从显示那一刻重新算）：写显示着时的那一行（带 A 的标签，11-21），耗时从 A 开始时算；
     /// A 不显示时到的时限不补写；淡出新标签页的样子。
     func testAPageStillCoveredWhenDisplayedKeepsItsOwnClock() async throws {
         make()
@@ -470,7 +477,7 @@ final class NewTabCoverTests: XCTestCase {
         try await waitUntil { !controller.isShowingLaunchScreen }
         XCTAssertFalse(a.isCovered)
         XCTAssertEqual(controller.launchFadeView?.rootView.kind, .newTab)
-        XCTAssertEqual(lines(), logged + ["[launch] 启动画面结束：超过上限（…ms）"], "显示着的页面的那一行，不带标签")
+        XCTAssertEqual(lines(), logged + ["[launch] 启动画面结束：超过上限（…ms） 【标签2】"], "显示着的页面的那一行，带标签")
         let ms = try milliseconds("启动画面结束：超过上限")
         XCTAssertGreaterThanOrEqual(ms, 590, "从 A 开始遮挡时算")
         XCTAssertLessThanOrEqual(ms, Int(Date().timeIntervalSince(started) * 1000))
