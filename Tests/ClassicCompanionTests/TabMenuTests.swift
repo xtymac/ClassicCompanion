@@ -29,40 +29,74 @@ final class TabMenuTests: XCTestCase {
 
     private struct Built {
         let menus: TabMenus
+        /// 整个主菜单。
+        let main: NSMenu
         let file: NSMenu
         let window: NSMenu
         let toolbar: ToolbarState
         let items: TabMenus.Items
     }
 
-    /// 主菜单（language）和接上它的 TabMenus，像 AppDelegate 那样接：标签页的个数变了就 refresh。
-    private func build(_ rig: TabCloseRig, language: AppLanguage = .simplifiedChinese) throws -> Built {
+    /// 主菜单（language、切换键 modeKey）和接上它的 TabMenus，像 AppDelegate 那样接：用户的键里有切换键，
+    /// 标签页的个数变了就 refresh。
+    private func build(_ rig: TabCloseRig, language: AppLanguage = .simplifiedChinese,
+                       modeKey: HotKeyCombo = .modeStandard) throws -> Built {
         let toolbar = ToolbarState()
         let menus = TabMenus(tabs: rig.tabs, chatWindow: rig.controller.window, diagnostics: rig.diagnostics, toolbar: toolbar)
         menus.keyWindow = { [weak self] in self?.key }
         menus.isAppModal = { [weak self] in self?.modal ?? false }
         menus.currentEventIsRepeat = { [weak self] in self?.repeating ?? false }
+        menus.userHotKeys = { [modeKey] }
         rig.tabs.onTabsChanged = { [weak menus] in menus?.refresh() }
-        let main = AppDelegate.makeMainMenu(modeKey: .modeStandard, language: language)
+        let main = AppDelegate.makeMainMenu(modeKey: modeKey, language: language)
         menus.attach(main.tabItems)
         let file = try XCTUnwrap(main.menu.item(at: 1)?.submenu)
         let window = try XCTUnwrap(main.menu.item(at: 4)?.submenu)
         XCTAssertTrue(window === main.windowMenu)
-        return Built(menus: menus, file: file, window: window, toolbar: toolbar, items: main.tabItems)
+        return Built(menus: menus, main: main.menu, file: file, window: window, toolbar: toolbar, items: main.tabItems)
     }
 
-    /// “标题 快捷键”，快捷键按菜单的写法（⌃⌥⇧⌘ 加键，Tab 写成 Tab）。
-    private func describe(_ item: NSMenuItem) -> String {
-        if item.isSeparatorItem { return "—" }
-        guard !item.keyEquivalent.isEmpty else { return item.title }
-        let mask = item.keyEquivalentModifierMask
+    /// 这一项的快捷键按菜单的写法（⌃⌥⇧⌘ 加键，Tab 写成 Tab），没有是 nil。字符是大写字母时算上 ⇧（AppKit 这样认：
+    /// “重做”的字符是大写 Z，就是 ⇧⌘Z）。
+    private func keys(_ item: NSMenuItem) -> String? {
+        let key = item.keyEquivalent
+        guard !key.isEmpty else { return nil }
+        var mask = item.keyEquivalentModifierMask
+        if key != key.lowercased() { mask.insert(.shift) }
         var keys = ""
         if mask.contains(.control) { keys += "⌃" }
         if mask.contains(.option) { keys += "⌥" }
         if mask.contains(.shift) { keys += "⇧" }
         if mask.contains(.command) { keys += "⌘" }
-        keys += item.keyEquivalent == "\t" ? "Tab" : item.keyEquivalent.uppercased()
-        return "\(item.title) \(keys)"
+        if mask.contains(.function) { keys += "fn" }
+        return keys + (key == "\t" ? "Tab" : key.uppercased())
+    }
+
+    /// “标题 快捷键”。
+    private func describe(_ item: NSMenuItem) -> String {
+        if item.isSeparatorItem { return "—" }
+        return keys(item).map { "\(item.title) \($0)" } ?? item.title
+    }
+
+    /// 菜单里（连子菜单、连藏着的项）每个快捷键在哪几项上。
+    private func holders(_ menu: NSMenu) -> [String: [NSMenuItem]] {
+        var result: [String: [NSMenuItem]] = [:]
+        func walk(_ menu: NSMenu) {
+            for item in menu.items {
+                if let keys = keys(item) { result[keys, default: []].append(item) }
+                item.submenu.map(walk)
+            }
+        }
+        walk(menu)
+        return result
+    }
+
+    /// 没有两项拿着同一个快捷键（连子菜单、连藏着的项）。
+    private func assertNoSharedKeys(_ menu: NSMenu, _ what: String, file: StaticString = #filePath, line: UInt = #line) {
+        for (keys, items) in holders(menu) where items.count > 1 {
+            XCTFail("\(what)：\(keys) 在 \(items.count) 项上：\(items.map { "\($0.title)\($0.isHidden ? "（藏着）" : "")" })",
+                    file: file, line: line)
+        }
     }
 
     private func visible(_ menu: NSMenu) -> [String] {
@@ -132,6 +166,118 @@ final class TabMenuTests: XCTestCase {
         XCTAssertTrue(item.target === built.menus)
         XCTAssertEqual(item.keyEquivalent, "")
         XCTAssertTrue(built.menus.validateMenuItem(item))
+    }
+
+    // MARK: - 快捷键不重复
+
+    /// 看着的菜单（文件菜单）：每次它的项变了（NSMenu 的通知，改快捷键时就发）都看一遍没有两项拿着同一个快捷键。
+    private var watched: NSMenu?
+    private var watchedChanges = 0
+    private var midwayShared: [String] = []
+
+    @objc private func watchedMenuChanged(_ notification: Notification) {
+        guard let watched else { return }
+        watchedChanges += 1
+        for (keys, items) in holders(watched) where items.count > 1 {
+            midwayShared.append("\(keys)：\(items.map(\.title))")
+        }
+    }
+
+    /// AppKit 的主菜单里几项的快捷键相同、动作不同时，只有先登记的那一项拿着它，后来的那一项既不显示、也不接这个键，藏着的项也算
+    /// （11-21 用户看到多个标签页时“关闭标签页”没有 ⌘W：藏着的原来那一项还拿着它）。这里看不到 AppKit 画出来的样子，看的是
+    /// 规则本身：每种情形下整个主菜单（连子菜单、连藏着的项）没有两项拿着同一个快捷键；⌘W 在显示着的那一项上——多个标签页、
+    /// 聊天窗口在前面时是关闭标签页（藏着的原来那一项不带 ⌘W，按不到 performClose），别的时候是原来的关闭窗口（D11：设置等窗口里
+    /// ⌘W 关那个窗口）。改到一半时也没有。菜单栏图标的菜单没有快捷键。
+    func testNoTwoMenuItemsShareAKeyEquivalent() throws {
+        // 刚建好、还没接上 TabMenus：就是一个标签页时的样子。
+        let raw = AppDelegate.makeMainMenu(modeKey: .modeStandard, language: .simplifiedChinese)
+        assertNoSharedKeys(raw.menu, "刚建好")
+        XCTAssertTrue(holders(raw.menu)["⌘W"]?.first === raw.tabItems.closeWindow)
+
+        let rig = make()
+        let built = try build(rig)
+        let i = built.items
+        watched = built.file
+        NotificationCenter.default.addObserver(self, selector: #selector(watchedMenuChanged(_:)), name: NSMenu.didChangeItemNotification,
+                                               object: built.file)
+        addTeardownBlock { @MainActor [weak self] in
+            guard let self else { return }
+            NotificationCenter.default.removeObserver(self, name: NSMenu.didChangeItemNotification, object: nil)
+        }
+        func check(_ main: NSMenu, _ menus: TabMenus, closeKeyOn closer: NSMenuItem, _ what: String,
+                   file: StaticString = #filePath, line: UInt = #line) {
+            assertNoSharedKeys(main, what, file: file, line: line)
+            let w = holders(main)["⌘W"] ?? []
+            XCTAssertTrue(w.count == 1 && w[0] === closer && !closer.isHidden,
+                          "\(what)：⌘W 应该在“\(describe(closer))”上，现在在 \(w.map(describe))", file: file, line: line)
+            let status = NSMenu()
+            AppDelegate.fillStatusMenu(status, language: .simplifiedChinese)
+            menus.attachStatus(status)
+            XCTAssertTrue(holders(status).isEmpty, "\(what)：菜单栏图标的菜单没有快捷键", file: file, line: line)
+        }
+
+        check(built.main, built.menus, closeKeyOn: i.closeWindow, "一个标签页")
+        _ = try XCTUnwrap(rig.tabs.newTab())
+        check(built.main, built.menus, closeKeyOn: i.closeTab, "两个标签页")
+        XCTAssertEqual(i.closeWindow.keyEquivalent, "", "藏着的原来那一项不带 ⌘W")
+        key = other
+        built.menus.refresh()
+        check(built.main, built.menus, closeKeyOn: i.closeWindow, "别的窗口在前面")
+        key = nil
+        built.menus.refresh()
+        check(built.main, built.menus, closeKeyOn: i.closeWindow, "没有 key 窗口")
+        key = rig.controller.window
+        built.menus.refresh()
+        check(built.main, built.menus, closeKeyOn: i.closeTab, "聊天窗口回到前面")
+        modal = true
+        built.menus.refresh()
+        check(built.main, built.menus, closeKeyOn: i.closeWindow, "模态框")
+        modal = false
+        built.menus.refresh()
+        _ = try XCTUnwrap(rig.tabs.newTab())
+        _ = try XCTUnwrap(rig.tabs.newTab())
+        XCTAssertTrue(rig.tabs.list.isFull)
+        check(built.main, built.menus, closeKeyOn: i.closeTab, "到上限")
+
+        // 聊天窗口里按 ⌘W：窗口的按键监视处理、吃掉（到不了菜单），关掉选中的那一个，不隐藏窗口。
+        let window = try XCTUnwrap(rig.controller.window).windowNumber
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                                                   windowNumber: window, context: nil, characters: "w", charactersIgnoringModifiers: "w",
+                                                   isARepeat: false, keyCode: UInt16(kVK_ANSI_W)))
+        let mark = rig.mark()
+        XCTAssertTrue(rig.controller.handleKeyDown(KeyPress(event)), "按键监视吃掉 ⌘W")
+        XCTAssertEqual(rig.tabs.tabs.count, 3)
+        XCTAssertEqual(rig.hidden, [])
+        XCTAssertEqual(menuLines(rig, since: mark), [], "不经菜单")
+        check(built.main, built.menus, closeKeyOn: i.closeTab, "按 ⌘W 关了一个")
+
+        while rig.tabs.tabs.count > 1 { rig.tabs.closeSelectedTab() }
+        check(built.main, built.menus, closeKeyOn: i.closeWindow, "关回一个")
+        XCTAssertGreaterThan(watchedChanges, 0, "改快捷键时文件菜单发了通知")
+        XCTAssertEqual(midwayShared, [], "改到一半时两项拿着同一个快捷键")
+
+        // 用户的切换键就是标签页的某个组合（这些组合加进保留的键以前设的）：切换键那一项拿着它，标签页的那一项不带。
+        // ⌘W 不在这里：录制时一直不让设，也不算用户的键（TabMenuRules）。
+        let taken: [(String, HotKeyCombo)] = [
+            ("⌘T", HotKeyCombo(keyCode: UInt32(kVK_ANSI_T), carbonModifiers: UInt32(cmdKey))),
+            ("⇧⌘T", HotKeyCombo(keyCode: UInt32(kVK_ANSI_T), carbonModifiers: UInt32(cmdKey | shiftKey))),
+            ("⇧⌘W", HotKeyCombo(keyCode: UInt32(kVK_ANSI_W), carbonModifiers: UInt32(cmdKey | shiftKey))),
+            ("⌃Tab", HotKeyCombo(keyCode: UInt32(kVK_Tab), carbonModifiers: UInt32(controlKey))),
+            ("⌃⇧Tab", HotKeyCombo(keyCode: UInt32(kVK_Tab), carbonModifiers: UInt32(controlKey | shiftKey))),
+        ]
+        for (name, combo) in taken {
+            let rig = make()
+            let built = try build(rig, modeKey: combo)
+            let mode = try XCTUnwrap(built.file.item(at: 3))
+            XCTAssertEqual(mode.title, "切换小窗 / 完整窗口")
+            check(built.main, built.menus, closeKeyOn: built.items.closeWindow, "切换键是 \(name)，一个标签页")
+            _ = try XCTUnwrap(rig.tabs.newTab())
+            check(built.main, built.menus, closeKeyOn: built.items.closeTab, "切换键是 \(name)，两个标签页")
+            // 这台机器的键盘布局上 T、W 不在美式键盘的位置时，切换键那一项的字符是别的，就不和标签页的项比。
+            if combo.menuKeyEquivalent.map({ $0.key == "t" || $0.key == "w" || $0.key == "\t" }) == true {
+                XCTAssertTrue(holders(built.main)[name]?.first === mode, "\(name) 在切换键那一项上")
+            }
+        }
     }
 
     // MARK: - 能不能点

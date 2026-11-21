@@ -410,7 +410,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     /// 主菜单。切换语言时整份重建；动作和快捷键不随语言变（LocalizationTests 核对各语言一致）。
-    /// 标签页的项（3.11）建成单个标签页时的样子（关闭标签页、关闭窗口 ⇧⌘W 藏着），目标、显示与否、快捷键之后由 TabMenus 改。
+    /// 标签页的项（3.11）建成单个标签页时的样子（关闭标签页、关闭窗口 ⇧⌘W 藏着，不带快捷键：⌘W 只在原来那一项上），
+    /// 目标、显示与否、快捷键之后由 TabMenus 改。
     static func makeMainMenu(modeKey: HotKeyCombo, language: AppLanguage = L10n.language)
         -> (menu: NSMenu, modeItem: NSMenuItem, windowMenu: NSMenu, updatesItem: NSMenuItem, tabItems: TabMenus.Items) {
         let t = { (key: String) in L10n.string(key, in: language) }
@@ -451,12 +452,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         fileMenu.addItem(withTitle: t("menu.restartAudio"), action: #selector(AppDelegate.restartAudio), keyEquivalent: "")
         let closeWindow = fileMenu.addItem(withTitle: t("menu.closeWindow"), action: #selector(NSWindow.performClose(_:)),
                                            keyEquivalent: "w")
-        // 多个标签页、聊天窗口在前面时代替上一项（TabMenuRules）。
-        let closeTab = fileMenu.addItem(withTitle: t("menu.closeTab"), action: #selector(TabMenus.closeTab(_:)), keyEquivalent: "w")
+        // 多个标签页、聊天窗口在前面时代替上一项（TabMenuRules）。快捷键（⌘W、⇧⌘W）那时由 TabMenus 加上：同一个快捷键
+        // 只能在一项上，主菜单里几项相同时 AppKit 只让先登记的那一项显示、接这个键。
+        let closeTab = fileMenu.addItem(withTitle: t("menu.closeTab"), action: #selector(TabMenus.closeTab(_:)), keyEquivalent: "")
         closeTab.isHidden = true
         let hideKeepingTabs = fileMenu.addItem(withTitle: t("menu.closeWindow"), action: #selector(TabMenus.hideWindowKeepingTabs(_:)),
-                                               keyEquivalent: "w")
-        hideKeepingTabs.keyEquivalentModifierMask = [.command, .shift]
+                                               keyEquivalent: "")
         hideKeepingTabs.isHidden = true
         fileItem.submenu = fileMenu
         main.addItem(fileItem)
