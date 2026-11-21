@@ -10,6 +10,7 @@ import Sparkle
 /// 所以用户必须在下载之前明确授权：
 /// 1. 发现新版本（showUpdateFound）时显示“下载并安装”确认（authorize），里面有版本号、当前语言的更新内容和提醒。
 ///    手动检查：确认窗口直接出现。定时检查：不弹窗，只在菜单、菜单栏菜单和设置里提示，用户点了才显示。
+///    例外：用户刚在“是否自动检查更新”的询问里选了自动检查，紧接着的那一次检查发现新版本时，确认窗口直接出现（不抢焦点）。
 ///    “稍后”或关闭窗口回复 Dismiss：不下载、不启动安装器，什么都不装。
 /// 2. 授权后才回复 Install：Sparkle 下载、验证、解压。准备好（showReady）时按授权直接回复 Install，安装并重新启动，不再询问。
 ///    没有授权就到了这一步（不应发生）回复 Skip：按 SPUUserDriver.h，这一步的 Skip 只取消正在进行的安装，不会跳过这个版本。
@@ -32,6 +33,13 @@ final class ConfirmingUserDriver: NSObject, SPUUserDriver {
     private var preparingInstall = false
     /// 准备期间用户退出应用：准备好后不安装，直接取消。
     private var cancelWhenReady = false
+    /// 用户在“是否自动检查更新”的询问里选了自动检查的时刻。Sparkle 回答之后马上检查一次，并把它算成定时检查；
+    /// 这一次发现新版本时确认窗口直接出现（用掉后清空）。
+    private var permissionGrantedAt: Date?
+    /// 回答之后多久以内发现的新版本算“紧接着”。检查通常不到 1 秒；网络慢到超过这个时间时用户多半已经回去聊天，照旧不弹窗。
+    static let permissionAnswerWindow: TimeInterval = 30
+    /// 测试里换掉。
+    var now: () -> Date = { Date() }
 
     init(standard: SPUStandardUserDriver) {
         self.standard = standard
@@ -84,6 +92,11 @@ final class ConfirmingUserDriver: NSObject, SPUUserDriver {
         // （Sparkle 2.10.1 SPUStandardUserDriver.m：清掉的是检查的取消回调、安装回调、重试回调和各个窗口，这时都已经用不上）；
         // 之后的下载进度窗口由 showDownloadInitiated 重新建。标准界面不设委托，所以这里不会触发任何会话结束的回调。
         if userInitiated { standard.dismissUpdateInstallation() }
+        // 不管是哪种检查，回答之后的第一次发现就把这个标记用掉。
+        let followsPermissionAnswer = permissionGrantedAt.map {
+            (0...Self.permissionAnswerWindow).contains(now().timeIntervalSince($0))
+        } ?? false
+        permissionGrantedAt = nil
         if installing {
             // 安装器已经在等。标准提醒在这一步会给“退出时安装”，所以用确认窗口：确认才安装，“稍后”取消安装。
             // 按 SPUUserDriver.h，这里的 Skip 也会跳过这个版本的定时提醒，手动“检查更新…”仍能找到它。
@@ -93,7 +106,9 @@ final class ConfirmingUserDriver: NSObject, SPUUserDriver {
         // 手动检查：用户刚选了“检查更新…”，确认窗口直接出现并取得焦点——检查期间用户切到了别的应用也一样，
         // 和 Sparkle 标准界面对手动检查的做法相同（激活应用）。主按钮先停 1 秒（UpdatePromptGate），刚切回来时多按的回车不会确认。
         // 定时检查：不弹窗、不抢焦点（用户可能正在聊天窗口里打字），只在菜单、菜单栏菜单和设置里提示，点了才显示。
-        presentPrompt(.authorize, takeFocus: userInitiated, show: userInitiated, reply: reply)
+        // 例外是用户刚回答完“是否自动检查更新”的那一次：询问窗口刚关，什么都不显示会像是更新没成功。
+        // 这时确认窗口出现在前面，但不成为键盘焦点，用户已经开始打字的话回车不会按到主按钮。
+        presentPrompt(.authorize, takeFocus: userInitiated, show: userInitiated || followsPermissionAnswer, reply: reply)
     }
 
     func showReady(toInstallAndRelaunch reply: @escaping (SPUUserUpdateChoice) -> Void) {
@@ -196,9 +211,15 @@ final class ConfirmingUserDriver: NSObject, SPUUserDriver {
     func show(_ request: SPUUpdatePermissionRequest, reply: @escaping (SUUpdatePermissionResponse) -> Void) {
         log("询问是否自动检查更新（Sparkle 标准提示）")
         standard.show(request) { [weak self] response in
-            self?.log("自动检查更新：\(response.automaticUpdateChecks ? "开" : "关")")
+            self?.permissionAnswered(automaticChecks: response.automaticUpdateChecks)
             reply(response)
         }
+    }
+
+    /// 询问的回答（测试直接调用）。选了自动检查时记下时刻：紧接着的检查发现新版本要直接显示确认窗口。
+    func permissionAnswered(automaticChecks: Bool) {
+        log("自动检查更新：\(automaticChecks ? "开" : "关")")
+        permissionGrantedAt = automaticChecks ? now() : nil
     }
 
     func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) {
