@@ -75,7 +75,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private var fullTopLeftWhenPlaced: NSPoint?
     /// 窗口里当前显示的网页视图。只经 display(_:webView:)（切换标签页）和 replaceWebView 换。
     private(set) var webView: WKWebView
-    /// 网页在窗口里占的位置（顶部一条下面的整块区域）。显示着的网页视图放在里面铺满；
+    /// 网页在窗口里占的位置（顶部一条下面的整块区域；标签栏显示着时在标签栏下面）。显示着的网页视图放在里面铺满；
     /// 窗口里的约束、启动画面、提示、旧画面和切换时的固定大小都对着它，不直接对着网页视图。
     /// 切换标签页时换下去的网页视图也留在里面，藏着、固定在离开时的大小（见 display(_:webView:)）。
     private let webContainer: NSView
@@ -173,6 +173,14 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 页面底色，顶部一条和启动画面跟着它变浅或变深。
     let appearance: PageAppearance
     private let bar: NSView
+    /// 标签栏（阶段 4）：夹在顶部一条和网页区域之间，多于一个标签页时显示（setTabBarVisible(_:)）。
+    /// 藏着时高度是 0，网页区域和没有标签栏时完全一样。nil：没有标签栏（只建窗口的测试），排法和原来一样。
+    private let tabBar: TabBarHost?
+    private var tabBarHeight: NSLayoutConstraint?
+    /// 标签栏显示着（测试和诊断用）。
+    var isTabBarVisible: Bool { tabBar.map { !$0.isHidden } ?? false }
+    /// 网页区域在窗口内容里的位置（测试用）。
+    var webAreaFrame: NSRect { webContainer.frame }
     private var backgroundObservation: NSKeyValueObservation?
     private var pendingBackground: DispatchWorkItem?
     /// 进入和解除启动保护、换网页视图、换显示的页面时加一。排着队的颜色更新只在代号没变时生效，旧回调不会把临时颜色采用或保存。
@@ -198,8 +206,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 有没有应用级的模态框（提示框等 runModal）。就是 NSApp.modalWindow；只有测试换它。
     var isAppModal: @MainActor () -> Bool = { NSApplication.shared.modalWindow != nil }
 
+    /// tabBar：标签栏（AppDelegate 交；只建窗口的测试不交，没有标签栏）。开始时藏着，高度 0。
     init(webView: WKWebView, toolbar: some View, diagnostics: Diagnostics, appearance: PageAppearance = PageAppearance(),
-         page: PageLoadState = PageLoadState()) {
+         page: PageLoadState = PageLoadState(), tabBar tabBarView: TabBarView? = nil) {
         self.webView = webView
         self.diagnostics = diagnostics
         self.appearance = appearance
@@ -244,6 +253,23 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         webContainer.addSubview(webView)
         let container = NSView()
         container.addSubview(bar)
+        // 标签栏在顶部一条和网页区域之间：网页区域的上沿就是它的下沿。开始时藏着、高度 0（只有一个标签页）。
+        // 不让 SwiftUI 的尺寸变成约束（高度只照 tabBarHeight），不让出标题栏的高度（它不在标题栏里）。
+        let tabBarHost = tabBarView.map { TabBarHost(rootView: $0) }
+        self.tabBar = tabBarHost
+        var tabBarConstraints: [NSLayoutConstraint] = []
+        if let tabBarHost {
+            tabBarHost.safeAreaRegions = []
+            tabBarHost.sizingOptions = []
+            tabBarHost.translatesAutoresizingMaskIntoConstraints = false
+            tabBarHost.isHidden = true
+            container.addSubview(tabBarHost)
+            let height = tabBarHost.heightAnchor.constraint(equalToConstant: 0)
+            tabBarHeight = height
+            tabBarConstraints = [tabBarHost.topAnchor.constraint(equalTo: bar.bottomAnchor),
+                                 tabBarHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                                 tabBarHost.trailingAnchor.constraint(equalTo: container.trailingAnchor), height]
+        }
         container.addSubview(webContainer)
         // 提示在网页之上、启动画面之下：启动画面结束后才露出来。
         loadProblemCover.translatesAutoresizingMaskIntoConstraints = false
@@ -261,12 +287,12 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         webEdges = edges
         let fill = Self.fill(webView, in: webContainer)
         webFill = fill
-        NSLayoutConstraint.activate(edges + [
+        NSLayoutConstraint.activate(edges + tabBarConstraints + [
             // 顶部一条占住原来的标题栏位置，按钮在里面。
             bar.topAnchor.constraint(equalTo: container.topAnchor),
             bar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            webContainer.topAnchor.constraint(equalTo: bar.bottomAnchor),
+            webContainer.topAnchor.constraint(equalTo: tabBarHost?.bottomAnchor ?? bar.bottomAnchor),
             webContainer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
         ] + fill + [
             launchCover.topAnchor.constraint(equalTo: webContainer.topAnchor),
@@ -1055,6 +1081,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 只改原生控件；网页和窗口本身不设外观，ChatGPT 选“系统”时网页仍跟随 macOS。
     private func applyAppearance() {
         bar.appearance = appearance.nsAppearance
+        tabBar?.appearance = appearance.nsAppearance
         launchCover.appearance = appearance.nsAppearance
         loadProblemCover.appearance = appearance.nsAppearance
         hints.host.appearance = appearance.nsAppearance
@@ -1084,6 +1111,25 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 所以关闭时 p 已经不显示；它的网页视图藏在容器里，由 removeHiddenWebView(_:) 拿出来。
     func pageClosed(_ p: PageLoadState) {
         p.isClosed = true
+    }
+
+    // MARK: - 标签栏
+
+    /// 显示或藏起标签栏（AppDelegate 在 ChatTabs.onTabsChanged 里按 tabBar.isShown 调用：多于一个标签页时显示）。
+    /// 窗口大小不变：显示时网页区域上沿往下 32 点（变矮 32 点），藏起时回到顶部一条下面。和现在一样、没有标签栏：什么都不做。
+    /// 顺序：进行中的切模式、补排版先结束（和拖边一样：它们按的是变之前的大小）→ 排版变化前（onWillChangeLayout，
+    /// 记下这一刻选中的标签页的阅读位置）→ 改高度、当场排版 → 排版变化后（onDidChangeLayout，放回）：记下、放回各一次。
+    /// 当场排版：之后藏进容器的网页视图（切换、⌘ 点击链接在后台打开）固定的是新的大小。写一行（没有标题）。
+    func setTabBarVisible(_ visible: Bool) {
+        guard let tabBar, let tabBarHeight, tabBar.isHidden == visible else { return }
+        finishLayoutChange(animated: false)
+        finishCatchUp("标签栏显示或藏起")
+        onWillChangeLayout?()
+        tabBar.isHidden = !visible
+        tabBarHeight.constant = visible ? TabBarView.height : 0
+        window?.contentView?.layoutSubtreeIfNeeded()
+        diagnostics.log("window", visible ? "标签栏：显示" : "标签栏：藏起")
+        onDidChangeLayout?()
     }
 
     /// 快照还没拍好、窗口还没动时再按不算数。窗口已经到位、网页还在排版时可以切回去：用户看到的已经是切换好的窗口。

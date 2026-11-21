@@ -9,7 +9,7 @@ import CompanionCore
 final class TabBarModel: ObservableObject {
     struct Item: Identifiable, Equatable, CustomStringConvertible {
         let id: TabID
-        /// 标签上显示的标题（TabBarRules.displayTitle 的结果）。nil：显示本地化的“新聊天”（文字还没有，4.7 加）。
+        /// 标签上显示的标题（TabBarRules.displayTitle 的结果）。nil：显示本地化的“新聊天”（tabs.untitled）。
         let title: String?
         let isSelected: Bool
 
@@ -22,6 +22,12 @@ final class TabBarModel: ObservableObject {
     @Published private(set) var isShown = false
     /// 末尾 ＋ 的样子（TabBarRules.newTabButton(in:)）。
     @Published private(set) var newTabButton = TabBarRules.NewTabButton(dimmed: false, clickable: true, explainsLimit: false)
+
+    /// 标签栏上的点按交给谁（4.5）：点标签、点标签上的 ×、点 ＋。ChatTabs 建好时接上（ChatTabs.init：select(id:)、
+    /// closeTab(id:)、newTabFromBar()）；没接上时点了什么都不做。视图（TabBarView）只调用它们，不自己做决定。
+    var onSelect: (@MainActor (TabID) -> Void)?
+    var onClose: (@MainActor (TabID) -> Void)?
+    var onNewTab: (@MainActor () -> Void)?
 
     /// 换成新的一份。和现在一样的不改（不发变化）。
     func update(items: [Item], newTabButton: TabBarRules.NewTabButton) {

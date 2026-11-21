@@ -223,4 +223,5 @@
 "menu.showPreviousTab" = "Show Previous Tab";
 "tabs.tip.severalTabs" = "⌘W closes the current tab; unsent drafts may be lost. ⇧⌘T only reopens saved chats. The × at the top left hides the whole window and keeps your tabs.";
 "tabs.hint.close" = "Close Tip";
+"tabs.untitled" = "New chat";
 "purpose.closeTabOrHideWindow" = "close the tab or hide the window";

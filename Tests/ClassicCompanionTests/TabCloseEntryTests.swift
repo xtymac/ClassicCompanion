@@ -481,15 +481,19 @@ final class TabCloseRig {
     var prepares: [() -> Void] = []
     private var watch: AnyCancellable?
 
-    init(defaults: UserDefaults) {
+    /// tabBar：像 AppDelegate 那样给窗口一个标签栏（和 ChatTabs 用同一个模型），个数变了时按模型显示或藏起它（TabBarTests）。
+    /// 不给（默认）：窗口没有标签栏，和阶段 4 以前一样。
+    init(defaults: UserDefaults, tabBar withTabBar: Bool = false) {
         settings = AppSettings(defaults: defaults)
         appearance = PageAppearance(defaults: defaults)
         let list = TabList()
         first = ChatTab.make(id: list.selected, diagnostics: diagnostics, settings: settings)
         Self.fixColour(first)
+        let tabBarModel = TabBarModel()
         controller = ChatWindowController(webView: first.runtime.webView,
                                           toolbar: Color.clear.frame(height: WebBar.height).frame(maxWidth: .infinity),
-                                          diagnostics: diagnostics, appearance: appearance, page: first.page)
+                                          diagnostics: diagnostics, appearance: appearance, page: first.page,
+                                          tabBar: withTabBar ? TabBarView(model: tabBarModel, appearance: appearance) : nil)
         controller.pageColorSettleLimit = 60
         controller.layoutWaitLimit = 60
         tabs = ChatTabs(list: list, tab: first, windowController: controller, diagnostics: diagnostics, network: network,
@@ -536,9 +540,16 @@ final class TabCloseRig {
                             return inPage
                         },
                         makeTab: { [weak self] id in self!.build(id) },
-                        revealWindow: { [weak self] in self?.timeline.append("找回窗口") })
+                        revealWindow: { [weak self] in self?.timeline.append("找回窗口") },
+                        tabBar: tabBarModel)
         tabs.wire(first)
         register(first)
+        if withTabBar {
+            tabs.onTabsChanged = { [weak self] in
+                guard let self else { return }
+                self.controller.setTabBarVisible(self.tabs.tabBar.isShown)
+            }
+        }
         tabs.windowIsVisible = { true }
         // 提示（3.11）照正式的交给窗口的提示（从不显示的窗口里，写“[hint] …”），也记下来；它的计时不自己走（hintTimers）。
         // 第一次有多个标签页的提示当作已经显示过：这里的测试不看它（见 TabHintTests）。
