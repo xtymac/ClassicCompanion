@@ -9,9 +9,12 @@ import Foundation
 ///   （不显示快捷键，菜单就不会在别的窗口里抢这些键：那里的 ⌃Tab 等照原来交给那个窗口）。
 /// - 新建标签页、重新打开：另外要启动画面不在、没到上限（重新打开还要有记录）。只因为到了上限而置灰时，下面写上
 ///   “最多打开 N 个标签页”（explainsLimit）。
-/// - 关闭：多个标签页并且对聊天窗口起作用时，原来的“关闭窗口 ⌘W”藏起来，换成“关闭标签页 ⌘W”和“关闭窗口 ⇧⌘W”
+/// - 关闭：多个标签页并且对聊天窗口起作用时，原来的“关闭窗口 ⌘W”藏起来、也不带 ⌘W，换成“关闭标签页 ⌘W”和“关闭窗口 ⇧⌘W”
 ///   （隐藏窗口、标签页都留着，和左上角的 × 一样）。别的时候只有原来那一项，和原来一样（D11：设置等窗口里 ⌘W 关那个窗口）；
 ///   它能不能点照原来交给 AppKit（这里的 enabled 是 true，意思是这里不拦）。
+/// - 同一个快捷键任何时候只在一项上，藏着的项也算：AppKit 的主菜单里几项的快捷键相同、动作不同时，只有先登记的那一项拿着它，
+///   后来的那一项既不显示快捷键、也不接这个键（11-21 用户看到多个标签页时“关闭标签页”没有 ⌘W：藏着的原来那一项还拿着它）。
+///   所以藏起来的原来那一项不带 ⌘W；不显示快捷键的项（用户的键、别的窗口在前面）也都不带。
 /// - 显示下一个、上一个标签页：多于一个标签页才能点。
 /// - 用户自己的唤醒键或切换键就是这一项的组合（takenByUserHotKey）：这一项不显示快捷键（按键照原来给用户的键）；
 ///   ⌘W 不会是用户的键（录制时不让设），照常显示。
@@ -24,7 +27,7 @@ public enum TabMenuRules {
         case newTab
         /// 文件 → 重新打开最近关闭的标签页 ⇧⌘T。
         case reopenClosedTab
-        /// 文件 → 关闭窗口 ⌘W：原来那一项（performClose，交给 key 窗口）。
+        /// 文件 → 关闭窗口 ⌘W：原来那一项（performClose，交给 key 窗口）。藏起来时不带 ⌘W。
         case closeWindow
         /// 文件 → 关闭标签页 ⌘W：多个标签页时代替上一项。
         case closeTab
@@ -107,7 +110,7 @@ public enum TabMenuRules {
             return Look(visible: true, enabled: inChat && canOpen && state.canReopen, showsKeyEquivalent: showsKey,
                         explainsLimit: inChat && limitIsTheReason && state.canReopen)
         case .closeWindow:
-            return Look(visible: !several, enabled: true, showsKeyEquivalent: true)
+            return Look(visible: !several, enabled: true, showsKeyEquivalent: !several)
         case .closeTab:
             return Look(visible: several, enabled: several, showsKeyEquivalent: several)
         case .hideWindowKeepingTabs:

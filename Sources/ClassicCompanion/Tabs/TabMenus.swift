@@ -14,6 +14,9 @@ import CompanionCore
 /// 按键在聊天窗口里先由窗口的按键监视处理（TabKeys），到不了菜单；菜单的快捷键只是写在菜单上给人看。别的窗口在前面时
 /// 标签页的项不显示快捷键（TabMenuRules），所以菜单也不会在那里接这些键：那里的 ⌘W 照原来关那个窗口（D11），⌃Tab 等照原来。
 ///
+/// 同一个快捷键任何时候只在一项上，藏着的项也算（TabMenuRules）：AppKit 的主菜单里几项的快捷键相同、动作不同时，只有先登记的
+/// 那一项拿着它，后来的那一项既不显示、也不接这个键。不显示快捷键的项把快捷键拿掉（不是只藏起来）；改的时候先拿掉、再加上（refresh()）。
+///
 /// 什么时候改菜单项：建主菜单（attach(_:)，切换语言时重建也是）、打开菜单栏图标的菜单（attachStatus(_:)）、标签页的个数变了
 /// （ChatTabs.onTabsChanged）、key 窗口变了（通知）、文件菜单和窗口菜单要显示或查快捷键之前（menuNeedsUpdate）、
 /// 唤醒键和切换键改了（AppDelegate）、点了以后。
@@ -23,7 +26,7 @@ final class TabMenus: NSObject, NSMenuItemValidation, NSMenuDelegate {
     struct Items {
         let newTab: NSMenuItem
         let reopenClosedTab: NSMenuItem
-        /// 原来那一项“关闭窗口 ⌘W”（performClose，交给 key 窗口）。不由这里点，只改显示不显示。
+        /// 原来那一项“关闭窗口 ⌘W”（performClose，交给 key 窗口）。不由这里点，只改显示不显示、带不带 ⌘W。
         let closeWindow: NSMenuItem
         let closeTab: NSMenuItem
         let hideWindowKeepingTabs: NSMenuItem
@@ -132,10 +135,14 @@ final class TabMenus: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
 
     /// 按这一刻的情形改每一项和左上角 × 的提示。
+    /// 先改这次不带快捷键的项、再改带快捷键的项：快捷键先从一项上拿掉，才加到另一项上（关闭标签页和原来的关闭窗口轮换 ⌘W 时），
+    /// 改到一半时也不会两项都拿着它。
     func refresh() {
         let state = state()
         if let items {
-            for (item, menuItem) in items.all { apply(item, to: menuItem, in: state) }
+            let keyed = items.all.filter { TabMenuRules.look($0.0, in: state).showsKeyEquivalent }
+            let unkeyed = items.all.filter { !TabMenuRules.look($0.0, in: state).showsKeyEquivalent }
+            for (item, menuItem) in unkeyed + keyed { apply(item, to: menuItem, in: state) }
         }
         if let statusNewTab { apply(.statusNewTab, to: statusNewTab, in: state) }
         toolbar?.hideShortcut = TabMenuRules.hideButtonShortcut(

@@ -30,7 +30,9 @@ import Testing
             return Look(visible: true, enabled: enabled, showsKeyEquivalent: key,
                         explainsLimit: front && s.atLimit && !s.launchScreenUp && s.canReopen)
         case .closeWindow:
-            return Look(visible: !(front && s.tabCount > 1), enabled: true, showsKeyEquivalent: true)
+            // 藏起来时也不带 ⌘W：⌘W 这时在关闭标签页上，同一个快捷键只能在一项上。
+            let two = front && s.tabCount > 1
+            return Look(visible: !two, enabled: true, showsKeyEquivalent: !two)
         case .closeTab:
             let two = front && s.tabCount > 1
             return Look(visible: two, enabled: two, showsKeyEquivalent: two)
@@ -80,7 +82,8 @@ import Testing
         let four = TabMenuRules.State(scope: .chatWindow, atLimit: true, canReopen: true, tabCount: 4)
         #expect(TabMenuRules.look(.newTab, in: four) == Look(visible: true, enabled: false, showsKeyEquivalent: true, explainsLimit: true))
         #expect(TabMenuRules.look(.reopenClosedTab, in: four).explainsLimit, "有记录、到上限：写上原因")
-        #expect(!TabMenuRules.look(.closeWindow, in: four).visible, "多个标签页：原来那一项藏起来")
+        #expect(TabMenuRules.look(.closeWindow, in: four) == Look(visible: false, enabled: true, showsKeyEquivalent: false),
+                "多个标签页：原来那一项藏起来，也不带 ⌘W（不然 AppKit 不让关闭标签页显示 ⌘W）")
         #expect(TabMenuRules.look(.closeTab, in: four) == Look(visible: true, enabled: true, showsKeyEquivalent: true))
         #expect(TabMenuRules.look(.hideWindowKeepingTabs, in: four).enabled)
 
