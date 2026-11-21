@@ -312,6 +312,62 @@ final class UpdateTests: XCTestCase {
         XCTAssertEqual(pendingChanges, ["0.1.0-beta.3", nil])
     }
 
+    private func promptIsVisible() -> Bool {
+        NSApp.windows.contains { $0.isVisible && $0.title == L10n.string("update.ready.windowTitle") }
+    }
+
+    /// 用户刚在“是否自动检查更新”的询问里选了自动检查，Sparkle 紧接着检查并发现新版本（Sparkle 把它算成定时检查）：
+    /// 确认窗口直接出现，但不抢键盘焦点。否则询问窗口一关就什么都看不到，像是更新没成功（2026-11-21 M4 Pro 上的情况）。
+    /// 仍然没有回复 Sparkle：不点“下载并安装”就不下载。
+    func testUpdateFoundRightAfterThePermissionAnswerShowsThePrompt() {
+        let driver = ConfirmingUserDriver(standard: SPUStandardUserDriver(hostBundle: .main, delegate: nil))
+        var logs: [String] = []
+        driver.log = { logs.append($0) }
+        var now = Date(timeIntervalSinceReferenceDate: 1000)
+        driver.now = { now }
+        var choices: [SPUUserUpdateChoice] = []
+
+        driver.permissionAnswered(automaticChecks: true)
+        now += 2
+        driver.updateFound(version: "0.1.0-beta.4", build: "20261119.2352", notes: nil,
+                           installing: false, userInitiated: false, reply: { choices.append($0) })
+        XCTAssertTrue(promptIsVisible(), "确认窗口出现")
+        XCTAssertTrue(logs.contains { $0.contains("不抢焦点") }, logs.joined(separator: "\n"))
+        XCTAssertEqual(choices, [], "没有回复：不下载")
+        XCTAssertTrue(driver.hasPendingInstallDecision)
+        driver.dismissUpdateInstallation()
+        XCTAssertFalse(promptIsVisible())
+
+        // 只对回答之后的第一次检查有效：之后的定时检查照旧不弹窗。
+        driver.updateFound(version: "0.1.0-beta.4", build: "20261119.2352", notes: nil,
+                           installing: false, userInitiated: false, reply: { choices.append($0) })
+        XCTAssertFalse(promptIsVisible(), "第二次定时检查不弹窗")
+        XCTAssertEqual(choices, [])
+        driver.dismissUpdateInstallation()
+    }
+
+    /// 回答之后隔了很久才发现新版本（检查很慢、用户早就回去聊天了），或者用户选的是不自动检查：照旧不弹窗。
+    func testPermissionAnswerDoesNotShowThePromptLaterOrWhenDeclined() {
+        let driver = ConfirmingUserDriver(standard: SPUStandardUserDriver(hostBundle: .main, delegate: nil))
+        var now = Date(timeIntervalSinceReferenceDate: 1000)
+        driver.now = { now }
+
+        driver.permissionAnswered(automaticChecks: true)
+        now += ConfirmingUserDriver.permissionAnswerWindow + 1
+        driver.updateFound(version: "0.1.0-beta.4", build: "20261119.2352", notes: nil,
+                           installing: false, userInitiated: false, reply: { _ in })
+        XCTAssertFalse(promptIsVisible(), "隔得太久不弹窗")
+        XCTAssertTrue(driver.hasPendingInstallDecision, "菜单和设置里仍然提示")
+        driver.dismissUpdateInstallation()
+
+        driver.permissionAnswered(automaticChecks: false)
+        now += 1
+        driver.updateFound(version: "0.1.0-beta.4", build: "20261119.2352", notes: nil,
+                           installing: false, userInitiated: false, reply: { _ in })
+        XCTAssertFalse(promptIsVisible(), "没有选自动检查不弹窗")
+        driver.dismissUpdateInstallation()
+    }
+
     /// 版本号是空的（不应发生）：用构建号，菜单和设置里的“有新版本”仍然有东西可显示，等确认的更新不会藏起来。
     func testPendingUpdateWithoutVersionUsesTheBuild() {
         let driver = ConfirmingUserDriver(standard: SPUStandardUserDriver(hostBundle: .main, delegate: nil))

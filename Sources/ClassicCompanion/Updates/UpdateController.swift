@@ -35,6 +35,7 @@ final class UpdateStatus: ObservableObject {
 /// - 不自动下载、不自动安装、不退出时安装（Info.plist：SUAllowsAutomaticUpdates = NO，SUAutomaticallyUpdate 不设）。
 /// - 是否自动检查：第二次启动时由 Sparkle 标准提示询问，之后在设置里改。
 /// - 定时检查发现新版本不弹窗、不抢焦点：只在菜单、菜单栏菜单和设置里提示，不用 Dock 角标。
+///   例外：用户刚在询问里选了自动检查，紧接着的那一次检查发现新版本时确认窗口直接出现（不抢焦点）。
 /// - 发现新版本只确认一次：下载之前用户必须在应用自己的确认窗口里授权“下载并安装”（ConfirmingUserDriver），
 ///   不再先显示 Sparkle 的新版本窗口。授权之前不启动安装器，正常退出、崩溃或被强制退出都不会安装。
 ///   授权后下载、验证完成就安装并重新启动。
