@@ -80,7 +80,11 @@ final class ChatTabs {
     /// 没交进来时只记在内存里（测试不写 UserDefaults）。
     var tipRecord: any TabTipRecord = MemoryTabTipRecord()
     /// 标签页的个数变了（加进来、关掉）。AppDelegate：TabMenus.refresh()（菜单项和左上角 × 的提示跟着改）。
+    /// 调用时标签栏模型（tabBar）已经是新的（refreshTabBar() 在它之前）。
     var onTabsChanged: (@MainActor () -> Void)?
+    /// 标签栏要显示的东西（4.2）：从左到右的标签页、各自显示的标题、选中的、要不要显示、＋ 的样子。
+    /// 这组每次改 list（加进来、切换、关掉）和某一页的标题、加载中变了时重算（refreshTabBar()）。还没有视图用它（4.3）。
+    let tabBar = TabBarModel()
     /// 记下、放回、丢弃阅读位置：就是运行时的 holdReadingPosition()（返回这一次的编号）、
     /// restoreReadingPosition(_:confirmingContinuation:)（编号、要不要网页确认）、discardReadingPosition(_:)（编号）。
     /// 只有测试换它们：网页里没有页面，看不到效果，换成记录才看得出给了哪个标签页、哪一次。
@@ -149,6 +153,7 @@ final class ChatTabs {
         // 标签页的键（含 ⌘W）：窗口的按键监视认出来以后交给这里（handleKey(_:_:)）。
         windowController.onTabKey = { [weak self] key, context in self?.handleKey(key, context) ?? false }
         network.add(tab.runtime)
+        refreshTabBar()
     }
 
     /// 选中的标签页。
@@ -198,6 +203,7 @@ final class ChatTabs {
         // 接好线再登记：已经知道网络状态时马上补发给它（断网时加进来的页面也等得到“网络恢复”），
         // 补发引起的变化照常到它自己的页面状态。
         network.add(tab.runtime)
+        refreshTabBar()
         onTabsChanged?()
         return tab
     }
@@ -283,9 +289,9 @@ final class ChatTabs {
     /// tab 已经不在这组里（关过了，或者不是这组的）：什么都不做，所以关两遍是安全的。这里不写 [tabs] 那一行（closeTab 写）。
     ///
     /// 顺序：先进入关闭态，再收尾。
-    /// 1. 运行时关闭（WebRuntime.close()）：不再自己发起加载、不再排重试，排着的重试取消，停止加载，回调断开，停掉地址和
-    ///    页面底色的观察、消息桥，弹窗关掉；排着的网页对话框不再显示、显示着的文件选择收起，都按取消回答网页（关显示着的标签页时 closeTab
-    ///    在切换之前已经取消过，这里不再做）；之后迟到的导航事件、网页脚本的回调都不做事、不写日志。
+    /// 1. 运行时关闭（WebRuntime.close()）：不再自己发起加载、不再排重试，排着的重试取消，停止加载，回调断开，停掉地址、
+    ///    页面底色、标题和加载中的观察、消息桥（之后迟到的标题不再改它记下的、不进标签栏），弹窗关掉；排着的网页对话框
+    ///    不再显示、显示着的文件选择收起，都按取消回答网页（关显示着的标签页时 closeTab 在切换之前已经取消过，这里不再做）；之后迟到的导航事件、网页脚本的回调都不做事、不写日志。
     /// 2. 适配器关闭（ChatGPTAdapter.close()）：不再在网页里跑脚本、不再读媒体状态，进行中的脚本返回或超时以后不写日志、
     ///    不写诊断。
     /// 3. 页面状态关闭（ChatWindowController.pageClosed(_:)）：带这个页面的入口和它排着的兜底、颜色回调、遮挡的时限和上限
@@ -324,6 +330,7 @@ final class ChatTabs {
         tabs.removeAll { $0 === tab }
         tabLeft(tab)
         diagnostics.tabClosed(tab.logTag)
+        refreshTabBar()
         onTabsChanged?()
     }
 
@@ -382,6 +389,11 @@ final class ChatTabs {
         tab.runtime.onPageColorChange = { [weak self] color in
             self?.windowController.pageDidReportColor(page, color)
         }
+        // 网页标题和加载中（显示着的、藏着的都报）：记在这个标签页上，标签栏模型跟着改（titleChanged）。不写日志。
+        tab.runtime.onTitleChange = { [weak self, weak tab] title, isLoading in
+            guard let self, let tab else { return }
+            self.titleChanged(title, isLoading: isLoading, for: tab)
+        }
         // 网页的对话框（提示框、确认框、文件选择）和新窗口按“它是不是选中的标签页”：是就和原来一样马上显示、照常开；
         // 不是就把对话框排在它自己身上，等它被选中再显示（select(_:) 最后放出来），新窗口不开（规则在 WebRuntime 的
         // WKUIDelegate 那一段）。这一组或 tab 已经释放：当作不是选中的（排着，关闭时按取消处理）。
@@ -433,6 +445,33 @@ final class ChatTabs {
                 self.log(tab, "media", "页面变化后 0.8s WebKit 媒体状态=\(state)")
             }
         }
+    }
+
+    /// 标签页 tab 的网页标题或加载中变了：记在 tab 上（ChatTab.title、isLoading），标签栏模型跟着改（refreshTabBar()）。
+    /// 选没选中都一样。tab 已经不在这组里（关闭、拿掉）：什么都不做（关闭时运行时已经断开这个回调；这是这组自己的规则，
+    /// 和 urlChanged 一样）。
+    /// 标题是对话内容（计划：只显示在标签栏上）：这里不写日志、不写诊断，也不给窗口当标题（窗口标题一直是 “Classic Companion”）。
+    private func titleChanged(_ title: String?, isLoading: Bool, for tab: ChatTab) {
+        guard holds(tab) else { return }
+        tab.title = title
+        tab.isLoading = isLoading
+        refreshTabBar()
+    }
+
+    /// 标签栏模型照这一刻的这组重算（4.2）：从左到右每一页的标识、显示的标题（TabBarRules.displayTitle，nil 是“新聊天”）、
+    /// 是不是选中的；要不要显示、＋ 的样子（TabBarRules.newTabButton(in:)，看启动画面、上限）。
+    /// 每次改 list 以后马上调用（init、adopt、close、select、removeForTesting），在 onTabsChanged 之前；标题、加载中变了也调用。
+    /// ＋ 不看模态框：应用级的模态框开着时窗口本来收不到点按，它开始、结束也不通知这里，算进来会在它结束以后还留着点不了的样子。
+    /// 启动画面结束也不通知这里：它只在启动时有、只有一个标签页时有（它还在时不能新增），标签栏那时不显示，
+    /// 下一次新增（这里会重算）时已经结束。点 ＋ 的那一刻要按当时的情形再看一次 TabMenuRules（4.5）。
+    private func refreshTabBar() {
+        let state = TabMenuRules.State(scope: .chatWindow, launchScreenUp: isLaunchScreenUp, atLimit: list.isFull,
+                                       tabCount: tabs.count)
+        let items = tabs.map { tab in
+            TabBarModel.Item(id: tab.id, title: TabBarRules.displayTitle(pageTitle: tab.title, isLoading: tab.isLoading),
+                             isSelected: tab.id == list.selected)
+        }
+        tabBar.update(items: items, newTabButton: TabBarRules.newTabButton(in: state))
     }
 
     /// 聚焦选中的标签页的输入框：窗口级的请求，选中的标签页在调用这一刻读。
@@ -492,6 +531,7 @@ final class ChatTabs {
     func select(_ tab: ChatTab) {
         guard holds(tab), !isSelected(tab) else { return }
         _ = list.select(tab.id)
+        refreshTabBar()
         log(tab, "tabs", "选中")
         windowController.display(tab.page, webView: tab.runtime.webView,
                                  beforeCatchUp: { holdBeforeCatchUp(tab) },
@@ -1009,6 +1049,7 @@ final class ChatTabs {
         _ = list.close(tab.id, url: nil)
         tabs.removeAll { $0 === tab }
         tabLeft(tab)
+        refreshTabBar()
         onTabsChanged?()
     }
     #endif
