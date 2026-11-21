@@ -311,9 +311,12 @@ final class TabHintTests: XCTestCase {
 
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let app = try String(contentsOf: root.appendingPathComponent("Sources/ClassicCompanion/App/AppDelegate.swift"), encoding: .utf8)
+        // 个数变了时：菜单跟着改，标签栏按模型显示或藏起（阶段 4）。
         for wiring in ["chatTabs.tipRecord = settings", "windowController.hints.announce = { text in",
-                       "chatTabs.onTabsChanged = { [weak self] in self?.tabMenus.refresh() }", "tabMenus.attach(built.tabItems)",
-                       "tabMenus.attachStatus(menu)"] {
+                       "chatTabs.onTabsChanged = { [weak self] in\n            guard let self else { return }\n"
+                           + "            self.tabMenus.refresh()\n"
+                           + "            self.windowController.setTabBarVisible(self.chatTabs.tabBar.isShown)\n        }",
+                       "tabMenus.attach(built.tabItems)", "tabMenus.attachStatus(menu)"] {
             XCTAssertTrue(app.contains(wiring), wiring)
         }
     }

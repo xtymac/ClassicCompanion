@@ -111,8 +111,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                              self?.goInHistory(.back, eventWindow: self?.windowController?.window, source: "顶部返回箭头")
                          },
                          state: toolbarState, appearance: pageAppearance)
+        // 标签栏（阶段 4）：窗口里的视图和 chatTabs 用同一个模型；点按由 chatTabs 接到模型上（ChatTabs.init）。
+        let tabBarModel = TabBarModel()
         windowController = ChatWindowController(webView: launchTab.runtime.webView, toolbar: bar, diagnostics: diagnostics,
-                                                appearance: pageAppearance, page: launchTab.page)
+                                                appearance: pageAppearance, page: launchTab.page,
+                                                tabBar: TabBarView(model: tabBarModel, appearance: pageAppearance))
         // ⌘[ ⌘] 和鼠标侧键由聊天窗口处理（只管它自己的事件），目标页面在按下时解析一次。
         windowController.historyPage = { [weak self] in self?.historyPage(eventWindow: self?.windowController?.window) }
         launchTab.runtime.onHistoryChange = { [weak self] in self?.historyChanged() }
@@ -130,7 +133,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                             mediaState: { adapter in await adapter.webMediaState() },
                             openNewChat: { adapter in await adapter.openNewChatInPage() },
                             makeTab: makeTab,
-                            revealWindow: { [weak self] in self?.windowController.reveal() })
+                            revealWindow: { [weak self] in self?.windowController.reveal() },
+                            tabBar: tabBarModel)
         chatTabs.wire(launchTab)
         // 第一次有多个标签页的提示显示过没有，存在设置里（每次安装一次）。提示的文字也给读屏播报。
         chatTabs.tipRecord = settings
@@ -140,7 +144,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         tabMenus = TabMenus(tabs: chatTabs, chatWindow: windowController.window, diagnostics: diagnostics, toolbar: toolbarState)
         tabMenus.userHotKeys = { [weak self] in self.map { [$0.settings.hotKey, $0.settings.modeKey] } ?? [] }
-        chatTabs.onTabsChanged = { [weak self] in self?.tabMenus.refresh() }
+        // 标签页的个数变了：菜单项和左上角 × 的提示跟着改；多于一个标签页时显示标签栏（模型这时已经是新的）。
+        chatTabs.onTabsChanged = { [weak self] in
+            guard let self else { return }
+            self.tabMenus.refresh()
+            self.windowController.setTabBarVisible(self.chatTabs.tabBar.isShown)
+        }
         updates = UpdateController(diagnostics: diagnostics)
 
         buildMainMenu()

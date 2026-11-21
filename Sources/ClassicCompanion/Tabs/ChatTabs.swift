@@ -12,7 +12,8 @@ import CompanionCore
 /// 关闭标签页只经 closeTab(_:)（closeSelectedTab()），重新打开最近关闭的只经 reopenClosedTab()，
 /// ⌘ 点击聊天链接在新标签页打开只经 openLink(_:from:_:)（3.12，网页运行时交来）。
 /// 开始时只有启动时的那一个，它就是选中的、窗口显示着的。应用里调用这些入口的是按键（3.10，handleKey(_:_:)：⌘T、⇧⌘T、
-/// ⌘W、⇧⌘W、切换的键）、菜单（3.11，TabMenus：同样的入口，不经 handleKey）和 ⌘ 点击聊天链接（3.12）；还没有标签栏（阶段 4）。
+/// ⌘W、⇧⌘W、切换的键）、菜单（3.11，TabMenus：同样的入口，不经 handleKey）、⌘ 点击聊天链接（3.12）和标签栏（4.5：
+/// select(id:)、closeTab(id:)、newTabFromBar()，经 tabBar 上的回调）。
 /// 不用这些键、菜单项和 ⌘ 点击时一直只有启动时的那一个，和原来一样。
 ///
 /// 规则：事件属于发出它的标签页，接线时就绑定那个标签页，处理时明确传着它，不在中途拿“现在选中的”来代替。
@@ -83,8 +84,10 @@ final class ChatTabs {
     /// 调用时标签栏模型（tabBar）已经是新的（refreshTabBar() 在它之前）。
     var onTabsChanged: (@MainActor () -> Void)?
     /// 标签栏要显示的东西（4.2）：从左到右的标签页、各自显示的标题、选中的、要不要显示、＋ 的样子。
-    /// 这组每次改 list（加进来、切换、关掉）和某一页的标题、加载中变了时重算（refreshTabBar()）。还没有视图用它（4.3）。
-    let tabBar = TabBarModel()
+    /// 这组每次改 list（加进来、切换、关掉）和某一页的标题、加载中变了时重算（refreshTabBar()）。
+    /// 由建这组的一方交进来（AppDelegate 先建它，窗口的标签栏视图 TabBarView 和这里用同一个）；它上面的点按在 init 里接到
+    /// select(id:)、closeTab(id:)、newTabFromBar()。
+    let tabBar: TabBarModel
     /// 记下、放回、丢弃阅读位置：就是运行时的 holdReadingPosition()（返回这一次的编号）、
     /// restoreReadingPosition(_:confirmingContinuation:)（编号、要不要网页确认）、discardReadingPosition(_:)（编号）。
     /// 只有测试换它们：网页里没有页面，看不到效果，换成记录才看得出给了哪个标签页、哪一次。
@@ -119,10 +122,12 @@ final class ChatTabs {
          mediaState: @escaping @MainActor (ChatGPTAdapter) async -> String,
          openNewChat: @escaping @MainActor (ChatGPTAdapter) async -> Bool,
          makeTab: (@MainActor (TabID) -> ChatTab)? = nil,
-         revealWindow: (@MainActor () -> Void)? = nil) {
+         revealWindow: (@MainActor () -> Void)? = nil,
+         tabBar: TabBarModel = TabBarModel()) {
         precondition(list.tabs == [tab.id] && list.selected == tab.id, "启动时只有这一个标签页，并且选中它")
         self.list = list
         tabs = [tab]
+        self.tabBar = tabBar
         self.windowController = windowController
         self.diagnostics = diagnostics
         self.network = network
@@ -152,6 +157,10 @@ final class ChatTabs {
         }
         // 标签页的键（含 ⌘W）：窗口的按键监视认出来以后交给这里（handleKey(_:_:)）。
         windowController.onTabKey = { [weak self] key, context in self?.handleKey(key, context) ?? false }
+        // 标签栏上的点按（4.5）。
+        tabBar.onSelect = { [weak self] id in self?.select(id: id) }
+        tabBar.onClose = { [weak self] id in self?.closeTab(id: id) }
+        tabBar.onNewTab = { [weak self] in _ = self?.newTabFromBar() }
         network.add(tab.runtime)
         refreshTabBar()
     }
@@ -230,7 +239,8 @@ final class ChatTabs {
 
     // MARK: - 关闭标签页
 
-    /// 关闭标签页 tab（3.7）。应用里经 closeSelectedTab() 由 ⌘W（3.10）和菜单里的“关闭标签页”（3.11）调用；标签栏在阶段 4 接上。
+    /// 关闭标签页 tab（3.7）。应用里经 closeSelectedTab() 由 ⌘W（3.10）和菜单里的“关闭标签页”（3.11）调用；
+    /// 标签栏上的 × 经 closeTab(id:) 调用（4.5，可以是不显示的标签页）。
     ///
     /// - tab 不在这组里（关过了、不是这组的）：什么都不做（不隐藏窗口、不写日志），所以关两遍是安全的。
     /// - 只有一个标签页（它就是选中的）：不关、不释放，页面留着；和原来的 ⌘W 一样隐藏窗口（hideWindow("⌘W")，
@@ -830,6 +840,30 @@ final class ChatTabs {
     private func selectTab(_ id: TabID?) {
         guard let id, let tab = tabs.first(where: { $0.id == id }) else { return }
         select(tab)
+    }
+
+    // MARK: - 标签栏（4.5）
+
+    /// 标签栏上点了标签 id：经 select(_:) 切换过去。已经是选中的、不在这组里（刚关掉）：什么都不做。
+    func select(id: TabID) {
+        selectTab(id)
+    }
+
+    /// 标签栏上点了标签 id 的 ×：经 closeTab(_:) 关掉它，不显示的标签页也一样能关。不在这组里：什么都不做。
+    func closeTab(id: TabID) {
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        closeTab(tab)
+    }
+
+    /// 标签栏末尾的 ＋：点的这一刻按当时的情形再看一次 TabMenuRules（.tabBarNewTab：模态框、启动画面），能点才经 newTab()
+    /// 新增（和 ⌘T 同一条路）。已到上限时它还能点：newTab() 显示到上限的提示，不新增。模型里 ＋ 的样子可能是旧的
+    /// （启动画面结束、模态框开关不通知标签栏），所以不看模型，看这一刻的。返回新增的那一个；不新增时返回 nil。
+    @discardableResult
+    func newTabFromBar() -> ChatTab? {
+        let state = TabMenuRules.State(scope: .chatWindow, appModal: windowController.isAppModal(),
+                                       launchScreenUp: isLaunchScreenUp, atLimit: list.isFull, tabCount: tabs.count)
+        guard TabMenuRules.look(.tabBarNewTab, in: state).enabled else { return nil }
+        return newTab()
     }
 
     // MARK: - 对选中的标签页做的操作
