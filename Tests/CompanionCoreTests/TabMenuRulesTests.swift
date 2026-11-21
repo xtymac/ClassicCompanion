@@ -45,6 +45,10 @@ import Testing
             // 到上限也能点（D9：找回窗口、显示到上限的提示），照样写上原因。
             return Look(visible: true, enabled: !s.launchScreenUp, showsKeyEquivalent: false,
                         explainsLimit: s.atLimit && !s.launchScreenUp)
+        case .tabBarNewTab:
+            // 标签栏的 ＋：和菜单栏图标的那一项一样，到上限也能点（点了出提示），写上原因；置灰与否在 TabBarRules。
+            return Look(visible: true, enabled: !s.launchScreenUp, showsKeyEquivalent: false,
+                        explainsLimit: s.atLimit && !s.launchScreenUp)
         }
     }
 
@@ -100,6 +104,9 @@ import Testing
                 "窗口隐藏着、到上限：菜单栏图标的那一项能点（D9：找回窗口、显示到上限的提示），写上原因")
         #expect(!TabMenuRules.look(.newTab, in: hiddenAtLimit).enabled, "文件菜单的那一项照旧置灰")
         #expect(!TabMenuRules.look(.reopenClosedTab, in: hiddenAtLimit).enabled, "D15：到上限 ⇧⌘T 置灰")
+        #expect(TabMenuRules.look(.tabBarNewTab, in: four)
+                    == Look(visible: true, enabled: true, showsKeyEquivalent: false, explainsLimit: true),
+                "标签栏的 ＋ 到上限：还能点（点了出提示），写上原因")
 
         let modal = TabMenuRules.State(scope: .chatWindow, appModal: true, canReopen: true, tabCount: 2)
         for item in Item.allCases where item != .closeWindow {
@@ -109,6 +116,8 @@ import Testing
         let launch = TabMenuRules.State(scope: .chatWindow, launchScreenUp: true, atLimit: true, canReopen: true, tabCount: 4)
         #expect(TabMenuRules.look(.newTab, in: launch) == Look(visible: true, enabled: false, showsKeyEquivalent: true),
                 "启动画面还在：置灰，不写到上限")
+        #expect(TabMenuRules.look(.tabBarNewTab, in: launch) == Look(visible: true, enabled: false, showsKeyEquivalent: false),
+                "启动画面还在：标签栏的 ＋ 点不了")
 
         let taken = TabMenuRules.State(scope: .chatWindow, canReopen: true, tabCount: 2, takenByUserHotKey: [.reopenClosedTab, .nextTab])
         #expect(TabMenuRules.look(.reopenClosedTab, in: taken) == Look(visible: true, enabled: true, showsKeyEquivalent: false),
