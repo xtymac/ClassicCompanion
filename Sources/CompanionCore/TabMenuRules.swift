@@ -21,6 +21,9 @@ import Foundation
 /// - 菜单栏图标的菜单里的“新建标签页”：不看哪个窗口在前面（和那里的“新建对话”一样；窗口没显示时入口先找回窗口，D9），
 ///   只看模态框、启动画面；没有快捷键。到上限时也能点（D9：点了找回窗口、显示到上限的提示，不新增），下面照样写上
 ///   “最多打开 N 个标签页”。
+/// - 标签栏末尾的 ＋（阶段 4）：和菜单栏图标的那一项一样，不看哪个窗口在前面、没有快捷键，只看模态框、启动画面；
+///   到上限时也能点（点了显示到上限的提示，不新增），写上“最多打开 N 个标签页”，看起来置灰（TabBarRules.newTabButton(in:)）。
+///   Q3（11-22 待用户定）：到上限时要真的点不了，就把这一项的 enabled 改成 canOpen（只改一行）。
 public enum TabMenuRules {
     public enum Item: CaseIterable, Hashable, Sendable {
         /// 文件 → 新建标签页 ⌘T。
@@ -39,6 +42,8 @@ public enum TabMenuRules {
         case previousTab
         /// 菜单栏图标的菜单 → 新建标签页（没有快捷键）。
         case statusNewTab
+        /// 标签栏末尾的 ＋（没有快捷键）。
+        case tabBarNewTab
     }
 
     /// 本应用这一刻在前面的窗口。
@@ -118,6 +123,9 @@ public enum TabMenuRules {
         case .nextTab, .previousTab:
             return Look(visible: true, enabled: inChat && state.tabCount > 1, showsKeyEquivalent: showsKey)
         case .statusNewTab:
+            return Look(visible: true, enabled: !state.appModal && !state.launchScreenUp, showsKeyEquivalent: false,
+                        explainsLimit: limitIsTheReason)
+        case .tabBarNewTab:
             return Look(visible: true, enabled: !state.appModal && !state.launchScreenUp, showsKeyEquivalent: false,
                         explainsLimit: limitIsTheReason)
         }
