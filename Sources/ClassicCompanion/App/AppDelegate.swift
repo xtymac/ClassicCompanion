@@ -577,7 +577,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         case .none: break
         }
     }
-    /// 对按下这一刻选中的标签页，见 ChatTabs.newChat()。
+    /// ⌘N、文件菜单、顶部的按钮、菜单栏图标的菜单：开在新标签页；开不了（到上限、启动画面还在）时对按下这一刻选中的标签页，
+    /// 见 ChatTabs.newChat()。
     @objc private func newChat() { chatTabs.newChat() }
     /// ⌘R：按下这一刻选中的标签页。
     @objc private func reloadPage() { chatTabs.reloadSelectedTab() }

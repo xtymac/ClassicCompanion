@@ -19,10 +19,11 @@ final class TabCloseAsyncTests: XCTestCase {
     private let chat = URL(string: "https://chatgpt.com/c/abc")!
     private let other = URL(string: "https://chatgpt.com/c/def")!
 
-    private func make() -> TabCloseRig {
+    /// capacity：新对话的两条用 2——1、2 就到上限，新对话照原来在选中的 2 里新建（有空位时它开在新标签页，见 NewChatTabTests）。
+    private func make(capacity: Int = TabList.defaultCapacity) -> TabCloseRig {
         let name = "TabCloseAsyncTests-\(UUID().uuidString)"
         addTeardownBlock { UserDefaults().removePersistentDomain(forName: name) }
-        let rig = TabCloseRig(defaults: UserDefaults(suiteName: name)!)
+        let rig = TabCloseRig(defaults: UserDefaults(suiteName: name)!, capacity: capacity)
         addTeardownBlock { [controller = rig.controller] in controller.window?.orderOut(nil) }
         return rig
     }
@@ -114,11 +115,11 @@ final class TabCloseAsyncTests: XCTestCase {
 
     // MARK: - 新对话
 
-    /// 选中的 2 按新对话，页面里的入口还在等（0.4 秒）时关 2。那一步返回以后：点到了不聚焦 2，没点到也不整页加载 2，
+    /// 选中的 2 按新对话（到上限，在 2 里新建），页面里的入口还在等（0.4 秒）时关 2。那一步返回以后：点到了不聚焦 2，没点到也不整页加载 2，
     /// 只有切换给 1 排的聚焦；日志只有关闭的那三行。等的时候 2 还在（那一步拿着它），返回时释放。
     func testAnInFlightNewChatOfTheClosedTabDoesNothingAndHoldsItOnlyUntilItReturns() async throws {
         for inPage in [true, false] {
-            let rig = make()
+            let rig = make(capacity: 2)
             rig.newChatInPage = inPage
             rig.delays["newChat"] = 0.4
             rig.tabs.windowIsKey = { true }
@@ -262,11 +263,11 @@ final class TabCloseAsyncTests: XCTestCase {
 
     // MARK: - 真的适配器（本地网页，不联网）
 
-    /// 2 打开一个本地网页，“新对话”入口点下去要忙 0.4 秒。真的适配器点它（和 AppDelegate 一样），点的脚本还没返回时关 2：
+    /// 2 打开一个本地网页，“新对话”入口点下去要忙 0.4 秒。真的适配器点它（和 AppDelegate 一样；到上限，在 2 里新建），点的脚本还没返回时关 2：
     /// 脚本返回以后适配器什么都不写（不写“官方入口命中”，不再等页面变化 1 秒、不写“已点击官方入口”），不整页加载、不聚焦 2；
     /// 2 在脚本返回时释放（不等那 1 秒，也不等脚本的时限）。
     func testARealInPageNewChatIsCutShortByTheClose() async throws {
-        let rig = make()
+        let rig = make(capacity: 2)
         rig.realAdapter = true
         let refs = selectedTwo(rig)
         let html = """

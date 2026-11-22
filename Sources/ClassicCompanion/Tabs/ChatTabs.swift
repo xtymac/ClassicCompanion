@@ -12,9 +12,9 @@ import CompanionCore
 /// 关闭标签页只经 closeTab(_:)（closeSelectedTab()），重新打开最近关闭的只经 reopenClosedTab()，
 /// ⌘ 点击聊天链接在新标签页打开只经 openLink(_:from:_:)（3.12，网页运行时交来）。
 /// 开始时只有启动时的那一个，它就是选中的、窗口显示着的。应用里调用这些入口的是按键（3.10，handleKey(_:_:)：⌘T、⇧⌘T、
-/// ⌘W、⇧⌘W、切换的键）、菜单（3.11，TabMenus：同样的入口，不经 handleKey）、⌘ 点击聊天链接（3.12）和标签栏（4.5：
-/// select(id:)、closeTab(id:)、newTabFromBar()，经 tabBar 上的回调）。
-/// 不用这些键、菜单项和 ⌘ 点击时一直只有启动时的那一个，和原来一样。
+/// ⌘W、⇧⌘W、切换的键）、菜单（3.11，TabMenus：同样的入口，不经 handleKey）、⌘ 点击聊天链接（3.12）、标签栏（4.5：
+/// select(id:)、closeTab(id:)、newTabFromBar()，经 tabBar 上的回调）和新对话（newChat()：有空位时经 newTab() 开在新标签页）。
+/// 不用这些键、菜单项、新对话和 ⌘ 点击时一直只有启动时的那一个，和原来一样。
 ///
 /// 规则：事件属于发出它的标签页，接线时就绑定那个标签页，处理时明确传着它，不在中途拿“现在选中的”来代替。
 /// - 标签页自己的状态（页面加载状态、lastPath、适配器的代号、它自己的日志）不管选没选中都照常改。
@@ -569,7 +569,8 @@ final class ChatTabs {
     // MARK: - 新增标签页
 
     /// 新增标签页：加一个新对话的标签页，放在最右，切换过去。返回加进来的那一个；不新增时返回 nil。
-    /// 应用里由 ⌘T（3.10，handleKey(_:_:)）和菜单（3.11，TabMenus：文件菜单、菜单栏图标的菜单）调用。
+    /// 应用里由 ⌘T（3.10，handleKey(_:_:)）、菜单（3.11，TabMenus：文件菜单、菜单栏图标的菜单）、标签栏的 ＋（newTabFromBar()）
+    /// 和新对话（newChat()：只在启动画面不在、没到上限时调用，所以从那里来的不会走下面“不新增”的两条）调用。
     ///
     /// 不新增（列表、选中项都不变，不建网页；写一行“[tabs] 不新增标签页：…”，不带标签）：
     /// - 启动画面还在（isLaunchScreenUp，计划 4.3）：别的什么都不做（不找回窗口）。新标签页的遮挡不算，还盖着也能再新增。
@@ -876,11 +877,31 @@ final class ChatTabs {
         tab.runtime.windowShown(kind)
     }
 
-    /// 新对话（菜单、⌘N、顶部的按钮）：对按下这一刻选中的标签页做。先试页面里官方的入口，确定没点到时整页加载新对话页。
-    /// 等页面里的结果时选中的可能换了、这个标签页也可能被拿掉：之后只对它做，它已经不在这组里就什么都不做。
-    /// 整页加载给它（它不选中也加载：是它自己的页面，不动前台）；聚焦也请求给它，它这时或到点时不是选中的就不聚焦（focusInputSoon(for:)）。
+    /// 新对话（⌘N、文件菜单、顶部的按钮、菜单栏图标的菜单，都经 AppDelegate.newChat）：开在新标签页（用户 11-22 定）。
+    /// 写一行“[tabs] 新建对话：开在新标签页”（不带标签），然后走 ⌘T 的同一条路（newTab()：窗口没显示先找回，放在最右，
+    /// 遮挡、加载新对话页、切换过去，聚焦照 select，第一次有多个标签页的提示）。原来选中的那一页不动。
+    /// 开不了新标签页时照原来在按下这一刻选中的标签页里新建（newChat(in:)），先写一行（带它的标签）说为什么：
+    /// - 启动画面还在（isLaunchScreenUp，新增不了，见 newTab()）；
+    /// - 已到上限（list.isFull）：不显示到上限的提示（和 ⌘T 不同），不找回窗口。
+    /// 选中的那一页已经是空的新对话页也一样，不另外看。
     func newChat() {
         let tab = selected
+        if isLaunchScreenUp {
+            log(tab, "tabs", "新建对话：启动画面还在，在当前标签页新建")
+        } else if list.isFull {
+            log(tab, "tabs", "新建对话：已到上限（\(list.capacity) 个），在当前标签页新建")
+        } else {
+            logGroup("tabs", "新建对话：开在新标签页")
+            newTab()
+            return
+        }
+        newChat(in: tab)
+    }
+
+    /// 在 tab 里新建对话（原来的新对话；现在只在开不了新标签页时，见 newChat()）。先试页面里官方的入口，确定没点到时整页加载新对话页。
+    /// 等页面里的结果时选中的可能换了、这个标签页也可能被拿掉：之后只对它做，它已经不在这组里就什么都不做。
+    /// 整页加载给它（它不选中也加载：是它自己的页面，不动前台）；聚焦也请求给它，它这时或到点时不是选中的就不聚焦（focusInputSoon(for:)）。
+    private func newChat(in tab: ChatTab) {
         Task { [weak self] in
             guard let self else { return }
             let inPage = await self.openNewChat(tab.adapter)
