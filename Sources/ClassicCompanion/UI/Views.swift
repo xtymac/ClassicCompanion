@@ -305,7 +305,8 @@ final class ToolbarState: ObservableObject {
 
 /// 页面第一次加载完之前盖在网页上。底色用窗口此刻的页面颜色（上次记下的，和顶部一条、窗口底色同一个），
 /// 没有记下时跟随系统。图标跟随应用图标资源，换正式图标时不用改这里。
-/// 两种样子（kind）只差图标和应用名：启动画面有，新标签页的遮挡没有（只有页面底色和小进度圈）。底色、进度圈、外观都一样。
+/// 两种样子（kind）只差图标、应用名和进度圈的大小：启动画面有图标和应用名，进度圈是小的（16 点）；
+/// 新标签页的遮挡只有页面底色和进度圈，进度圈是普通大小（32 点，小的那个看不清，用户 2026-11-22）。底色、外观都一样。
 struct LaunchScreen: View {
     @ObservedObject var appearance: PageAppearance
     /// 哪一种遮挡的样子。不指定是启动画面（原来的样子）。
@@ -323,7 +324,9 @@ struct LaunchScreen: View {
                     .accessibilityHidden(true)
                 Text("Classic Companion").font(.title3.weight(.semibold))
             }
-            ProgressView().controlSize(.small).accessibilityLabel(L10n.string("launch.opening"))
+            ProgressView()
+                .controlSize(kind == .newTab ? .regular : .small)
+                .accessibilityLabel(L10n.string("launch.opening"))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: fixedBackground ?? appearance.background ?? .textBackgroundColor))
