@@ -25,10 +25,11 @@ final class TabCloseTests: XCTestCase {
     private let other = URL(string: "https://chatgpt.com/c/def")!
     private let white = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
 
-    private func makeRig(backoffA: [TimeInterval] = [60]) -> ClosingTabs {
+    /// capacity：新对话的那一条用 3（B、A、C 就到上限），新对话才在选中的 C 里新建（有空位时它开在新标签页，见 NewChatTabTests）。
+    private func makeRig(backoffA: [TimeInterval] = [60], capacity: Int = TabList.defaultCapacity) -> ClosingTabs {
         let name = "TabCloseTests-\(UUID().uuidString)"
         addTeardownBlock { UserDefaults().removePersistentDomain(forName: name) }
-        let rig = ClosingTabs(defaults: UserDefaults(suiteName: name)!, backoffA: backoffA)
+        let rig = ClosingTabs(defaults: UserDefaults(suiteName: name)!, backoffA: backoffA, capacity: capacity)
         addTeardownBlock { [controller = rig.controller] in controller.window?.orderOut(nil) }
         return rig
     }
@@ -233,11 +234,11 @@ final class TabCloseTests: XCTestCase {
         XCTAssertEqual(rig.tabs.tabs.map(\.id), [rig.b.id, rig.a.id])
     }
 
-    /// C 选中时按新对话，页面里的入口还在等（拿着 C）时选中 B、关 C。等的那一步返回以后：没点到也不整页加载 C，
+    /// C 选中时按新对话（上限 3：在 C 里新建），页面里的入口还在等（拿着 C）时选中 B、关 C。等的那一步返回以后：没点到也不整页加载 C，
     /// 点到了也不聚焦（谁都不聚焦）；之后 C 和它的网页视图释放。
     func testAnInFlightNewChatOfAClosedTabNeitherLoadsNorFocusesAndThenLetsItGo() async throws {
         for inPage in [false, true] {
-            let rig = makeRig()
+            let rig = makeRig(capacity: 3)
             rig.newChatInPage = inPage
             rig.newChatDelay = 0.2
             weak var tab: ChatTab?, web: WKWebView?
@@ -380,14 +381,15 @@ private final class ClosingTabs {
     private weak var adapterC: ChatGPTAdapter?
     private var watch: AnyCancellable?
 
-    init(defaults: UserDefaults, backoffA: [TimeInterval]) {
+    /// capacity：列表的上限（新对话的测试用 3，见 TabCloseTests.makeRig）。
+    init(defaults: UserDefaults, backoffA: [TimeInterval], capacity: Int = TabList.defaultCapacity) {
         settings = AppSettings(defaults: defaults)
         appearance = PageAppearance(defaults: defaults)
         let runtimeB = WebRuntime(diagnostics: diagnostics, settings: settings, recovery: LoadRecovery(backoff: [60]),
                                   watchesNetwork: false)
         runtimeB.webView.underPageBackgroundColor = Self.dark
         let adapterB = ChatGPTAdapter(webView: runtimeB.webView, diagnostics: diagnostics, settings: settings)
-        let list = TabList()
+        let list = TabList(capacity: capacity)
         b = ChatTab(id: list.selected, runtime: runtimeB, adapter: adapterB)
         controller = ChatWindowController(webView: runtimeB.webView, toolbar: EmptyView(), diagnostics: diagnostics,
                                           appearance: appearance, page: b.page)

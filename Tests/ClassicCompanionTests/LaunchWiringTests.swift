@@ -257,21 +257,27 @@ final class LaunchWiringTests: XCTestCase {
         XCTAssertEqual(rig.loaded, [chat, chat])
     }
 
-    /// 新对话：先问页面里的入口；没点到就整页加载新对话页，不聚焦。点到了不加载，80ms 后聚焦一次。
+    /// 新对话在启动画面还在时开不了新标签页（有空位时开在新标签页，见 NewChatTabTests），照原来在这个标签页里新建：
+    /// 先写一行，再问页面里的入口；没点到就整页加载新对话页，不聚焦。点到了不加载，80ms 后聚焦一次。
     func testNewChatLoadsTheHomePageOrFocusesAfterAnInPageSwitch() async throws {
         let rig = makeRig()
+        rig.controller.beginLaunchScreen()
+        XCTAssertTrue(rig.tabs.isLaunchScreenUp)
+        rig.timeline = []
+        let stays = "[tabs] 新建对话：启动画面还在，在当前标签页新建"
         rig.tabs.newChat()
         try await waitUntil { !rig.loaded.isEmpty }
         try await pause(0.2)
         XCTAssertEqual(rig.loaded, [WebRuntime.homeURL])
-        XCTAssertEqual(rig.lines, ["页面里新对话", "[nav] 加载 https://chatgpt.com/"])
+        XCTAssertEqual(rig.lines, [stays, "页面里新对话", "[nav] 加载 https://chatgpt.com/"])
         XCTAssertTrue(rig.focused.isEmpty)
+        XCTAssertEqual(rig.tabs.tabs.count, 1)
 
         rig.timeline = []
         rig.newChatInPage = true
         rig.tabs.newChat()
         try await waitUntil { !rig.focused.isEmpty }
-        XCTAssertEqual(rig.lines, ["页面里新对话", "聚焦输入框"])
+        XCTAssertEqual(rig.lines, [stays, "页面里新对话", "聚焦输入框"])
         XCTAssertEqual(rig.loaded, [WebRuntime.homeURL])
         XCTAssertTrue(rig.focused.first === rig.tab.adapter)
     }

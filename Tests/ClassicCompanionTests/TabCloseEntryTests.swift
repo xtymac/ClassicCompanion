@@ -483,10 +483,11 @@ final class TabCloseRig {
 
     /// tabBar：像 AppDelegate 那样给窗口一个标签栏（和 ChatTabs 用同一个模型），个数变了时按模型显示或藏起它（TabBarTests）。
     /// 不给（默认）：窗口没有标签栏，和阶段 4 以前一样。
-    init(defaults: UserDefaults, tabBar withTabBar: Bool = false) {
+    /// capacity：列表的上限（新对话到上限时在当前标签页新建，TabCloseAsyncTests 用 2 让两个标签页就到上限）。
+    init(defaults: UserDefaults, tabBar withTabBar: Bool = false, capacity: Int = TabList.defaultCapacity) {
         settings = AppSettings(defaults: defaults)
         appearance = PageAppearance(defaults: defaults)
-        let list = TabList()
+        let list = TabList(capacity: capacity)
         first = ChatTab.make(id: list.selected, diagnostics: diagnostics, settings: settings)
         Self.fixColour(first)
         let tabBarModel = TabBarModel()

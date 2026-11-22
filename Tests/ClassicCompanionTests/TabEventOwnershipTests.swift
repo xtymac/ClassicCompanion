@@ -29,10 +29,11 @@ final class TabEventOwnershipTests: XCTestCase {
     private let chat = URL(string: "https://chatgpt.com/c/abc")!
     private let other = URL(string: "https://chatgpt.com/c/def")!
 
-    private func makeRig(backoffA: [TimeInterval] = [60]) -> TwoTabs {
+    /// capacity：新对话的几条用 2（B、A 就到上限），新对话才在选中的标签页里新建（有空位时它开在新标签页，见 NewChatTabTests）。
+    private func makeRig(backoffA: [TimeInterval] = [60], capacity: Int = TabList.defaultCapacity) -> TwoTabs {
         let name = "TabEventOwnershipTests-\(UUID().uuidString)"
         addTeardownBlock { UserDefaults().removePersistentDomain(forName: name) }
-        let rig = TwoTabs(defaults: UserDefaults(suiteName: name)!, backoffA: backoffA)
+        let rig = TwoTabs(defaults: UserDefaults(suiteName: name)!, backoffA: backoffA, capacity: capacity)
         addTeardownBlock { [controller = rig.controller] in controller.window?.orderOut(nil) }
         return rig
     }
@@ -431,10 +432,12 @@ final class TabEventOwnershipTests: XCTestCase {
 
     // MARK: 10. 新对话
 
+    // 新对话只在开不了新标签页时在选中的标签页里新建，这几条用上限 2（B、A 就到上限）；有空位时开在新标签页，见 NewChatTabTests。
+
     /// B 选中时按新对话，马上（新对话的任务还没开始）就选中了 A：页面里的入口问的是 B 的适配器；没点到，整页加载给 B。
     /// A 一次都没有，谁都不聚焦。
     func testNewChatIsBoundToTheTabSelectedWhenPressed() async throws {
-        let rig = makeRig()
+        let rig = makeRig(capacity: 2)
         rig.tabs.newChat()
         rig.tabs.selectForTesting(rig.a)
         try await waitUntil { !rig.loadedB.isEmpty }
@@ -447,7 +450,7 @@ final class TabEventOwnershipTests: XCTestCase {
 
     /// 页面里的入口还在等的时候选中了 A。没点到：整页加载给 B（它不选中也加载，是它自己的页面），A 不加载、不聚焦。
     func testNewChatsFollowUpLoadGoesToItsOwnTabAfterTheSelectionMoved() async throws {
-        let rig = makeRig()
+        let rig = makeRig(capacity: 2)
         rig.newChatDelay = 0.15
         rig.tabs.newChat()
         try await waitUntil { !rig.newChatAsked.isEmpty }
@@ -457,13 +460,14 @@ final class TabEventOwnershipTests: XCTestCase {
         XCTAssertEqual(rig.loadedB, [WebRuntime.homeURL])
         XCTAssertEqual(rig.loadedA, [])
         XCTAssertTrue(rig.focused.isEmpty)
-        XCTAssertEqual(rig.lines.filter { !$0.hasPrefix("[nav] 加载") }, ["页面里新对话 B"])
+        XCTAssertEqual(rig.lines.filter { !$0.hasPrefix("[nav] 加载") },
+                       ["[tabs] 新建对话：已到上限（2 个），在当前标签页新建", "页面里新对话 B"])
     }
 
     /// 页面里点到了：等的时候选中了 A。聚焦请求给 B，到点时 B 不是选中的，不聚焦；A 也不聚焦。谁都不加载。
     /// 对照：不换选中的，同样的新对话聚焦 B。
     func testNewChatInPageFocusesOnlyItsOwnTab() async throws {
-        let rig = makeRig()
+        let rig = makeRig(capacity: 2)
         rig.newChatInPage = true
         rig.newChatDelay = 0.15
         rig.tabs.newChat()
@@ -474,7 +478,7 @@ final class TabEventOwnershipTests: XCTestCase {
         XCTAssertEqual(rig.loadedA, [])
         XCTAssertEqual(rig.loadedB, [])
 
-        let control = makeRig()
+        let control = makeRig(capacity: 2)
         control.newChatInPage = true
         control.newChatDelay = 0.15
         control.tabs.newChat()
@@ -484,7 +488,7 @@ final class TabEventOwnershipTests: XCTestCase {
 
     /// 页面里的入口还在等的时候 B 被拿掉（先选中 A）：之后什么都不做，不加载、不聚焦，不崩溃。
     func testNewChatForATabRemovedMeanwhileDoesNothing() async throws {
-        let rig = makeRig()
+        let rig = makeRig(capacity: 2)
         rig.newChatDelay = 0.15
         rig.tabs.newChat()
         try await waitUntil { !rig.newChatAsked.isEmpty }
@@ -1089,13 +1093,13 @@ final class TabEventOwnershipTests: XCTestCase {
     // 上面的操作换成真正的切换以后照样只对开始时绑定的那一页做；窗口级的（提示里的“重新加载”、窗口显示后、聚焦）
     // 跟着切换过去的那一页。切换本身会聚焦换上来的那一页（窗口是 key 窗口时）、写一行“选中”。
 
-    /// B 选中时按新对话，页面里的入口还在等时切换到 A（窗口是 key 窗口：切换给 A 排一次聚焦，80ms 后），
+    /// B 选中时按新对话（上限 2：在 B 里新建），页面里的入口还在等时切换到 A（窗口是 key 窗口：切换给 A 排一次聚焦，80ms 后），
     /// 紧接着（A 的聚焦到点之前）入口返回。
     /// 点到了：给 B 的聚焦请求不算数（B 不是选中的），不取消 A 的那次，A 照常聚焦，只聚焦一次。
     /// 没点到：整页加载给 B（它自己的页面），A 不加载；A 照常聚焦。
     func testANewChatKeepsToItsTabAcrossARealSwitch() async throws {
         for inPage in [true, false] {
-            let rig = makeRig()
+            let rig = makeRig(capacity: 2)
             rig.tabs.windowIsKey = { true }
             rig.newChatInPage = inPage
             rig.newChatWaits = true
@@ -1367,7 +1371,8 @@ private final class TwoTabs {
         newChatGate = nil
     }
 
-    init(defaults: UserDefaults, backoffA: [TimeInterval]) {
+    /// capacity：列表的上限（新对话的测试用 2，见 TabEventOwnershipTests.makeRig）。
+    init(defaults: UserDefaults, backoffA: [TimeInterval], capacity: Int = TabList.defaultCapacity) {
         settings = AppSettings(defaults: defaults)
         appearance = PageAppearance(defaults: defaults)
         let runtimeB = WebRuntime(diagnostics: diagnostics, settings: settings, recovery: LoadRecovery(backoff: [60]),
@@ -1375,7 +1380,7 @@ private final class TwoTabs {
         // B 报深色、A 报白色：看得出加载完成时记的是哪个网页视图的颜色。窗口建好之前设，窗口不会看到变化。
         runtimeB.webView.underPageBackgroundColor = Self.dark
         let adapterB = ChatGPTAdapter(webView: runtimeB.webView, diagnostics: diagnostics, settings: settings)
-        let list = TabList()
+        let list = TabList(capacity: capacity)
         b = ChatTab(id: list.selected, runtime: runtimeB, adapter: adapterB)
         controller = ChatWindowController(webView: runtimeB.webView, toolbar: EmptyView(), diagnostics: diagnostics,
                                           appearance: appearance, page: b.page)
