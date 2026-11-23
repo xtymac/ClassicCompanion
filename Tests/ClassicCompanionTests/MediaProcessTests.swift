@@ -8,10 +8,12 @@ import XCTest
 final class MediaProcessTests: XCTestCase {
     @MainActor func testOnlyAWebKitMediaProcessIsAccepted() {
         let name = WebRuntime.mediaProcessName
-        XCTAssertTrue(WebRuntime.isMediaProcess(pid: 4321, name: name))
-        XCTAssertFalse(WebRuntime.isMediaProcess(pid: 4321, name: "com.apple.WebKit.WebContent"), "网页内容进程不能动")
-        XCTAssertFalse(WebRuntime.isMediaProcess(pid: 4321, name: "ClassicCompanion"))
-        XCTAssertFalse(WebRuntime.isMediaProcess(pid: 4321, name: nil), "查不到名字的 pid 不动")
+        // 合成的 pid：只要求有效、不是测试进程自己（自己的 pid 会被正确拒绝）。
+        let other: pid_t = getpid() == 4321 ? 4322 : 4321
+        XCTAssertTrue(WebRuntime.isMediaProcess(pid: other, name: name))
+        XCTAssertFalse(WebRuntime.isMediaProcess(pid: other, name: "com.apple.WebKit.WebContent"), "网页内容进程不能动")
+        XCTAssertFalse(WebRuntime.isMediaProcess(pid: other, name: "ClassicCompanion"))
+        XCTAssertFalse(WebRuntime.isMediaProcess(pid: other, name: nil), "查不到名字的 pid 不动")
         XCTAssertFalse(WebRuntime.isMediaProcess(pid: 0, name: name), "0 表示没有媒体进程；kill(0) 会发给整个进程组")
         XCTAssertFalse(WebRuntime.isMediaProcess(pid: -1, name: name), "kill(-1) 会发给所有进程")
         XCTAssertFalse(WebRuntime.isMediaProcess(pid: 1, name: name))
