@@ -18,6 +18,7 @@
 "menu.newChat" = "新增對話";
 "menu.toggleMode" = "切換小視窗／完整視窗";
 "menu.reload" = "重新載入";
+"menu.restartAudio" = "重新啟動音訊";
 "menu.closeWindow" = "關閉視窗";
 "menu.edit" = "編輯";
 "menu.undo" = "還原";
