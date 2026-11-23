@@ -207,6 +207,48 @@ final class WebRuntime: NSObject {
         load(Self.homeURL)
     }
 
+    /// WebKit 媒体（GPU）进程的名字；结束进程前用它核对 pid 确实是媒体进程。
+    static let mediaProcessName = "com.apple.WebKit.GPU"
+
+    /// 结束这个应用自己的 WebKit 媒体进程，WebKit 会马上另起一个；页面不重新加载，正在播放的声音会停。
+    /// 用途：应用运行期间音频输出设备变过以后，媒体进程可能一直往旧设备送声音（issue #16），重启整个应用能恢复。
+    /// 2026-11-23 在独立的测试程序里试过：结束后 2 秒内新进程起来，之后播放正常，网页内容进程不受影响。
+    /// 这一步能不能清掉“停在旧设备上”的状态还没有在故障现场验证过。
+    /// 媒体进程的 pid 来自 WKWebView 的非公开属性；取不到、或 pid 对不上媒体进程的名字时什么都不做，返回 false。
+    @discardableResult
+    func restartMediaProcess() -> Bool {
+        guard let pid = Self.mediaProcessID(of: webView) else {
+            diagnostics.log("media", "重启音频：找不到媒体进程，没有操作")
+            return false
+        }
+        guard kill(pid, SIGKILL) == 0 else {
+            diagnostics.log("media", "重启音频：结束媒体进程失败 errno \(errno)")
+            return false
+        }
+        diagnostics.log("media", "重启音频：已结束媒体进程 \(pid)，等 WebKit 重新启动")
+        return true
+    }
+
+    /// 网页视图的媒体进程 pid；没有媒体进程、系统不提供这个属性、或 pid 不是媒体进程时为 nil。
+    static func mediaProcessID(of webView: WKWebView) -> pid_t? {
+        let key = "_gpuProcessIdentifier"
+        guard webView.responds(to: Selector(key)),
+              let pid = (webView.value(forKey: key) as? NSNumber)?.int32Value,
+              isMediaProcess(pid: pid, name: processName(pid)) else { return nil }
+        return pid
+    }
+
+    /// 只认 pid 有效、不是自己、名字是 WebKit 媒体进程的情况。
+    static func isMediaProcess(pid: pid_t, name: String?) -> Bool {
+        pid > 1 && pid != getpid() && name == mediaProcessName
+    }
+
+    private static func processName(_ pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 256)
+        guard proc_name(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+
     /// ⌘R、窗口里的“重新加载”、网页内容进程终止后都走这里。
     /// 窗口里没有页面时 reload() 不会重新请求（2026-11-11 实测），所以显式 load：有失败地址就加载它；
     /// 首次加载还没完成或被取消时，重新加载最后请求的地址。

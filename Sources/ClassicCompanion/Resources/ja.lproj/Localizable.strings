@@ -18,6 +18,7 @@
 "menu.newChat" = "新規チャット";
 "menu.toggleMode" = "クイック / フルウインドウを切り替え";
 "menu.reload" = "再読み込み";
+"menu.restartAudio" = "オーディオを再起動";
 "menu.closeWindow" = "ウインドウを閉じる";
 "menu.edit" = "編集";
 "menu.undo" = "取り消す";

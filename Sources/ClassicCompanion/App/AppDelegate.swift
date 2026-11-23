@@ -449,6 +449,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let modeItem = fileMenu.addItem(withTitle: t("menu.toggleMode"), action: #selector(AppDelegate.toggleMode), keyEquivalent: modeEquivalent?.key ?? "")
         modeItem.keyEquivalentModifierMask = modeEquivalent?.modifiers ?? []
         fileMenu.addItem(withTitle: t("menu.reload"), action: #selector(AppDelegate.reloadPage), keyEquivalent: "r")
+        fileMenu.addItem(withTitle: t("menu.restartAudio"), action: #selector(AppDelegate.restartAudio), keyEquivalent: "")
         fileMenu.addItem(withTitle: t("menu.closeWindow"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         fileItem.submenu = fileMenu
         main.addItem(fileItem)
@@ -556,6 +557,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
     }
     @objc private func reloadPage() { web.reload() }
+    /// 朗读没有声音时手动用（issue #16）。找不到媒体进程时响一声，窗口和页面不动。
+    @objc private func restartAudio() { if !web.restartMediaProcess() { NSSound.beep() } }
     @objc private func checkForUpdates() { updates.checkForUpdates() }
 
     /// “检查更新…”跟随 Sparkle 的 canCheckForUpdates（等确认安装时也可用，用来叫回确认窗口）；

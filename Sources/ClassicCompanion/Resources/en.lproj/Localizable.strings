@@ -18,6 +18,7 @@
 "menu.newChat" = "New Chat";
 "menu.toggleMode" = "Toggle Quick / Full Window";
 "menu.reload" = "Reload";
+"menu.restartAudio" = "Restart Audio";
 "menu.closeWindow" = "Close Window";
 "menu.edit" = "Edit";
 "menu.undo" = "Undo";
