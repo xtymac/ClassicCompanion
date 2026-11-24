@@ -296,3 +296,18 @@ The [beta.4 pre-release](https://github.com/xtymac/ClassicCompanion/releases/tag
 Update through the live feed (2026-11-20, one MacBook Pro with Apple M4 Max, macOS 27.2): the installed 0.1.0-beta.3 was updated by the user with Check for Updates… to 0.1.0-beta.4 (20261119.2352) and reopened automatically. The installed app has the same code signature hash as the published build, passes `codesign --deep --strict`, and Gatekeeper accepted it (Notarized Developer ID). The user reported that the sign-in and the previous chat were kept, that the new label at the top of the window and an existing chat with data cards displayed normally, and that Read Aloud, started once with the window kept visible, produced sound with no red error message. This shows one normal playback; it does not show that the known Read Aloud issues are fixed.
 
 Not verified: whether the Dock icon changed right after this live update (the isolated test did not cover an app pinned to the Dock either), whether an unsent draft is kept across the update, and other Macs.
+
+## Release 0.1.0-beta.5 (build 20261124.2003) — 2026-11-24
+
+The [beta.5 pre-release](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.5) is tagged at `77cdf8a`. The app was signed with Developer ID. Apple accepted the app and the DMG for notarization, and both tickets were stapled. All 76 final release checks passed.
+
+| Check | Result |
+| --- | --- |
+| Automated tests | On `77cdf8a`: 769 window-free XCTest tests and 126 Swift Testing tests passed. The 109 window tests passed on `ac6c6ae`, before the image viewer change and the version bump, not on the release commit. |
+| Public downloads | All seven attachments downloaded without signing in and matched the local release files byte for byte. All six checksums in `SHA256SUMS` passed. The downloaded DMG had a valid notarization ticket and Gatekeeper accepted it. |
+| Public update feed | Commit `fb929c8` added beta.5. On November 24 at 20:22 JST, the public feed matched the locally signed appcast byte for byte. The beta.2, beta.3 and beta.4 entries retained their original signatures. |
+| Isolated upgrade from beta.4 | One run on an M4 Max MacBook Pro (macOS 27.2) using re-signed test copies, a local feed and a test key. Check for Updates… showed the confirmation, the app installed build 20261124.2003 and reopened automatically. The installed app passed `codesign --deep --strict`; 8 seconds later it was still running with one window and the File menu had New Tab. The test copy was not signed in. |
+
+Checked earlier on isolated debug copies, not on this build: opening, switching, closing and reopening tabs, the tab bar with two or more tabs, New Chat in a new tab, memory per tab (about 700 MB, released within 30 seconds of closing); Back from a non-chat page by arrow and `⌘[`, key repeat going back one page, menu dimming.
+
+Not verified: updating through the live feed; this build signed in for daily use; whether sign-in, the previous chat and unsent drafts are kept across the update; tab shortcuts during input-method composition, French and German layouts, the numeric keypad, VoiceOver, New Tab from the menu bar icon; web alerts and the sign-in pop-up with several tabs; mouse side buttons on real hardware; whether Restart Audio restores sound; the image viewer on screen; other Macs.
