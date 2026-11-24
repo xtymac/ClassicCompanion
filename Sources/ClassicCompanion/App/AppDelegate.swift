@@ -234,6 +234,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func applicationWillTerminate(_ notification: Notification) {
         mediaTimer?.invalidate()
+        // 关闭后留着的标签页（最多 60 秒）退出时马上释放，和到时间一样收尾。
+        chatTabs.releaseParkedTab("应用退出")
         hotKey.unregister()
         windowController.rememberQuickPosition()
     }

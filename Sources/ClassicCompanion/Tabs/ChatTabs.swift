@@ -116,6 +116,14 @@ final class ChatTabs {
     /// 聚焦请求的代号，每次 focusInputSoon(for:) 请求聚焦、每次切换标签页（select(_:)）都加一（不管是哪个标签页的）。
     /// 窗口里只有一个键盘焦点，最新的请求说了算：排着的聚焦到点时代号变了就不做，哪怕它的标签页又被选中了（选中 A → B → A）。
     private var focusGeneration = 0
+    /// 留着的标签页：关闭了、还没释放的那一个（最多一个，和 list.kept 一一对应），见 park(_:)。不在 tabs 里、不算上限、
+    /// 不在标签栏上。closedTabKeepTime 秒后、又关闭一个标签页时、退出时释放（releaseParkedTab(_:)）；之前 ⇧⌘T 原样放回。
+    private(set) var parked: ChatTab?
+    /// 到时间释放留着的那一个的任务（scheduleParkExpiry(_:)）。放回、释放时取消。
+    private var parkExpiry: Task<Void, Never>?
+    /// 关闭的标签页留多久（秒）：正式运行是 TabList.closedTabKeepSeconds（60）。0：不留，关闭时马上释放（原来的做法）。
+    /// 只有测试改它（测试不等 60 秒；只测释放这一步的测试设成 0）。
+    var closedTabKeepTime: TimeInterval = TabList.closedTabKeepSeconds
     /// 排版变化前记下阅读位置、窗口还没说排版结束的，按记下的先后（和窗口的前后两个回调一一配对）。
     /// 其中已经丢弃的（isSettled）留在原位、到时什么都不做。见 holdReadingPositionForLayout()。
     private var readingHolds: [ReadingHold] = []
@@ -295,6 +303,12 @@ final class ChatTabs {
     ///   为什么先切换再关：list 和 tabs 只在收尾时一起改一次，切换只改选中项，所以任何时候两者一一对应，选中项也总指着
     ///   tabs 里还在的那一页（selected 不会落空）；切换用的就是平常的 select，不另写一份显示别的页面的做法。
     ///   如果先让 TabList 关掉（它在一步里拿掉并改选中项），窗口那时还显示着 tab，select 又因为邻居已经是选中的而什么都不做。
+    ///
+    /// 留着（用户 11-24 定）：多个标签页时关掉的那一个先不释放，留 closedTabKeepTime 秒（park(_:)），这期间 ⇧⌘T 原样放回它
+    /// （reopenClosedTab()）；到时间再收尾（releaseParkedTab(_:) → 和 close(_:) 一样的收尾）。最多留一个：先释放之前留着的那一个
+    /// （它的记录留着），再处理这一个。临时聊天（TabList.mayKeep(url:)，按收尾时记录用的同一个地址）和 closedTabKeepTime 为 0 时
+    /// 不留，照上面原来的做法马上收尾。留着的这一个：关显示着的时第 2 步换成 WebRuntime.park()（对话框按取消回答、弹窗关掉、
+    /// 媒体停掉；放回后对话框又照常），第 5 步换成 park(_:)。
     func closeTab(_ tab: ChatTab) {
         guard holds(tab) else { return }
         guard tabs.count > 1 else {
@@ -302,15 +316,17 @@ final class ChatTabs {
             return
         }
         log(tab, "tabs", "关闭（剩 \(tabs.count - 1) 个）")
+        let keep = closedTabKeepTime > 0 && TabList.mayKeep(url: tab.url ?? tab.openedURL)
+        releaseParkedTab("又关闭了一个标签页")
         if isSelected(tab) {
             guard let nextID = list.selectionAfterClosing(tab.id), let next = tabs.first(where: { $0.id == nextID }) else {
                 preconditionFailure("多于一个标签页时关选中的，TabList 给出还在的下一个")
             }
-            tab.runtime.cancelDialogs()
+            if keep { tab.runtime.park() } else { tab.runtime.cancelDialogs() }
             dropReadingPositions(of: tab)
             select(next)
         }
-        close(tab)
+        if keep { park(tab) } else { close(tab) }
     }
 
     /// 关闭选中的标签页（⌘W，handleKey(_:_:)；菜单里的“关闭标签页”，TabMenus）：closeTab(_:) 按下这一刻选中的那个。
@@ -352,9 +368,11 @@ final class ChatTabs {
     /// 在那一步返回之前它们还拿着这个标签页，所以释放要等那一步返回或超时（正式运行时由适配器的脚本时限兜底）。
     /// 补排版：只有显示着的标签页会补排版，tab 不选中，它显示时开始的那次在切换走时已经作废（窗口不再调用它的 laidOut），
     /// 迟到的排版完成和时限也不再做事（窗口按那一次的身份核对）。
+    /// 之前留着的那一个先释放（closeTab(_:) 已经释放过；测试直接调用时也一样：每次关闭都结束之前的留着，TabList.close）。
     func close(_ tab: ChatTab) {
         guard holds(tab) else { return }
         precondition(!isSelected(tab), "关选中的标签页要先切换到别的标签页（closeTab(_:)）")
+        releaseParkedTab("又关闭了一个标签页")
         let address = tab.url ?? tab.openedURL
         tab.runtime.close()
         tab.adapter.close()
@@ -370,6 +388,85 @@ final class ChatTabs {
         diagnostics.tabClosed(tab.logTag)
         refreshTabBar()
         onTabsChanged?()
+    }
+
+    // MARK: - 留着关闭的标签页
+
+    /// 关闭的标签页 tab 先留着（closeTab(_:) 调用；前提：tab 在这组里、不是选中的、它能留着，之前留着的已经释放）：
+    /// 和 close(_:) 一样先从这组拿掉，但不释放网页。
+    /// 1. 运行时留着（WebRuntime.park()：弹窗关掉、对话框按取消回答、媒体停掉；之后新窗口不开、下载取消、对话框按取消回答）。
+    ///    关显示着的时 closeTab 在切换之前已经做过，这里不再做。
+    /// 2. 还在显示着的网页视图下面渲染的（⌘ 点击在后台打开的）藏起（ChatWindowController.stopRenderingBehind(_:)）。
+    ///    网页视图留在窗口的容器里藏着（和切换走的一样，固定在离开时的大小、记着那时排好版的样子）：放回时照常显示，
+    ///    窗口大小、缩放变过就补排版；释放时由 removeHiddenWebView(_:) 拿出来。藏着的拿不到点按和键盘焦点。
+    /// 3. 排着的聚焦取消，记下的阅读位置作废（和 close(_:) 一样；网页自己的滚动位置不动，放回时还在）。
+    /// 4. 从 list 和 tabs 里一起拿掉：列表照常记入最近关闭（同一个地址规则），并记作留着（TabList.close(_:url:keep:)）。
+    /// 5. 记作留着（parked），写一行“[tabs] 留着…”（带它的标签，没有地址和标题），排下到时间释放（scheduleParkExpiry(_:)）。
+    /// 不做的（释放时才做）：运行时、适配器、页面状态不关闭，不从网络状态上去掉，不告诉诊断它关闭了。
+    /// 它的网页事件只改它自己的地址、标题、提交次数（urlChanged、titleChanged、mainFrameCommitted 认它），
+    /// 别的（聚焦、Esc、对话地址、在新标签页打开链接）都因为它不在这组里、不是选中的而不做。
+    private func park(_ tab: ChatTab) {
+        precondition(holds(tab) && !isSelected(tab) && parked == nil, "只留这组里不选中的，并且之前留着的已经释放")
+        let address = tab.url ?? tab.openedURL
+        tab.runtime.park()
+        windowController.stopRenderingBehind(tab.runtime.webView)
+        tab.focusTask?.cancel()
+        tab.focusTask = nil
+        dropReadingPositions(of: tab)
+        let result = list.close(tab.id, url: address, keep: true)
+        precondition(result == .closed(selectionChanged: false) && list.kept?.id == tab.id, "不选中的标签页拿掉并留着")
+        tabs.removeAll { $0 === tab }
+        parked = tab
+        log(tab, "tabs", "留着（\(String(format: "%g", closedTabKeepTime)) 秒内 ⇧⌘T 原样放回）")
+        scheduleParkExpiry(tab)
+        refreshTabBar()
+        onTabsChanged?()
+    }
+
+    /// closedTabKeepTime 秒后释放留着的 tab（releaseParkedTab(_:)）。到点时它已经放回、释放、换成别的留着：什么都不做。
+    private func scheduleParkExpiry(_ tab: ChatTab) {
+        parkExpiry?.cancel()
+        let delay = closedTabKeepTime
+        parkExpiry = Task { [weak self, weak tab] in
+            try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
+            guard !Task.isCancelled, let self, let tab, self.parked === tab else { return }
+            self.releaseParkedTab("到时间（\(String(format: "%g", delay)) 秒）")
+        }
+    }
+
+    /// 释放留着的那一个（到时间、又关闭了一个标签页、退出应用）：写一行“[tabs] 释放留着的标签页：reason”（带它的标签），
+    /// 列表结束留着（TabList.dropKept()：它的记录留着，⇧⌘T 照记录重新加载），然后和 close(_:) 一样收尾（release(_:)），
+    /// 最后告诉菜单（onTabsChanged：没有记录时“重新打开”这时变灰）。没有留着的：什么都不做。
+    func releaseParkedTab(_ reason: String) {
+        guard let tab = parked else { return }
+        parked = nil
+        parkExpiry?.cancel()
+        parkExpiry = nil
+        if list.kept?.id == tab.id { list.dropKept() }
+        log(tab, "tabs", "释放留着的标签页：\(reason)")
+        release(tab)
+        onTabsChanged?()
+    }
+
+    /// 留着的 tab 的收尾：close(_:) 里释放的那几步，次序一样（拿掉、取消聚焦、阅读位置在留着时已经做过）：
+    /// 运行时关闭 → 适配器关闭 → 页面状态关闭 → 网页视图从窗口里拿出来 → 从网络状态上去掉 → 告诉诊断它关闭了。
+    private func release(_ tab: ChatTab) {
+        tab.runtime.close()
+        tab.adapter.close()
+        windowController.pageClosed(tab.page)
+        windowController.removeHiddenWebView(tab.runtime.webView)
+        tabLeft(tab)
+        diagnostics.tabClosed(tab.logTag)
+    }
+
+    /// tab 的网页事件还改不改它自己的状态（地址、标题、提交次数）：在这组里，或者是留着的那一个（放回时要是现在的）。
+    private func tracksPage(of tab: ChatTab) -> Bool {
+        holds(tab) || parked === tab
+    }
+
+    /// 这组的标签页加上留着的那一个：改设置时它也跟着改，放回时和别的标签页一样。
+    private var tabsAndParked: [ChatTab] {
+        parked.map { tabs + [$0] } ?? tabs
     }
 
     /// 关闭 tab 时它记下的阅读位置都作废：留着等再显示的那一次（pendingReadingRestore）拿掉；排版中记下的（readingHolds 里
@@ -469,7 +566,7 @@ final class ChatTabs {
     /// 关闭时运行时已经断开这个回调（WebRuntime.close()），这里是这组自己的规则，拿掉而没关闭的（removeForTesting）也一样。
     /// 路径变了：这一页还没放回的阅读位置按连续性规则再看一遍（readingPageChanged(_:)，选没选中都一样）。
     private func urlChanged(_ url: URL?, for tab: ChatTab) {
-        guard holds(tab) else { return }
+        guard tracksPage(of: tab) else { return }
         tab.url = url
         // 等对话内容时网页离开了要打开的那段对话（跳到登录页、对话没了回到首页）：遮挡马上撤，不等时限。
         if let url, tab.page.isCovered, tab.page.coverAwaitsContent,
@@ -505,7 +602,7 @@ final class ChatTabs {
     /// 和 urlChanged 一样）。
     /// 标题是对话内容（计划：只显示在标签栏上）：这里不写日志、不写诊断，也不给窗口当标题（窗口标题一直是 “Classic Companion”）。
     private func titleChanged(_ title: String?, isLoading: Bool, for tab: ChatTab) {
-        guard holds(tab) else { return }
+        guard tracksPage(of: tab) else { return }
         tab.title = title
         tab.isLoading = isLoading
         refreshTabBar()
@@ -685,7 +782,13 @@ final class ChatTabs {
     @discardableResult
     func newTab(bringingWindowForward: Bool = false) -> ChatTab? {
         open("新增", bringingWindowForward: bringingWindowForward,
-             place: { make in add(make).map { ($0, nil) } }) { _ in "新增（现在 \(tabs.count) 个）" }
+             place: { make in add(make).map { .fresh($0, url: nil) } }) { _ in "新增（现在 \(tabs.count) 个）" }
+    }
+
+    /// open(_:place:line:) 放进来的是哪种：新建的（要遮挡、加载 url；nil 是新对话页），还是原样放回的留着的那一个（不遮挡、不加载）。
+    private enum Placed {
+        case fresh(ChatTab, url: URL?)
+        case kept(ChatTab)
     }
 
     /// 新增（newTab()）和重新打开（reopenClosedTab()）共用的一条路，规则写在 newTab() 上：
@@ -696,11 +799,12 @@ final class ChatTabs {
     /// 返回放进来的那一个；不打开时返回 nil。
     /// - verb：日志里怎么说这件事（“新增”“重新打开”），不打开和先找回窗口的那几行用它。
     /// - bringingWindowForward：窗口显示着也先把它带到前面（见 newTab(bringingWindowForward:)）。
-    /// - place：用 makeTab 建一个标签页放进这组（list 和 tabs 一起改、不选中、接好线、登记到网络状态），返回它和要加载的地址。
+    /// - place：用 makeTab 建一个标签页放进这组（list 和 tabs 一起改、不选中、接好线、登记到网络状态），返回它和要加载的地址；
+    ///   或者把留着的那一个原样放回（.kept：之后不遮挡、不加载，直接切换过去）。
     ///   前面看过没到上限，所以总能放进来；放不进来是用错了（断言）。
     /// - line：放进来以后写的那一行（带它的标签，没有地址）。
     private func open(_ verb: String, bringingWindowForward: Bool = false,
-                      place: ((TabID) -> ChatTab) -> (tab: ChatTab, url: URL?)?,
+                      place: ((TabID) -> ChatTab) -> Placed?,
                       line: (ChatTab) -> String) -> ChatTab? {
         guard let makeTab, let revealWindow else { preconditionFailure("\(verb)标签页要有建法和找回窗口（AppDelegate 交进来）") }
         guard !isLaunchScreenUp else {
@@ -726,14 +830,23 @@ final class ChatTabs {
             logGroup("tabs", "\(verb)标签页：先把窗口带到前面")
             revealWindow()
         }
-        guard let (tab, url) = place(makeTab) else { preconditionFailure("上面看过没到上限，找回窗口不加标签页、不动记录") }
-        log(tab, "tabs", line(tab))
-        windowController.beginNewTabCover(for: tab.page, awaitingContent: awaitsConversation(tab, url))
-        if let url {
-            tab.openedURL = url
-            tab.runtime.load(url)
-        } else {
-            tab.runtime.newChat()
+        guard let placed = place(makeTab) else { preconditionFailure("上面看过没到上限，找回窗口不加标签页、不动记录") }
+        let tab: ChatTab
+        switch placed {
+        case .kept(let kept):
+            // 原样放回：不遮挡、不加载，直接切换过去。
+            tab = kept
+            log(tab, "tabs", line(tab))
+        case .fresh(let fresh, let url):
+            tab = fresh
+            log(tab, "tabs", line(tab))
+            windowController.beginNewTabCover(for: tab.page, awaitingContent: awaitsConversation(tab, url))
+            if let url {
+                tab.openedURL = url
+                tab.runtime.load(url)
+            } else {
+                tab.runtime.newChat()
+            }
         }
         select(tab)
         offerSeveralTabsTip()
@@ -754,15 +867,18 @@ final class ChatTabs {
     /// 有可以重新打开的记录（最近关闭的普通对话，见 TabList.recentlyClosed）。菜单项置灰看它（3.11，TabMenuRules）；
     /// 到上限、启动画面还在另外看（list.isFull、isLaunchScreenUp），这里不算进去。
     /// ⇧⌘T 不看它：没有记录时也交给 reopenClosedTab()（写一行“没有记录”），按键照样吃掉（D13、D17）。
+    /// 留着的标签页也算（TabList.canReopen）：没有对话地址的（写了草稿的新对话页）留着时也能放回；它到时间释放时
+    /// releaseParkedTab(_:) 告诉菜单（onTabsChanged），没有别的记录时菜单项这时变灰。
     var canReopenClosedTab: Bool {
-        !list.recentlyClosed.isEmpty
+        list.canReopen
     }
 
     /// 重新打开最近关闭的标签页（⇧⌘T，handleKey(_:_:)）：取最近关闭的那一条，新建一个标签页加载那个地址，放回它关闭时的位置
     /// （那个位置已经没有了就放最右，规则在 TabList.reopen(select:)），切换过去。连着调用按关闭的倒序逐个打开。
     /// 返回打开的那一个；不打开时返回 nil。应用里由 ⇧⌘T（3.10）和文件菜单（3.11）调用。
-    /// 是重新加载这个地址，不是原样找回：新的标识、运行时、适配器、页面状态和网页视图，关掉的那个标签页不再用
-    /// （它已经关闭、释放）；未发送的草稿和关闭前的页面现场都不在。
+    /// 没有留着的标签页时（它已经到时间释放，或者是更早关闭的记录）是重新加载这个地址，不是原样找回：新的标识、运行时、
+    /// 适配器、页面状态和网页视图，关掉的那个标签页不再用（它已经关闭、释放）；未发送的草稿和关闭前的页面现场都不在。
+    /// 有留着的标签页时先原样放回它，见最后一段。
     ///
     /// 不打开（列表、记录、选中项都不变，不建网页；写一行“[tabs] 不重新打开标签页：…”，不带标签）：
     /// - 没有记录（canReopenClosedTab 为 false）：别的什么都不做，不提示。先看这一条：没有记录时也不说启动画面、上限
@@ -779,11 +895,23 @@ final class ChatTabs {
     /// 它是新的网页视图，第一次显示：不补排版，没有留着的阅读位置（第一次加载由遮挡盖着）。聚焦（窗口是 key 窗口才聚焦）、
     /// 记下可恢复的对话地址都由 select 照常做：这时它还没有地址（tab.url 是 nil），记下的不改；加载后报出对话地址时
     /// 按平常的规则（urlChanged，它是选中的就记）。
+    ///
+    /// 有留着的标签页（closeTab(_:) 留着、还没到时间释放的那一个，就是最近关闭的那一个）：先原样放回它，同一条路、同样的不打开
+    /// （启动画面、到上限：它接着留着，到时间照常释放）。放回（bringBackParkedTab(_:)）：同一个 ChatTab，网页视图、页面、
+    /// 没发出的草稿、滚动位置都是它原来的；放回原位置（同一条规则），它记过的那条记录一起消耗；运行时不再留着
+    /// （WebRuntime.unpark()）；写一行“原样放回（第 k 个，现在 N 个，还有 M 条记录）”；不遮挡、不加载，直接切换过去
+    /// （select：窗口大小、缩放变过就补排版，聚焦、对话地址、排着的对话框照常）。
     @discardableResult
     func reopenClosedTab() -> ChatTab? {
         guard canReopenClosedTab else {
             logGroup("tabs", "不重新打开标签页：没有记录")
             return nil
+        }
+        if parked != nil {
+            return open("重新打开", place: bringBackParkedTab) { tab in
+                let position = (tabs.firstIndex { $0 === tab } ?? 0) + 1
+                return "原样放回（第 \(position) 个，现在 \(tabs.count) 个，还有 \(list.recentlyClosed.entries.count) 条记录）"
+            }
         }
         return open("重新打开", place: reinsertClosedTab) { tab in
             let position = (tabs.firstIndex { $0 === tab } ?? 0) + 1
@@ -793,9 +921,26 @@ final class ChatTabs {
 
     /// 取最近关闭的那条，用 make 建一个新的标签页放回记下的位置（list.reopen(select: false)：消耗这条记录、放回原位置或最右、
     /// 不选中），tabs 放在同一个位置（adopt(_:_:)）。返回它和要加载的地址。没有记录、已到上限时什么都不放，返回 nil（记录留着）。
-    private func reinsertClosedTab(_ make: (TabID) -> ChatTab) -> (tab: ChatTab, url: URL?)? {
+    private func reinsertClosedTab(_ make: (TabID) -> ChatTab) -> Placed? {
         guard case .reopened(let id, let url) = list.reopen(select: false) else { return nil }
-        return (adopt(id, make), url)
+        return .fresh(adopt(id, make), url: url)
+    }
+
+    /// 把留着的那一个原样放回（list.reopen(select: false) 给出 .broughtBack：同一个标识、放回原位置、它的记录一起消耗、不选中），
+    /// tabs 放在同一个位置；不再留着（取消到时间的释放，运行时 unpark()）。不建新的（make 不用）、不接线、不登记网络状态
+    /// （留着时都没拆）。没有留着的、已到上限：什么都不放，返回 nil。
+    private func bringBackParkedTab(_ make: (TabID) -> ChatTab) -> Placed? {
+        guard let tab = parked, case .broughtBack(let id) = list.reopen(select: false) else { return nil }
+        precondition(id == tab.id, "TabList 放回的就是留着的那一个")
+        parked = nil
+        parkExpiry?.cancel()
+        parkExpiry = nil
+        guard let index = list.tabs.firstIndex(of: id) else { preconditionFailure("list 里刚放回的标识") }
+        tabs.insert(tab, at: index)
+        tab.runtime.unpark()
+        refreshTabBar()
+        onTabsChanged?()
+        return .kept(tab)
     }
 
     // MARK: - ⌘ 点击链接在新标签页打开（3.12）
@@ -1125,7 +1270,7 @@ final class ChatTabs {
 
     /// tab 的主框架提交了（新的一份文档）。不在这组里的不管。
     private func mainFrameCommitted(_ tab: ChatTab) {
-        guard holds(tab) else { return }
+        guard tracksPage(of: tab) else { return }
         tab.mainFrameCommits += 1
         readingPageChanged(tab)
     }
@@ -1169,11 +1314,11 @@ final class ChatTabs {
         }
     }
 
-    // MARK: - 设置：每个标签页都改
+    // MARK: - 设置：每个标签页都改（留着的那一个也改：放回时和别的标签页一样，见 tabsAndParked）
 
     /// 网页增强脚本（设置里的“网页增强”“Esc 隐藏窗口”）：每个标签页都重新装，从左到右。
     func applyEnhancementScripts() {
-        tabs.forEach { $0.runtime.applyEnhancementScripts() }
+        tabsAndParked.forEach { $0.runtime.applyEnhancementScripts() }
     }
 
     /// 页面缩放：每个标签页都改（藏着的也改；再显示时缩放和离开时不同，窗口先补排版）。
@@ -1182,17 +1327,17 @@ final class ChatTabs {
     /// 不自己记下、放回——网页里那份记录是它和留着的那次共用的，马上放回会在 1.1 秒后放手，之后放回留着的那次就找不到了
     /// （3.2 记下的问题）。留着的那次在它排好版时照常放回（tabShownAndLaidOut(_:)）。
     func setPageZoom(_ zoom: Double) {
-        tabs.forEach { $0.runtime.setPageZoom(zoom, keepingReadingPosition: $0.pendingReadingRestore == nil) }
+        tabsAndParked.forEach { $0.runtime.setPageZoom(zoom, keepingReadingPosition: $0.pendingReadingRestore == nil) }
     }
 
     /// 允许其他应用读取网页内容：每个标签页都改。
     func setPageAccessibilityAllowed(_ allowed: Bool) {
-        tabs.forEach { $0.runtime.setPageAccessibilityAllowed(allowed) }
+        tabsAndParked.forEach { $0.runtime.setPageAccessibilityAllowed(allowed) }
     }
 
     /// 切换界面语言后：每个标签页开着的弹窗都换标题。
     func retitlePopups() {
-        tabs.forEach { $0.runtime.retitlePopups() }
+        tabsAndParked.forEach { $0.runtime.retitlePopups() }
     }
 
     #if DEBUG
@@ -1210,6 +1355,7 @@ final class ChatTabs {
     /// 关闭标签页的收尾是 close(_:)。
     func removeForTesting(_ tab: ChatTab) {
         precondition(holds(tab) && !isSelected(tab), "只拿掉这组里不选中的标签页")
+        releaseParkedTab("测试拿掉一个标签页")
         _ = list.close(tab.id, url: nil)
         tabs.removeAll { $0 === tab }
         tabLeft(tab)
