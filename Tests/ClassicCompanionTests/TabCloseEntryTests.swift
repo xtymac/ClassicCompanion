@@ -543,6 +543,8 @@ final class TabCloseRig {
                         makeTab: { [weak self] id in self!.build(id) },
                         revealWindow: { [weak self] in self?.timeline.append("找回窗口") },
                         tabBar: tabBarModel)
+        // 这里的测试核对关闭后马上收尾、照记录重新加载（原来的做法）：关闭的标签页不留着（留着见 ClosedTabKeepTests）。
+        tabs.closedTabKeepTime = 0
         tabs.wire(first)
         register(first)
         if withTabBar {

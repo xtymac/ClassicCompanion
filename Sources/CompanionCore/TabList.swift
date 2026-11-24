@@ -16,6 +16,8 @@ public struct TabID: Hashable, Sendable {
 /// - 只剩一个标签页时不关闭，由调用方处理（⌘W 隐藏窗口，不释放该页）。
 /// - 上一个 / 下一个到头绕回；⌘1–⌘4 选第 N 个，⌘9 选最后一个。
 /// - 关闭时只记普通对话地址和位置（见 `RecentlyClosedTabs`）；⇧⌘T 先打开最近关闭的那条，放回原位置并选中。
+/// - 最近关闭的那一个标签页可以留着（`kept`，最多一个，`close(_:url:keep:)`）：调用方不马上释放它，`closedTabKeepSeconds`
+///   秒内 ⇧⌘T 把它原样放回（`.broughtBack`），之后调用方释放它（`dropKept()`），⇧⌘T 照记录重新加载。
 /// - 不记标题：标题是对话内容，只显示在标签栏上。
 ///
 /// 启动画面还在时不能新增标签页，这由调用方判断，不在这里。
@@ -39,19 +41,33 @@ public struct TabList: Equatable, Sendable {
     public enum ReopenResult: Equatable, Sendable {
         /// 已放回（`reopen()` 同时选中）。调用方新建网页视图加载 `url`（是重新加载，不是原样找回）。
         case reopened(TabID, url: URL)
+        /// 留着的那一个已放回（同一个标识，`reopen()` 同时选中）：调用方把留着的标签页原样放回，不新建、不加载。
+        case broughtBack(TabID)
         /// 已到上限：不打开，这条记录不消耗。
         case atCapacity
-        /// 没有可以重新打开的记录。
+        /// 没有可以重新打开的记录，也没有留着的标签页。
         case nothingToReopen
     }
 
+    /// 留着的标签页（最近关闭的那一个，调用方还没释放它）：它的标识、关闭时的位置，和关闭时有没有记入最近关闭
+    /// （记了的话就是 `recentlyClosed.latest`：留着期间别的关闭都先结束留着，见 `close(_:url:keep:)`）。
+    public struct KeptTab: Equatable, Sendable {
+        public let id: TabID
+        public let index: Int
+        public let recorded: Bool
+    }
+
     public static let defaultCapacity = 4
+    /// 关闭的标签页留多久（秒）：这么久之内 ⇧⌘T 原样放回，之后调用方释放它（用户 11-24 定，一个常量，没有设置）。
+    public static let closedTabKeepSeconds: TimeInterval = 60
 
     public let capacity: Int
     /// 从左到右。
     public private(set) var tabs: [TabID]
     public private(set) var selected: TabID
     public private(set) var recentlyClosed: RecentlyClosedTabs
+    /// 留着的标签页，最多一个。不在 `tabs` 里、不算上限。
+    public private(set) var kept: KeptTab?
     private var nextID: Int
 
     public init(capacity: Int = TabList.defaultCapacity,
@@ -105,11 +121,14 @@ public struct TabList: Equatable, Sendable {
     /// 关的是选中项时选右边的邻居，没有就选左边。
     /// 关的不是选中项（例如标签栏上的关闭按钮）时选中项不变：计划只写了前一种，这里取不打扰当前标签页的读法。
     /// 关闭后选哪个只有一条规则，见 `selectionAfterClosing(_:)`。
-    public mutating func close(_ id: TabID, url: URL?) -> CloseResult {
+    /// 每次关闭都先结束之前留着的那一个（`kept` 变成 nil，它的记录留着）：调用方在这之前释放它。
+    /// `keep`：这一个留着（`kept`），除非 `mayKeep(url:)` 说不行（临时聊天）。只剩一个、不在列表里时什么都不改（之前留着的也留着）。
+    public mutating func close(_ id: TabID, url: URL?, keep: Bool = false) -> CloseResult {
         guard let index = tabs.firstIndex(of: id) else { return .notFound }
         guard let next = selectionAfterClosing(id) else { return .onlyTab }
         tabs.remove(at: index)
-        recentlyClosed.record(url: url, index: index)
+        let recorded = recentlyClosed.record(url: url, index: index)
+        kept = keep && Self.mayKeep(url: url) ? KeptTab(id: id, index: index, recorded: recorded) : nil
         guard id == selected else { return .closed(selectionChanged: false) }
         selected = next
         return .closed(selectionChanged: true)
@@ -122,6 +141,27 @@ public struct TabList: Equatable, Sendable {
         guard let index = tabs.firstIndex(of: id), tabs.count > 1 else { return nil }
         guard id == selected else { return selected }
         return index + 1 < tabs.count ? tabs[index + 1] : tabs[index - 1]
+    }
+
+    /// 关闭时地址是 `url` 的标签页能不能留着：临时聊天（查询参数里带临时聊天参数，`NavigationPolicy.isTemporaryChat`，
+    /// 和不进最近关闭的是同一条）不留，马上释放（用户 11-20：临时聊天不进“最近关闭”）。别的都能留，没有地址的（新对话页、
+    /// 写了草稿还没发的）也能。
+    public static func mayKeep(url: URL?) -> Bool {
+        guard let url else { return true }
+        return !NavigationPolicy.isTemporaryChat(url)
+    }
+
+    /// 结束留着（到时间了、要退出了）：`kept` 变成 nil，返回它的标识；它的记录留在最近关闭里，⇧⌘T 照记录重新加载。
+    /// 没有留着的：nil。
+    @discardableResult
+    public mutating func dropKept() -> TabID? {
+        defer { kept = nil }
+        return kept?.id
+    }
+
+    /// 有可以重新打开的：留着的标签页，或最近关闭的记录（菜单项置灰、⇧⌘T 看它）。
+    public var canReopen: Bool {
+        kept != nil || !recentlyClosed.isEmpty
     }
 
     // MARK: 选哪一个（不改列表）。下面的选择和按键的决定（TabKeys.keyAction）都用这几个，“哪一个”只有一条规则。
@@ -186,7 +226,17 @@ public struct TabList: Equatable, Sendable {
     /// 没有记录时一律返回 `.nothingToReopen`，即使已到上限：计划说没有记录时按键不响应，这里取不显示上限提示的读法。
     /// `select: false`：放回原位置、消耗这条记录，选中项不变。ChatTabs 用它：先把新标签页放进来，再经自己的切换入口选中它
     /// （和关闭时先切换、再拿掉一样：选中项只在窗口跟着换的那一步改，不会已经指着新的、窗口却还显示着别的）。
+    /// 有留着的标签页时先放回它（`.broughtBack`，同一个标识，放回的位置是同一条规则），它记过的那条记录一起消耗
+    /// （它就是最近关闭的那条）；已到上限时不放回，它接着留着。
     public mutating func reopen(select: Bool = true) -> ReopenResult {
+        if let kept {
+            guard !isFull else { return .atCapacity }
+            self.kept = nil
+            if kept.recorded { recentlyClosed.removeLatest() }
+            tabs.insert(kept.id, at: min(kept.index, tabs.count))
+            if select { selected = kept.id }
+            return .broughtBack(kept.id)
+        }
         guard let entry = recentlyClosed.latest else { return .nothingToReopen }
         guard !isFull else { return .atCapacity }
         recentlyClosed.removeLatest()

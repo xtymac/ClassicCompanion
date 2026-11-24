@@ -388,6 +388,8 @@ private final class ConversationRig {
                         openNewChat: { _ in true },
                         makeTab: { [weak self] id in self!.build(id) },
                         revealWindow: {})
+        // 这里的测试核对关闭后马上收尾、照记录重新加载（原来的做法）：关闭的标签页不留着（留着见 ClosedTabKeepTests）。
+        tabs.closedTabKeepTime = 0
         tabs.wire(first)
         first.runtime.loadRequest = { _ in }
         tabs.windowIsVisible = { true }

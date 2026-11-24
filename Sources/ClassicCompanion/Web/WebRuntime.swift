@@ -106,6 +106,12 @@ final class WebRuntime: NSObject {
     private(set) var dialogsCancelled = false
     /// cancelDialogs() 那一刻按取消处理的种类和个数（“提示框 1 个、文件选择 1 个”，没有就是空的），写进关闭那一行。
     private var cancelledDialogs = ""
+    /// 关闭的标签页留着（park()，ChatTabs.closeTab(_:) 不马上释放它）：网页还活着，但不出声、不显示任何东西——
+    /// 对话框马上按取消回答、不排着，新窗口不开，下载取消。unpark()（⇧⌘T 原样放回）改回。关闭以后不再改。
+    private(set) var isParked = false
+    /// 留着时停掉、放回时放开这个网页视图里的媒体（参数 true 停、false 放开）。正式运行见 suspendMedia(of:_:stillParked:)
+    /// （init 里接上）；只有测试换它：测试里核对调用了没有。
+    var setMediaSuspended: @MainActor (WKWebView, Bool) -> Void = { _, _ in }
 
     /// 消息桥白名单
     private static let allowedMessageTypes: Set<String> = ["escape"]
@@ -136,6 +142,9 @@ final class WebRuntime: NSObject {
         super.init()
         loadRequest = { [weak self] request in _ = self?.webView.load(request) }
         mainFrameIsLoading = { [weak self] in self?.webView.isLoading ?? false }
+        setMediaSuspended = { [weak self] web, suspended in
+            WebRuntime.suspendMedia(of: web, suspended) { self?.isParked == true }
+        }
         if watchesNetwork { startNetworkMonitor() }
 
         webView.navigationDelegate = self
@@ -542,6 +551,56 @@ final class WebRuntime: NSObject {
         onOpenLinkInTab(url, opening)
     }
 
+    // MARK: - 留着（关闭的标签页还没释放）
+
+    /// 关闭的标签页留着（ChatTabs.closeTab(_:)，最多 TabList.closedTabKeepSeconds 秒）：网页不释放，但不出声、不弹出东西。
+    /// 1. 开着的弹窗（登录、看图）都拆掉再关窗口，和关闭时一样（tearDownPopup(_:)）。
+    /// 2. 网页的对话框：排着的、放出来还没显示的、显示着的都按取消回答（显示着的文件选择收起），各正好一次；之后来的也马上按取消回答。
+    ///    和 cancelDialogs() 不同的只有一样：放回（unpark()）以后网页的对话框又照常显示。
+    /// 3. 媒体：先结束全屏、画中画，再暂停所有媒体、停住（不让网页自己再播），见 suspendMedia(of:_:)。
+    /// 之后到放回或关闭：新窗口不开、下载取消（导航策略、UI 代理里看 isParked）；外部链接本来就不交给浏览器（它不是选中的标签页）。
+    /// 网页自己的加载、脚本、网络请求照常（不停，ChatGPT 正在生成的回答怎么样由网页定）。
+    /// 已经关闭、已经留着：什么都不做。写一行（只有弹窗、对话框的个数和种类）。
+    func park() {
+        guard !isClosed, !isParked else { return }
+        isParked = true
+        let popups = popupWindows
+        popups.forEach {
+            tearDownPopup($0)
+            $0.close()
+        }
+        let dialogs = answerDialogsWithCancel()
+        setMediaSuspended(webView, true)
+        log("web", "留着：停掉媒体\(popups.isEmpty ? "" : "，关掉 \(popups.count) 个弹窗")"
+                   + (dialogs.isEmpty ? "" : "，网页的对话框按取消处理（\(dialogs)）"))
+    }
+
+    /// 留着的标签页原样放回（⇧⌘T）：对话框、新窗口、下载照常，媒体不再停住（暂停了的不自己接着播）。
+    /// 没有留着、已经关闭：什么都不做。不写日志（ChatTabs 写“原样放回”那一行）。
+    func unpark() {
+        guard !isClosed, isParked else { return }
+        isParked = false
+        setMediaSuspended(webView, false)
+    }
+
+    /// 正式运行时留着、放回对媒体做的（WKWebView 的公开接口，macOS 15 上都有）：
+    /// 停：closeAllMediaPresentations（结束全屏、画中画），pauseAllMediaPlayback（暂停），暂停完、还留着（stillParked）再
+    /// setAllMediaPlaybackSuspended(true)（停住：网页自己调 play() 也不出声，直到放开）。先暂停再停住：放开时不会自己接着播。
+    /// 暂停完之前已经放回了：不再停住（不然放回以后媒体一直停着）。
+    /// 放开：setAllMediaPlaybackSuspended(false)。
+    static func suspendMedia(of webView: WKWebView, _ suspended: Bool,
+                             stillParked: @escaping @MainActor () -> Bool = { true }) {
+        guard suspended else {
+            webView.setAllMediaPlaybackSuspended(false, completionHandler: nil)
+            return
+        }
+        webView.closeAllMediaPresentations(completionHandler: nil)
+        webView.pauseAllMediaPlayback { [weak webView] in
+            guard stillParked() else { return }
+            webView?.setAllMediaPlaybackSuspended(true, completionHandler: nil)
+        }
+    }
+
     // MARK: - 关闭
 
     /// 关闭这个页面（关闭标签页时由 ChatTabs.close(_:) 调用；入口是 ChatTabs.closeTab(_:)，应用里是多于一个标签页时的 ⌘W
@@ -654,7 +713,13 @@ extension WebRuntime: WKNavigationDelegate {
             log("nav", "关掉的弹窗或不认识的网页视图要导航：取消")
             return (.cancel, preferences)
         }
-        if navigationAction.shouldPerformDownload { return (.download, preferences) }
+        if navigationAction.shouldPerformDownload {
+            guard !isParked else {
+                log("download", "留着的标签页要下载：取消")
+                return (.cancel, preferences)
+            }
+            return (.download, preferences)
+        }
         // 子框架（例如 Cloudflare 验证 iframe）由网页自行管理
         guard let frame = navigationAction.targetFrame, frame.isMainFrame else { return (.allow, preferences) }
 
@@ -693,6 +758,10 @@ extension WebRuntime: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
         guard !isClosed, owns(webView) else { return .cancel }
+        if !navigationResponse.canShowMIMEType, isParked {
+            log("download", "留着的标签页要下载：取消")
+            return .cancel
+        }
         return navigationResponse.canShowMIMEType ? .allow : .download
     }
 
@@ -709,8 +778,8 @@ extension WebRuntime: WKNavigationDelegate {
     /// 和网页发起的下载一样：关闭以后、不是这一页的网页视图（owns(_:)）发起的，取消。
     @objc(_webView:contextMenuDidCreateDownload:)
     func webView(_ webView: WKWebView, contextMenuDidCreateDownload download: WKDownload) {
-        guard !isClosed, owns(webView) else {
-            if !isClosed { log("download", "关掉的弹窗或不认识的网页视图要下载：取消") }
+        guard !isClosed, owns(webView), !isParked else {
+            if !isClosed { log("download", isParked ? "留着的标签页要下载：取消" : "关掉的弹窗或不认识的网页视图要下载：取消") }
             download.cancel(nil)
             return
         }
@@ -862,6 +931,10 @@ extension WebRuntime: WKUIDelegate {
         guard !isClosed else { return nil }
         guard owns(webView) else {
             log("nav", "关掉的弹窗或不认识的网页视图要开新窗口：不开")
+            return nil
+        }
+        guard !isParked else {
+            log("nav", "留着的标签页要开新窗口：不开")
             return nil
         }
         let url = navigationAction.request.url
@@ -1045,7 +1118,7 @@ extension WebRuntime: WKUIDelegate {
     /// 放出来的那一个显示完，放下一个（showHeldDialogs()）。present 最多调用一次；这个函数每次调用正好返回一次。
     private func runDialog<Answer>(_ kind: WebDialogKind, from webView: WKWebView, cancel: Answer,
                                    present: (ShownDialog) async -> Answer) async -> Answer {
-        guard !dialogsCancelled else { return cancel }
+        guard !dialogsCancelled, !isParked else { return cancel }
         guard owns(webView) else {
             log("web", "关掉的弹窗或不认识的网页视图的\(kind.name)：不显示，按取消回答")
             return cancel
@@ -1079,7 +1152,8 @@ extension WebRuntime: WKUIDelegate {
             showHeldDialogs()
         }
         // 显示着时发出它的弹窗关上了：用户的回答不交给它（文件选择不把选的文件给关上的弹窗）。
-        return dialogsCancelled || !owns(webView) ? cancel : answer
+        // 显示着时这一页留着了（park()）：也按取消回答。
+        return dialogsCancelled || shown.cancelled || !owns(webView) ? cancel : answer
     }
 
     /// 排着的 held 等到放出来。返回 true：该显示了（这时它是 dialogTurn，这一页是选中的、对话框没有按取消处理）；
@@ -1092,7 +1166,7 @@ extension WebRuntime: WKUIDelegate {
     private func waitForTurn(_ held: HeldDialog) async -> Bool {
         while true {
             await withCheckedContinuation { held.waiting = $0 }
-            if dialogsCancelled { return false }
+            if dialogsCancelled || held.cancelled { return false }
             if isSelectedTab() { return true }
             if dialogTurn === held { dialogTurn = nil }
             heldDialogs.insert(held, at: 0)
@@ -1103,7 +1177,7 @@ extension WebRuntime: WKUIDelegate {
     /// 调用的地方：ChatTabs.select(_:) 的最后一步（这一页被选中、窗口显示了它）；放出来的那一个显示完时（runDialog）。
     /// 对话框按取消处理了（关闭、正在关闭）、这一页不是选中的、已经放出一个还没显示完、没有排着的：什么都不做。
     func showHeldDialogs() {
-        guard !dialogsCancelled, isSelectedTab(), dialogTurn == nil, !heldDialogs.isEmpty else { return }
+        guard !dialogsCancelled, !isParked, isSelectedTab(), dialogTurn == nil, !heldDialogs.isEmpty else { return }
         let next = heldDialogs.removeFirst()
         dialogTurn = next
         next.resume()
@@ -1118,16 +1192,31 @@ extension WebRuntime: WKUIDelegate {
     func cancelDialogs() {
         guard !dialogsCancelled else { return }
         dialogsCancelled = true
+        cancelledDialogs = answerDialogsWithCancel()
+    }
+
+    /// 这一刻排着的、放出来还没显示的、显示着的对话框都按取消回答（cancelDialogs() 和留着时 park() 共用）：每一个记上已取消，
+    /// 排着的都继续（醒来看到已取消，按取消回答），放出来的那一个不再算轮到它，显示着的调用 dismiss。每一个都正好回答一次。
+    /// 返回取消的种类和个数（“提示框 1 个、文件选择 1 个”，没有就是空的）。不写日志。
+    private func answerDialogsWithCancel() -> String {
         let waiting = heldDialogs
         heldDialogs = []
         var kinds = waiting.map(\.kind)
         if let turn = dialogTurn, !shownDialogs.contains(where: { $0.held === turn }) {
             kinds.append(turn.kind)
+            turn.cancelled = true
         }
+        dialogTurn = nil
         kinds += shownDialogs.map(\.kind)
-        waiting.forEach { $0.resume() }
-        shownDialogs.forEach { $0.dismiss?() }
-        cancelledDialogs = WebDialogKind.allCases.compactMap { kind in
+        waiting.forEach {
+            $0.cancelled = true
+            $0.resume()
+        }
+        shownDialogs.forEach {
+            $0.cancelled = true
+            $0.dismiss?()
+        }
+        return WebDialogKind.allCases.compactMap { kind in
             let count = kinds.filter { $0 == kind }.count
             return count == 0 ? nil : "\(kind.name) \(count) 个"
         }.joined(separator: "、")
@@ -1219,6 +1308,8 @@ final class ShownDialog {
     /// 显示的是排着、放出来的那一个时是它；马上显示的是 nil。
     fileprivate let held: HeldDialog?
     var dismiss: (() -> Void)?
+    /// 显示着时按取消处理了（关闭、留着）：不管用户选了什么，都按取消回答。
+    fileprivate var cancelled = false
 
     fileprivate init(_ kind: WebDialogKind, held: HeldDialog?) {
         self.kind = kind
@@ -1232,6 +1323,8 @@ final class ShownDialog {
 fileprivate final class HeldDialog {
     let kind: WebDialogKind
     var waiting: CheckedContinuation<Void, Never>?
+    /// 按取消处理了（关闭、留着）：醒来时按取消回答，不显示、不放回去排着。
+    var cancelled = false
 
     init(_ kind: WebDialogKind) {
         self.kind = kind
