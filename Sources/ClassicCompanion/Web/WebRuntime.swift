@@ -705,8 +705,14 @@ extension WebRuntime: WKNavigationDelegate {
 
     /// 右键菜单“下载图像 / 下载链接文件”发起的下载不走上面两个公开回调，WebKit 只通过这个导航代理方法交出来
     /// （WKNavigationDelegatePrivate）。没人接时下载被悄悄丢掉（2026-11-24 实测）。只是响应一个方法名，不调用私有接口。
+    /// 和网页发起的下载一样：关闭以后、不是这一页的网页视图（owns(_:)）发起的，取消。
     @objc(_webView:contextMenuDidCreateDownload:)
     func webView(_ webView: WKWebView, contextMenuDidCreateDownload download: WKDownload) {
+        guard !isClosed, owns(webView) else {
+            if !isClosed { log("download", "关掉的弹窗或不认识的网页视图要下载：取消") }
+            download.cancel(nil)
+            return
+        }
         download.delegate = self
     }
 
@@ -859,8 +865,13 @@ extension WebRuntime: WKUIDelegate {
         }
         let url = navigationAction.request.url
         // 内嵌图片（data:）：WebKit 不肯把 data: 地址当顶层页面打开，交给它只会得到空白弹窗。
+        // 和弹窗一样：不是选中的标签页要开，不开；开的看图窗口记作这一页的弹窗（presentPopup），关上、这一页关闭时拆掉。
         if let image = ImageDataURL.decode(url) {
-            diagnostics.log("nav", "在新窗口打开内嵌图片 \(image.mimeType)")
+            guard isSelectedTab() else {
+                log("nav", "不显示的标签页要开弹窗：不开")
+                return nil
+            }
+            log("nav", "在新窗口打开内嵌图片 \(image.mimeType)")
             openImageViewer(image)
             return nil
         }
