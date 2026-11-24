@@ -21,6 +21,8 @@ final class ImageDataURLTests: XCTestCase {
         XCTAssertNil(ImageDataURL.decode(URL(string: "https://chatgpt.com/a.png")))
         XCTAssertNil(ImageDataURL.decode(URL(string: "data:text/html,%3Cscript%3E1%3C/script%3E")), "只显示图片")
         XCTAssertNil(ImageDataURL.decode(URL(string: "data:,hello")))
+        XCTAssertNil(ImageDataURL.decode(URL(string: "data:image/x-unknown;base64,AQID")), "只认列出的图片类型")
+        XCTAssertNil(ImageDataURL.decode(URL(string: "data:image/svg+xml%22%3E%3Cscript%3E;base64,AQID")))
         XCTAssertNil(ImageDataURL.decode(URL(string: "data:image/png;base64,")))
         XCTAssertNil(ImageDataURL.decode(URL(string: "blob:https://chatgpt.com/1234")))
     }

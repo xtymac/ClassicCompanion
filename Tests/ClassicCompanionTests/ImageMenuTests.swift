@@ -19,19 +19,46 @@ final class ImageMenuTests: XCTestCase {
         XCTAssertTrue(makeRuntime().responds(to: Selector(("_webView:contextMenuDidCreateDownload:"))))
     }
 
-    func testDataImageOpensInItsOwnViewer() async throws {
-        let web = makeRuntime()
-        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"30\"><rect width=\"40\" height=\"30\" fill=\"green\"/></svg>"
-        let payload = try XCTUnwrap(ImageDataURL.decode(URL(string: "data:image/svg+xml;utf8," + svg.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!)))
+    /// SVG 里带链接、内嵌网页和子框架：只能当图片显示。
+    private static let hostileSVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"30\"><rect width=\"40\" height=\"30\" fill=\"green\"/>"
+        + "<a href=\"https://example.invalid/\"><rect width=\"40\" height=\"30\" fill-opacity=\"0\"/></a>"
+        + "<foreignObject width=\"40\" height=\"30\"><iframe xmlns=\"http://www.w3.org/1999/xhtml\" src=\"https://example.invalid/\"></iframe></foreignObject></svg>"
+
+    private func openViewer(_ web: WebRuntime) async throws -> WKWebView {
+        let payload = try XCTUnwrap(ImageDataURL.decode(URL(string: "data:image/svg+xml;utf8," + Self.hostileSVG.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!)))
         let viewer = web.openImageViewer(payload, show: false)
-        var found = false
-        for _ in 0..<50 where !found {
+        var shown = false
+        for _ in 0..<50 where !shown {
             try await Task.sleep(nanoseconds: 100_000_000)
-            found = ((try? await viewer.evaluateJavaScript("!!document.querySelector('svg rect')")) as? Bool) ?? false
+            shown = ((try? await viewer.evaluateJavaScript("document.images.length === 1 && document.images[0].naturalWidth === 40")) as? Bool) ?? false
         }
-        XCTAssertTrue(found, "图片应当显示出来，而不是空白页")
+        XCTAssertTrue(shown, "图片应当显示出来，而不是空白页")
+        return viewer
+    }
+
+    func testDataImageOpensInItsOwnViewer() async throws {
+        let viewer = try await openViewer(makeRuntime())
         XCTAssertFalse(viewer.configuration.websiteDataStore.isPersistent)
         XCTAssertFalse(viewer.configuration.defaultWebpagePreferences.allowsContentJavaScript)
+    }
+
+    func testViewerShowsTheImageOnlyAsAnImage() async throws {
+        let viewer = try await openViewer(makeRuntime())
+        let counts = try await viewer.evaluateJavaScript("[document.querySelectorAll('svg, a, iframe, foreignObject').length, window.frames.length].join()") as? String
+        XCTAssertEqual(counts, "0,0", "SVG 不作为文档展开，里面的链接和子框架不存在")
+        let html = WebRuntime.imageViewerHTML(try XCTUnwrap(ImageDataURL.decode(URL(string: "data:IMAGE/PNG;base64,AQID"))))
+        XCTAssertTrue(html.contains("default-src 'none'; img-src data:; style-src 'unsafe-inline'"))
+        XCTAssertTrue(html.contains("<img src=\"data:image/png;base64,AQID\">"))
+    }
+
+    func testViewerRefusesEveryLaterNavigation() async throws {
+        let viewer = try await openViewer(makeRuntime())
+        viewer.load(URLRequest(url: URL(string: "https://example.invalid/")!))
+        viewer.loadHTMLString("<p id='replaced'>x</p>", baseURL: URL(string: "https://chatgpt.com/")!)
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertEqual(viewer.url?.absoluteString, "about:blank")
+        let stillImage = try await viewer.evaluateJavaScript("document.images.length === 1 && !document.getElementById('replaced')") as? Bool
+        XCTAssertEqual(stillImage, true)
     }
 
     func testPagePointFollowsZoomAndFlipping() {

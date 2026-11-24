@@ -8,13 +8,16 @@ public enum ImageDataURL {
         public let data: Data
     }
 
-    /// 只接受 image/* 类型；其他 data: 地址返回 nil。
+    /// 只认这几种图片类型，返回的 mimeType 是这里写定的字符串，不是地址里的原文。
+    static let allowedTypes: Set<String> = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/svg+xml"]
+
+    /// 只接受上面的图片类型；其他 data: 地址返回 nil。
     public static func decode(_ url: URL?) -> Payload? {
         guard let text = url?.absoluteString, text.lowercased().hasPrefix("data:"),
               let comma = text.firstIndex(of: ",") else { return nil }
         let header = text[text.index(text.startIndex, offsetBy: 5)..<comma]
         let parts = header.split(separator: ";", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
-        guard let mime = parts.first?.lowercased(), mime.hasPrefix("image/"), mime.count > 6 else { return nil }
+        guard let mime = parts.first?.lowercased(), allowedTypes.contains(mime) else { return nil }
         let body = String(text[text.index(after: comma)...])
         guard let unescaped = body.removingPercentEncoding else { return nil }
         let data: Data?
@@ -23,7 +26,7 @@ public enum ImageDataURL {
         } else {
             data = unescaped.data(using: .utf8)
         }
-        guard let data, !data.isEmpty else { return nil }
-        return Payload(mimeType: mime, data: data)
+        guard let data, !data.isEmpty, let canonical = allowedTypes.first(where: { $0 == mime }) else { return nil }
+        return Payload(mimeType: canonical, data: data)
     }
 }
