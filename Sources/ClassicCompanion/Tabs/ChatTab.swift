@@ -23,8 +23,13 @@ final class ChatTab {
     /// 排着的聚焦输入框任务。再次请求聚焦时先取消它；关闭标签页时也取消（ChatTabs.close(_:)）。
     var focusTask: Task<Void, Never>?
     /// 这一页现在的地址：运行时最近一次报的（含 query），ChatTabs.urlChanged 记。阅读位置的连续性规则拿它和记下时的比；
-    /// 关闭时记入最近关闭的也是它（ChatTabs.close(_:)，是普通对话地址才记）。
+    /// 关闭时记入最近关闭的也是它（ChatTabs.close(_:)，是普通对话地址才记；它是 nil 时用 openedURL）。
     var url: URL?
+    /// 打开这个标签页时要它加载的地址（重新打开、⌘ 点击链接；新增的、启动时的那个没有）。只在 url 是 nil 时用：
+    /// 关闭时记入最近关闭的地址是 url ?? openedURL（ChatTabs.close(_:)）。网页还没报地址，或者第一次加载没提交就失败
+    /// （WebKit 在 load 时马上报要加载的地址，失败后退回 nil）时关掉，记的就是它，不丢。网页报了别的地址时按报的。
+    /// 不改 url 的意思：阅读位置的连续性规则只看网页报的。
+    var openedURL: URL?
     /// 这一页的主框架提交过几次（每次提交，网页里就换了一份文档），ChatTabs 在运行时报提交时加一。
     /// 阅读位置的连续性规则用它看记下以后有没有提交过。
     var mainFrameCommits = 0

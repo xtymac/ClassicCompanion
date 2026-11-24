@@ -512,6 +512,48 @@ final class TabMenuTests: XCTestCase {
         XCTAssertEqual(rig.lines(since: mark).filter { !$0.hasPrefix("[menu]") }, [])
     }
 
+    /// 按一下 ⇧⌘T 只重新打开一个（11-24 用户说“好像一次开了两个”，查有没有两条路都做）。留两条记录，开两个就看得出来。
+    /// - 聊天窗口里：按键监视处理、吃掉（返回 true：正式运行时监视返回 nil，AppKit 不再把这次按键交给菜单和网页），
+    ///   开一个，还剩一条记录，没有 [menu] 那一行。
+    /// - 按住不放：第一个重复的按键（isARepeat）起就吃掉、不做；菜单那条路遇到重复按键也不做。
+    /// - 菜单的 ⇧⌘T 只在聊天窗口是 key 窗口时挂在菜单项上；别的窗口在前面时菜单项不带它，按键监视也放过：
+    ///   哪种情形下都只有一条路接这个键。
+    func testOnePressOfCommandShiftTReopensExactlyOneTab() throws {
+        let rig = make()
+        let built = try build(rig)
+        try leaveARecord(rig)
+        try leaveARecord(rig)
+        XCTAssertEqual(rig.tabs.list.recentlyClosed.entries.count, 2)
+        built.menus.refresh()
+        XCTAssertEqual(keys(built.items.reopenClosedTab), "⇧⌘T", "聊天窗口在前面：菜单项带着 ⇧⌘T")
+        let window = try XCTUnwrap(rig.controller.window).windowNumber
+        func commandShiftT(repeating: Bool, in number: Int) throws -> Bool {
+            let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift],
+                                                       timestamp: 0, windowNumber: number, context: nil, characters: "T",
+                                                       charactersIgnoringModifiers: "T", isARepeat: repeating,
+                                                       keyCode: UInt16(kVK_ANSI_T)))
+            return rig.controller.handleKeyDown(KeyPress(event))
+        }
+        let mark = rig.mark()
+        XCTAssertTrue(try commandShiftT(repeating: false, in: window), "按键监视吃掉")
+        XCTAssertEqual(rig.tabs.tabs.count, 2)
+        XCTAssertEqual(rig.tabs.list.recentlyClosed.entries.count, 1, "只用掉一条")
+        for _ in 0..<3 { XCTAssertTrue(try commandShiftT(repeating: true, in: window), "重复的也吃掉") }
+        repeating = true
+        built.menus.reopenClosedTab(nil)
+        repeating = false
+        XCTAssertEqual(rig.tabs.tabs.count, 2)
+        XCTAssertEqual(rig.tabs.list.recentlyClosed.entries.count, 1)
+        XCTAssertEqual(rig.lines(since: mark).filter { $0.hasPrefix("[tabs] 重新打开（") }.count, 1)
+        XCTAssertEqual(menuLines(rig, since: mark), ["[menu] 菜单 重新打开最近关闭的标签页：按住不放的重复按键，不做"])
+
+        key = other
+        built.menus.refresh()
+        XCTAssertNil(keys(built.items.reopenClosedTab), "别的窗口在前面：菜单项不带 ⇧⌘T")
+        XCTAssertFalse(try commandShiftT(repeating: false, in: window + 1000), "别的窗口的按键：监视放过")
+        XCTAssertEqual(rig.tabs.list.recentlyClosed.entries.count, 1)
+    }
+
     // MARK: - 用户的键
 
     /// 用户的唤醒键或切换键就是这一项的组合：这一项不显示快捷键（照样能点）；左上角 × 的提示不写 ⇧⌘W。⌘W 照常。
