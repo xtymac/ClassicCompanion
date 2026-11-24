@@ -147,7 +147,7 @@ final class PopupWindowTeardownTests: XCTestCase {
         XCTAssertEqual(rig.lines(since: mark), ["[web] 网页关掉了弹窗：停止加载，不再认它"])
     }
 
-    /// 这一页关闭：开着的弹窗也拆掉（代理断开、不再记着），关上一次；只写关闭那一行。
+    /// 这一页关闭：开着的弹窗也拆掉（不再记着，代理留着），关上一次；只写关闭那一行。
     func testClosingThePageTearsDownItsPopups() {
         let rig = make()
         let (web, window) = popup(rig)
