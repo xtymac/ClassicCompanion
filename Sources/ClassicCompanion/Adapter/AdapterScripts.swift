@@ -92,6 +92,17 @@ enum AdapterScripts {
     });
     """
 
+    /// 网页里排出了对话内容没有：有没有显示着（有布局盒子、有高度）的一问一答。只返回 "shown" 或 "none"，不读正文。
+    /// [data-turn-key] 是 2026-11 登录后的页面实测的（每个最外层的是一问一答，阅读位置也用它）；后两个是以前的结构，留作候选。
+    /// 一问一答是虚拟化的（只排视口附近的），但对话打开时视口里总有。只看显示着的：换页面后旧内容可能藏着留在页面里。
+    /// 认不出（选择器都失效）时一直是 "none"，等对话内容的遮挡照时限撤，不会一直盖着。
+    static let conversationShown = """
+    const shown = el => el.getClientRects().length > 0 && el.getBoundingClientRect().height > 0;
+    const found = ['[data-turn-key]', '[data-testid^="conversation-turn-"]', '[data-message-author-role]']
+      .some(s => Array.from(document.querySelectorAll(s)).some(shown));
+    return found ? 'shown' : 'none';
+    """
+
     /// 小窗里藏起 ChatGPT 页头自己的侧栏按钮和新建按钮。用户 1524：小窗里点侧栏会卡住，“小窗里面就不要有这两个按钮了”，
     /// 并破例同意为这两个按钮改网页（2026-11-08）。只加一条样式，不删除、不移动元素；
     /// 只在 ChatGPT 的窄排版（不到 768 CSS 像素，即小窗）生效，完整窗口照常。藏起来的新建按钮仍可被顶部“新建对话”点击。

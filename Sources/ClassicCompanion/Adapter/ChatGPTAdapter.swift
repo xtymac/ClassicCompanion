@@ -129,6 +129,14 @@ final class ChatGPTAdapter {
         }
     }
 
+    /// 网页里排出了对话内容（至少一个显示着的一问一答，AdapterScripts.conversationShown）。带对话地址打开的标签页的遮挡
+    /// 等它（ChatTabs.watchConversation(_:)）。网页增强关着、不是聊天页面、关闭以后、脚本出错或超时（1 秒）都是 false：
+    /// 认不出时遮挡照时限撤。不读正文，不写日志（脚本出错、超时照 run 的规则写一行）。
+    func conversationContentShown() async -> Bool {
+        guard isEnabled, onChatPage else { return false }
+        return await run(AdapterScripts.conversationShown, timeout: 1) == "shown"
+    }
+
     /// 返回结果代码（用于 Gate C 统计），不抢占登录框或弹窗焦点。
     func focusInput() async -> String {
         guard isEnabled, settings.focusInputOnShow else { return "disabled" }

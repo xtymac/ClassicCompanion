@@ -97,6 +97,19 @@ public enum NavigationPolicy {
         return comps.url
     }
 
+    /// 地址是主站的一段对话（/c/<id> 或 /g/<gpt>/c/<id>，https）时返回对话 id，别的都是 nil。查询参数和片段不看，
+    /// 临时聊天参数也不看（和 restorableConversationURL 不同：这里只问“是不是、是哪一段对话”）。
+    /// 用来认“网页还在要打开的那段对话上”：同一个 id 就算，路径前面多了或少了 /g/<gpt> 也算（ChatTabs 的等对话内容）。
+    /// id 不写进日志。
+    public static func conversationID(_ url: URL?) -> String? {
+        guard let url, url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased(), chatHosts.contains(host) else { return nil }
+        let parts = url.path.split(separator: "/")
+        if parts.count == 2, parts[0] == "c" { return String(parts[1]) }
+        if parts.count == 4, parts[0] == "g", parts[2] == "c" { return String(parts[3]) }
+        return nil
+    }
+
     /// 临时聊天的查询参数名。代码里能找到的地址只有 /?temporary-chat=true（新建临时聊天的首页）。
     static let temporaryChatParameter = "temporary-chat"
 

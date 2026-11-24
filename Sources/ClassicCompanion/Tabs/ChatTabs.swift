@@ -108,6 +108,11 @@ final class ChatTabs {
     /// 从打开起最多 backgroundRenderLimit 秒（一直没加载完成：断网、重试中）。只有测试改它们。
     var backgroundRenderSettle: TimeInterval = 5
     var backgroundRenderLimit: TimeInterval = 30
+    /// 带对话地址打开的标签页等对话内容时（见 watchConversation(_:)）：网页里有没有排出对话内容。就是它的适配器
+    /// conversationContentShown()；只有测试换它：网页里没有真的页面。
+    var conversationShown: @MainActor (ChatTab) async -> Bool = { await $0.adapter.conversationContentShown() }
+    /// 等对话内容时隔多久看一次。只有测试改它。
+    var conversationCheckInterval: TimeInterval = 0.25
     /// 聚焦请求的代号，每次 focusInputSoon(for:) 请求聚焦、每次切换标签页（select(_:)）都加一（不管是哪个标签页的）。
     /// 窗口里只有一个键盘焦点，最新的请求说了算：排着的聚焦到点时代号变了就不做，哪怕它的标签页又被选中了（选中 A → B → A）。
     private var focusGeneration = 0
@@ -398,7 +403,8 @@ final class ChatTabs {
         // 聚焦只给选中的标签页。
         tab.runtime.onMainFrameLoaded = { [weak self, weak tab] in
             guard let self else { return }
-            self.windowController.endLaunchScreen("网页已加载", for: page)
+            // 等对话内容的遮挡这时不撤（外壳出来了，见 ChatWindowController.pageDidLoad(_:)），别的照原来撤。
+            self.windowController.pageDidLoad(page)
             // 网页第一次加载完成才恢复跟随页面底色；加载失败、启动画面到时限都不恢复，等之后哪次加载完成。
             // 报的颜色是这个标签页的网页视图此刻报的（不显示的标签页只记在它的页面状态里）。
             self.windowController.pageDidFinishLoading(page, reportedColor: webView.underPageBackgroundColor)
@@ -465,6 +471,11 @@ final class ChatTabs {
     private func urlChanged(_ url: URL?, for tab: ChatTab) {
         guard holds(tab) else { return }
         tab.url = url
+        // 等对话内容时网页离开了要打开的那段对话（跳到登录页、对话没了回到首页）：遮挡马上撤，不等时限。
+        if let url, tab.page.isCovered, tab.page.coverAwaitsContent,
+           NavigationPolicy.conversationID(url) != NavigationPolicy.conversationID(tab.openedURL) {
+            windowController.pageLeftConversation(tab.page)
+        }
         if isSelected(tab), let restorable = NavigationPolicy.restorableConversationURL(url) {
             saveLastConversation(restorable)
         }
@@ -587,6 +598,41 @@ final class ChatTabs {
         if let restorable = NavigationPolicy.restorableConversationURL(tab.url) { saveLastConversation(restorable) }
         backButtonMayHaveChanged()
         tab.runtime.showHeldDialogs()
+        watchConversation(tab)
+    }
+
+    // MARK: - 等对话内容
+
+    /// 带对话地址打开（⇧⌘T、⌘ 点击和 ⇧⌘ 点击对话链接）、网页增强开着：它的遮挡等对话内容
+    /// （ChatWindowController.beginNewTabCover(for:awaitingContent:)）。网页增强关着时看不了网页，照原来的规则。
+    private func awaitsConversation(_ tab: ChatTab, _ url: URL?) -> Bool {
+        tab.adapter.isEnabled && NavigationPolicy.conversationID(url) != nil
+    }
+
+    /// 看 tab 的网页里排没排出对话内容（conversationShown），排出来了就告诉窗口（ChatWindowController.conversationDidShow(_:)，
+    /// 遮挡撤掉）。只在它的遮挡还在等对话内容时看；每 conversationCheckInterval 看一次，提交以后才看（之前网页里还是空的）。
+    /// 只在它显示着、或在显示着的网页视图下面渲染（⌘ 点击在后台打开）时看：藏着的网页视图 WebKit 不让 ChatGPT 排内容，
+    /// 看也没用；它再显示时 select(_:) 再开始看。已经在看就不再开一个。
+    /// 不写日志（结束的那一行由窗口写）；不碰网页内容，只问有没有。
+    private func watchConversation(_ tab: ChatTab) {
+        guard tab.conversationWatch == nil, tab.page.isCovered, tab.page.coverAwaitsContent else { return }
+        let interval = conversationCheckInterval
+        tab.conversationWatch = Task { [weak self, weak tab] in
+            while true {
+                try? await Task.sleep(for: .milliseconds(Int(interval * 1000)))
+                guard let self, let tab else { break }
+                guard self.holds(tab), tab.page.isCovered, tab.page.coverAwaitsContent,
+                      self.isSelected(tab) || self.windowController.isRenderingBehind(tab.runtime.webView) else { break }
+                guard tab.page.hasCommittedPage else { continue }
+                let shown = await self.conversationShown(tab)
+                guard self.holds(tab), tab.page.isCovered, tab.page.coverAwaitsContent else { break }
+                if shown {
+                    self.windowController.conversationDidShow(tab.page)
+                    break
+                }
+            }
+            tab?.conversationWatch = nil
+        }
     }
 
     /// 换上来的 tab 要补排版：窗口在它的网页视图还藏着、还是离开时的大小时调用（排版变化之前）。
@@ -682,7 +728,7 @@ final class ChatTabs {
         }
         guard let (tab, url) = place(makeTab) else { preconditionFailure("上面看过没到上限，找回窗口不加标签页、不动记录") }
         log(tab, "tabs", line(tab))
-        windowController.beginNewTabCover(for: tab.page)
+        windowController.beginNewTabCover(for: tab.page, awaitingContent: awaitsConversation(tab, url))
         if let url {
             tab.openedURL = url
             tab.runtime.load(url)
@@ -810,13 +856,14 @@ final class ChatTabs {
             ? "⇧⌘ 点击链接，打开并切换过去（第 \(position) 个，现在 \(tabs.count) 个）"
             : "⌘ 点击链接，在后台打开（第 \(position) 个，现在 \(tabs.count) 个）")
         if opening == .background { windowController.addBackgroundWebView(tab.runtime.webView) }
-        windowController.beginNewTabCover(for: tab.page)
+        windowController.beginNewTabCover(for: tab.page, awaitingContent: awaitsConversation(tab, url))
         tab.openedURL = url
         tab.runtime.load(url)
         if opening == .foreground {
             select(tab)
         } else {
             stopRenderingBehind(tab, after: backgroundRenderLimit, "到时限（\(String(format: "%g", backgroundRenderLimit)) 秒）")
+            watchConversation(tab)
         }
         offerSeveralTabsTip()
         return tab

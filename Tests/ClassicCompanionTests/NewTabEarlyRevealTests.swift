@@ -27,7 +27,6 @@ final class NewTabEarlyRevealTests: XCTestCase {
     static let pageDark = NSColor(srgbRed: 0x21 / 255.0, green: 0x21 / 255.0, blue: 0x21 / 255.0, alpha: 1)
     /// 还没有页面时 WebKit 在深色外观下报的颜色（见 LaunchColourTests）。
     static let blankDark = NSColor(srgbRed: 0x1E / 255.0, green: 0x1E / 255.0, blue: 0x1E / 255.0, alpha: 1)
-    private let chat = URL(string: "https://chatgpt.com/c/abc")!
 
     /// saved：记下的页面颜色（遮挡的底色）；nil 是没有记下（遮挡用系统颜色）。
     private func make(saved: NSColor?) -> EarlyRig {
@@ -235,10 +234,12 @@ final class NewTabEarlyRevealTests: XCTestCase {
 
     /// 在后台打开的（不显示）：同一条规则——提交之前报的、深浅不同的不撤，提交后同一深浅的撤；写不显示的那一行（带标签），
     /// 窗口一点不变。之后加载完成不再写。换上它：不盖、没有淡出那层。
+    /// 链接不是对话（GPT 首页）：对话链接的遮挡等对话内容，不照这条撤（见 ConversationCoverTests）。
     func testABackgroundTabsCoverEndsByTheSameRuleWhileHidden() throws {
+        let gpt = URL(string: "https://chatgpt.com/g/g-1")!
         for shade in shades {
             let rig = make(saved: shade.saved)
-            let b = try XCTUnwrap(rig.tabs.openLink(chat, from: rig.first, .background))
+            let b = try XCTUnwrap(rig.tabs.openLink(gpt, from: rig.first, .background))
             XCTAssertTrue(b.page.isCovered)
             XCTAssertTrue(rig.controller.page === rig.first.page)
             let window = rig.windowState()
