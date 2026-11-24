@@ -115,4 +115,29 @@ import Testing
         }
         #expect(texts.count == 4, "四种语言各不相同")
     }
+
+    /// 实际的 beta.5 说明：四种语言各取到自己那一段，两个小标题、标签页和后退的快捷键、内存说明都在，没有剩下的标签或实体。
+    @Test func betaFiveReleaseNotesSplitByLanguage() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("docs/release-notes/0.1.0-beta.5.html")
+        let html = try String(contentsOf: url, encoding: .utf8)
+        let headings: [String: (String, String)] = ["en": ("What’s new", "Improvements"), "zh-Hans": ("新功能", "改进"),
+                                                    "zh-Hant": ("新功能", "改進"), "ja": ("新機能", "改善")]
+        var texts: Set<String> = []
+        for (language, (first, second)) in headings {
+            let text = try #require(ReleaseNotesText.plainText(from: html, language: language), "\(language)")
+            #expect(text.hasPrefix(first), "\(language)：\(text.prefix(40))")
+            #expect(text.contains("\n\(second)\n"), "\(language)：第二个小标题")
+            #expect(text.contains("\n• "), "\(language)：要有列表项")
+            for needle in ["⌘T", "⌘[", "700 MB"] {
+                #expect(text.contains(needle), "\(language)：提到 \(needle)")
+            }
+            #expect(!text.contains("<") && !text.contains(">"), "\(language)：不留标签")
+            #expect(text.range(of: #"&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);"#, options: .regularExpression) == nil,
+                    "\(language)：不留实体")
+            texts.insert(text)
+        }
+        #expect(texts.count == 4, "四种语言各不相同")
+    }
 }
