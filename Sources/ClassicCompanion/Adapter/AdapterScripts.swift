@@ -32,7 +32,9 @@ enum AdapterScripts {
     // 2026-11-03 实测（未登录页面）：输入框为 textarea#mobile-composer-prompt[name=prompt]，页面无 data-testid。
     // 登录后的 DOM 尚未实测，以下其余候选来自既往结构，须以诊断报告中的“选择器命中”确认。
     const CAND = {
-      input: ['#prompt-textarea', 'textarea[name="prompt"]', 'form [contenteditable="true"][role="textbox"]', 'form [contenteditable="true"]', 'form textarea'],
+      // 2026-11-24 实测（已登录对话页）：#prompt-textarea 已不存在；底部输入框和“编辑消息”的编辑框是同一种组件，
+      // 只有底部输入框的 form 带 data-chatgpt-composer。它排第一，否则编辑时排在前面的编辑框会被当成底部输入框。
+      input: ['form[data-chatgpt-composer] [contenteditable="true"]', '#prompt-textarea', 'textarea[name="prompt"]', 'form [contenteditable="true"][role="textbox"]', 'form [contenteditable="true"]', 'form textarea'],
       message: ['[data-message-author-role]'],
       assistant: ['[data-message-author-role="assistant"]'],
       user: ['[data-message-author-role="user"]'],
@@ -423,8 +425,69 @@ enum AdapterScripts {
         restoreCaret();
         setTimeout(() => { entry.later = composerState(); }, 500);
       };
+      // 用户 2026-11-24：编辑以前发的消息时，编辑框滚到头会带着整页滚走，编辑框就离开视线了。
+      // 指针在编辑框的滚动区上时，滚到头的滚轮不再传给外层。没到头的照常由网页自己滚。
+      // 只在指针或光标在这类输入框上时监听滚轮（不含底部输入框），平时不影响对话滚动。
+      const FIELD = 'textarea, [contenteditable="true"], [contenteditable=""]';
+      const isEditField = a => {
+        if (!(a instanceof Element) || !a.matches(FIELD)) return false;
+        const input = pick(CAND.input);
+        return !(input && (a === input || input.contains(a)));
+      };
+      // 指针可能在输入框上，也可能在它外面那层的留白上。
+      const editFieldNear = t => {
+        if (!(t instanceof Element)) return null;
+        const f = t.closest(FIELD) || t.closest('form')?.querySelector(FIELD);
+        return isEditField(f) ? f : null;
+      };
+      // 滚动条可能在输入框自己身上，也可能在外面包的一层上（2026-11-24 实测是外面一层）。
+      const editBox = a => {
+        for (let el = a, i = 0; el && i < 6; el = el.parentElement, i++) {
+          if (el.scrollHeight - el.clientHeight < 2) continue;
+          const oy = getComputedStyle(el).overflowY;
+          if (oy === 'auto' || oy === 'scroll' || oy === 'overlay') return el;
+        }
+        return null;
+      };
+      const keepWheel = e => {
+        if (e.ctrlKey || !e.deltaY || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+        const box = editBox(editFieldNear(e.target));
+        if (!box || !box.contains(e.target)) return;
+        const atEnd = e.deltaY < 0 ? box.scrollTop <= 0 : box.scrollTop + box.clientHeight >= box.scrollHeight - 1;
+        if (atEnd && e.cancelable) e.preventDefault();
+      };
+      const wheelOptions = { capture: true, passive: false };
+      const near = { pointer: false, focus: isEditField(document.activeElement) };
+      const watchWheel = () => window[near.pointer || near.focus ? 'addEventListener' : 'removeEventListener']('wheel', keepWheel, wheelOptions);
+      const editFocus = e => { near.focus = e.type === 'focusin' && isEditField(e.target); watchWheel(); };
+      const editHover = e => { near.pointer = !!editFieldNear(e.target); watchWheel(); };
+      watchWheel();
+      // 用户 2026-11-24：点“编辑消息”后光标没有进编辑框。原因没查清（Chrome 里网页自己会把光标放进去）。
+      // 这里兜底：点了按钮之后出现了新的编辑框、而光标不在里面，就放进去，停在末尾。光标已经在别的输入框里（底部输入框除外）时不动。
+      const editFields = () => [...document.querySelectorAll('form textarea, form [contenteditable="true"]')].filter(f => visible(f) && isEditField(f));
+      const focusNewEdit = e => {
+        if (!(e.target instanceof Element) || !e.target.closest('button, [role="button"]')) return;
+        const before = new Set(editFields());
+        let settled = false;
+        for (const delay of [120, 350, 800]) setTimeout(() => {
+          if (settled) return;
+          const fresh = editFields().find(f => !before.has(f));
+          if (!fresh) return;
+          settled = true;
+          const a = document.activeElement;
+          if (a === fresh || fresh.contains(a) || isEditField(a) || a?.matches?.('input, select')) return;
+          fresh.focus({ preventScroll: true });
+          try {
+            if (fresh.tagName === 'TEXTAREA') fresh.selectionStart = fresh.selectionEnd = fresh.value.length;
+            else { const r = document.createRange(); r.selectNodeContents(fresh); r.collapse(false); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+          } catch (err) {}
+          note({ t: now(), kind: 'edit-focused', delay });
+        }, delay);
+      };
       const listeners = [
         [window, 'keydown', capture, true], [window, 'keydown', bubble, false],
+        [window, 'focusin', editFocus, true], [window, 'focusout', editFocus, true],
+        [window, 'mouseover', editHover, true], [window, 'click', focusNewEdit, true],
         [window, 'compositionstart', composition, true], [window, 'compositionend', composition, true],
         [window, 'resize', resized, false], [window, 'focusin', focusMove, true], [window, 'focusout', focusMove, true],
         [document, 'visibilitychange', visibility, false], [document, 'selectionchange', selectionMoved, false],
@@ -552,6 +615,7 @@ enum AdapterScripts {
         for (const [t, type, fn, cap] of listeners) t.removeEventListener(type, fn, cap);
         releaseHold();
         window.removeEventListener('pagehide', releaseHold);
+        near.pointer = near.focus = false; watchWheel();
         delete window.__ccReadingHold;
         clearTimeout(resizeTimer);
         delete window.__ccRemoveEscape;

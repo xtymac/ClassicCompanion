@@ -347,6 +347,120 @@ final class PageTests: XCTestCase {
         XCTAssertEqual(top, 40)
     }
 
+    /// 2026-11-24 在真实页面上量到的结构：编辑框和底部输入框是同一种组件（form 里的 contenteditable，role=textbox），
+    /// 编辑框排在前面；滚动条在编辑框外面包的一层上；只有底部输入框的 form 带 data-chatgpt-composer。
+    private let editFixture = """
+        <html><body style="margin:0"><main><div id="scroll" style="height:400px;overflow-y:auto">
+        <p id="above" style="height:300px;margin:0">earlier</p>
+        <form><div id="box" style="max-height:100px;overflow-y:auto">
+        <div id="edit" contenteditable="true" role="textbox" style="height:400px">draft</div></div></form>
+        <p style="height:600px;margin:0">later</p></div>
+        <form data-chatgpt-composer><div id="composer" contenteditable="true" role="textbox">x</div></form></main></body></html>
+        """
+
+    /// 用户 2026-11-24：编辑以前发的消息时，编辑框滚到头会带着整页滚走。返回各种情况下滚轮是否被拦下。
+    func testWheelStaysInsideTheMessageBeingEdited() async throws {
+        let web = try await page(editFixture)
+        _ = try await js(web, AdapterScripts.escapeUserScript)
+        let result = try await js(web, """
+            const box = document.getElementById('box'), edit = document.getElementById('edit');
+            const stopped = (el, deltaY) => !el.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY }));
+            const out = {};
+            const over = el => el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+            out.away = stopped(edit, -100);
+            over(edit);
+            out.pointerOnly = stopped(edit, -100);
+            over(document.getElementById('above'));
+            out.pointerLeft = stopped(edit, -100);
+            edit.focus();
+            out.topUp = stopped(edit, -100);
+            out.topDown = stopped(edit, 100);
+            box.scrollTop = 150;
+            out.middleUp = stopped(edit, -100);
+            out.middleDown = stopped(edit, 100);
+            box.scrollTop = box.scrollHeight;
+            out.bottomDown = stopped(edit, 100);
+            out.bottomUp = stopped(edit, -100);
+            out.outside = stopped(document.getElementById('above'), 100);
+            document.getElementById('composer').focus();
+            out.composerFocused = stopped(edit, 100);
+            edit.focus();
+            window.__ccRemoveEscape();
+            out.removed = stopped(edit, 100);
+            out
+            """) as? [String: Bool]
+        XCTAssertEqual(result, [
+            "away": false, "pointerOnly": true, "pointerLeft": false, "topUp": true, "topDown": false, "middleUp": false, "middleDown": false,
+            "bottomDown": true, "bottomUp": false, "outside": false, "composerFocused": false, "removed": false,
+        ])
+    }
+
+    /// 用户 2026-11-24：点“编辑消息”后光标没有进编辑框。网页没放的时候由脚本放进去；网页自己放了、或用户已经在别的输入框里，就不动。
+    func testANewEditBoxGetsTheCaret() async throws {
+        let web = try await page("""
+            <html><body><main><div id="turn"></div><button id="pencil">edit</button><button id="other">other</button>
+            <input id="search">
+            <form data-chatgpt-composer><div id="composer" contenteditable="true" role="textbox">x</div></form></main>
+            <script>
+            document.getElementById('pencil').onclick = () => setTimeout(() => {
+              document.getElementById('turn').innerHTML = '<form><div id="edit" contenteditable="true" role="textbox">draft</div></form>';
+            }, 30);
+            </script></body></html>
+            """)
+        _ = try await js(web, AdapterScripts.escapeUserScript)
+        // 光标在末尾：选区收起，停在编辑框全部内容之后。
+        let active = """
+            (() => { const el = document.activeElement, r = getSelection().getRangeAt(0), pre = document.createRange();
+              pre.selectNodeContents(el); pre.setEnd(r.endContainer, r.endOffset);
+              return el.id + ':' + (r.collapsed ? pre.toString().length : -1); })()
+            """
+        _ = try await js(web, "document.getElementById('composer').focus(); document.getElementById('other').click(); 0")
+        try await Task.sleep(for: .milliseconds(500))
+        let untouched = try await js(web, "document.activeElement.id") as? String
+        XCTAssertEqual(untouched, "composer")
+        _ = try await js(web, "document.getElementById('pencil').click(); 0")
+        try await Task.sleep(for: .milliseconds(500))
+        let focused = try await js(web, active) as? String
+        XCTAssertEqual(focused, "edit:5")
+        _ = try await js(web, """
+            document.getElementById('turn').innerHTML = ''; document.getElementById('pencil').click();
+            document.getElementById('search').focus(); 0
+            """)
+        try await Task.sleep(for: .milliseconds(500))
+        let elsewhere = try await js(web, "document.activeElement.id") as? String
+        XCTAssertEqual(elsewhere, "search")
+    }
+
+    /// 同一件事用真的滚轮事件走一遍 WebKit：编辑框已在顶上，指针在编辑框上往上滚。不加脚本时外层会跟着滚，加了以后不动。
+    func testRealWheelAtTheTopOfTheEditBoxLeavesThePageInPlace() async throws {
+        func outerTopAfterWheel(script: Bool) async throws -> Double {
+            let web = try await page(editFixture)
+            let window = NSWindow(contentRect: CGRect(x: -30000, y: -30000, width: 720, height: 520), styleMask: .borderless,
+                                  backing: .buffered, defer: false)
+            window.contentView = web
+            window.orderBack(nil)
+            defer { window.orderOut(nil) }
+            if script { _ = try await js(web, AdapterScripts.escapeUserScript) }
+            _ = try await js(web, "document.getElementById('scroll').scrollTop = 250; document.getElementById('edit').focus(); 0")
+            try await Task.sleep(for: .milliseconds(200))
+            // 编辑框在网页里的 y 50…150。NSEvent(cgEvent:) 没有窗口，位置按屏幕坐标算，所以直接给窗口里的点。
+            let screenHeight = try XCTUnwrap(NSScreen.screens.first).frame.height
+            for _ in 0..<5 {
+                let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 40, wheel2: 0, wheel3: 0))
+                cg.location = CGPoint(x: 200, y: screenHeight - (520 - 100))
+                web.scrollWheel(with: try XCTUnwrap(NSEvent(cgEvent: cg)))
+                try await Task.sleep(for: .milliseconds(60))
+            }
+            try await Task.sleep(for: .milliseconds(400))
+            let top = try await js(web, "document.getElementById('scroll').scrollTop") as? Double
+            return try XCTUnwrap(top)
+        }
+        let plain = try await outerTopAfterWheel(script: false)
+        XCTAssertLessThan(plain, 250, "没加脚本时外层应该跟着滚，否则这个测试没在测东西")
+        let kept = try await outerTopAfterWheel(script: true)
+        XCTAssertEqual(kept, 250)
+    }
+
     func testZoomHoldIsHarmlessWithoutAConversation() async throws {
         let web = try await page("<html><body><main><p>empty</p></main></body></html>")
         _ = try await js(web, AdapterScripts.escapeUserScript)
