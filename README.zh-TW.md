@@ -12,9 +12,9 @@
 
 這是採用 [Apache-2.0](LICENSE) 的**公開原始碼儲存庫**。原始碼、下載及使用者意見統一於本儲存庫。
 
-**[下載 0.1.0-beta.4（DMG）→](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.4/ClassicCompanion-0.1.0-beta.4-20261119.2352-arm64.dmg)** · [版本說明](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.4) · [回饋](https://github.com/xtymac/ClassicCompanion/issues)
+**[下載 0.1.0-beta.5（DMG）→](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.5/ClassicCompanion-0.1.0-beta.5-20261124.2003-arm64.dmg)** · [版本說明](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.5) · [回饋](https://github.com/xtymac/ClassicCompanion/issues)
 
-最新試用版：0.1.0-beta.4（建置 20261119.2352），預先發布版本，適用於 macOS 15 或以上版本的 Apple 晶片 Mac。已安裝 0.1.0-beta.2 或 0.1.0-beta.3 的使用者可以在 Classic Companion 選單中選擇「檢查更新項目⋯」。已安裝 0.1.0-beta.1 的使用者需要手動安裝一次本版，之後的版本可以在 App 內更新。
+最新試用版：0.1.0-beta.5（建置 20261124.2003），預先發布版本，適用於 macOS 15 或以上版本的 Apple 晶片 Mac。已安裝 0.1.0-beta.2、0.1.0-beta.3 或 0.1.0-beta.4 的使用者可以在 Classic Companion 選單中選擇「檢查更新項目⋯」。已安裝 0.1.0-beta.1 的使用者需要手動安裝一次本版，之後的版本可以在 App 內更新。
 
 ## 審查與驗證
 
