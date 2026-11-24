@@ -16,6 +16,8 @@ final class WebRuntime: NSObject {
     let log: TabLog
     private let settings: AppSettings
     private var observations: [NSKeyValueObservation] = []
+    /// 这一页开着的弹窗的窗口（createWebViewWith 开的，测试用 adoptPopupForTesting 记下的）。窗口关上（不管谁关的）时
+    /// 由 tearDownPopup(_:) 拿掉；不在这里的网页视图（关掉的弹窗、不认识的）一律不给做事（见 owns(_:)）。
     private var popupWindows: [NSWindow] = []
 
     /// 主框架 URL 变化（含 SPA pushState）
@@ -47,7 +49,7 @@ final class WebRuntime: NSObject {
     var openInBrowser: @MainActor (URL) -> Void = { _ = NSWorkspace.shared.open($0) }
     /// 把登录等弹窗的窗口显示到前面（makeKeyAndOrderFront）。正式运行就是原来的做法；只有测试换它：测试不能显示窗口。
     var showPopupWindow: @MainActor (NSWindow) -> Void = { $0.makeKeyAndOrderFront(nil) }
-    /// 弹窗的窗口在不在屏幕上：可见、没有最小化（isInFront(_:) 看它）。只有测试换它：测试里的弹窗窗口从不显示。
+    /// 开着的弹窗的窗口在不在屏幕上：可见、没有最小化（isInFront(_:) 看它）。只有测试换它：测试里的弹窗窗口从不显示。
     var popupWindowIsOnScreen: @MainActor (NSWindow) -> Bool = { $0.isVisible && !$0.isMiniaturized }
 
     /// 加载失败、窗口里没有页面时的恢复（2026-11-11 开机白屏）。见 LoadRecovery。
@@ -481,7 +483,8 @@ final class WebRuntime: NSObject {
     /// 不显示的标签页的网页什么时候真的这样做（网页自己的跳转、脚本、计时器）这里测不到：真的触发要在 M1 的屏幕检查上看。
     private func openExternally(_ url: URL, from webView: WKWebView) {
         guard isInFront(webView) else {
-            let source = webView === self.webView ? "不显示的标签页" : "不显示的标签页的弹窗（窗口不在屏幕上）"
+            let source = webView === self.webView ? "不显示的标签页"
+                : owns(webView) ? "不显示的标签页的弹窗（窗口不在屏幕上）" : "关掉的弹窗或不认识的网页视图"
             log("nav", "\(source)要把外部链接交给默认浏览器：不交，取消：\(Redactor.describe(url))")
             return
         }
@@ -491,19 +494,32 @@ final class WebRuntime: NSObject {
 
     /// 发出请求的网页视图 webView 现在是不是在用户眼前（外部链接交不交给浏览器看它）：
     /// - 这一页自己的网页视图：这一页是选中的标签页（isSelectedTab；没接上的运行时总是 true）。
-    /// - 这一页开的弹窗，窗口在屏幕上（popupWindowIsOnScreen）：是。弹窗是自己的窗口，切换标签页时不藏起来，
+    /// - 这一页开着的弹窗，窗口在屏幕上（popupWindowIsOnScreen）：是。弹窗是自己的窗口，切换标签页时不藏起来，
     ///   用户可能正在用它（比如点登录页上的条款链接），所以不跟着标签页选不选中。
-    /// - 弹窗的窗口不在屏幕上（关掉了、藏起、最小化）、不认识的网页视图：和这一页一样（isSelectedTab）。
+    /// - 这一页开着的弹窗，窗口不在屏幕上（藏起、最小化，还没关）：和这一页一样（isSelectedTab）。
+    /// - 别的（窗口已经关上的弹窗、不认识的网页视图）：不是，不管这一页选不选中（owns(_:)）。
     private func isInFront(_ webView: WKWebView) -> Bool {
-        isPopupOnScreen(webView) || isSelectedTab()
+        if webView === self.webView { return isSelectedTab() }
+        guard let window = popupWindow(of: webView) else { return false }
+        return popupWindowIsOnScreen(window) || isSelectedTab()
     }
 
     /// webView 是不是这一页开着的弹窗的网页视图，并且弹窗的窗口在屏幕上（popupWindowIsOnScreen）。这一页自己的网页视图不是。
     private func isPopupOnScreen(_ webView: WKWebView) -> Bool {
-        guard webView !== self.webView, let window = popupWindows.first(where: { $0.contentView === webView }) else {
-            return false
-        }
-        return popupWindowIsOnScreen(window)
+        popupWindow(of: webView).map(popupWindowIsOnScreen) ?? false
+    }
+
+    /// webView 是这一页开着的哪个弹窗的网页视图；不是（这一页自己的、窗口已经关上的弹窗的、不认识的）就是 nil。
+    private func popupWindow(of webView: WKWebView) -> NSWindow? {
+        guard webView !== self.webView else { return nil }
+        return popupWindows.first { $0.contentView === webView }
+    }
+
+    /// webView 是这一页的：自己的网页视图，或者开着的弹窗的（窗口还没关上，在不在屏幕上都算）。
+    /// 不是的（窗口关上以后的弹窗、不认识的网页视图）发来的请求一律不给做：导航取消、不给新窗口、对话框不显示按取消回答、
+    /// 外部链接不交给浏览器、内容进程终止时不重新加载。窗口关上时代理已经断开（tearDownPopup(_:)），这是多一道防线。
+    private func owns(_ webView: WKWebView) -> Bool {
+        webView === self.webView || popupWindow(of: webView) != nil
     }
 
     /// 这次导航是不是在新标签页打开的 ⌘ 点击（3.12）：是这个页面自己的网页视图（不是它开的弹窗：弹窗里的 ⌘ 点击照原来交给
@@ -534,7 +550,7 @@ final class WebRuntime: NSObject {
     /// 不再转给窗口、不再排计时。所以下面停止加载引起的取消（-999）不会再排一次重试。
     /// 然后：取消排着的重试；停止加载；断开八个回调（接线的闭包持有页面状态，断开后不再驱动它；含报页面底色的 onPageColorChange、
     /// 报标题的 onTitleChange）和在新标签页打开链接的那一个（onOpenLinkInTab：关闭以后导航判断本来就先取消，这里只是不再拿着它）；
-    /// 停掉地址、页面底色、标题和加载中的观察、消息桥；关掉这个页面开的弹窗；网页的对话框按取消处理（cancelDialogs()：排着的不再显示，
+    /// 停掉地址、页面底色、标题和加载中的观察、消息桥；关掉这个页面开的弹窗（先 tearDownPopup(_:) 再关窗口）；网页的对话框按取消处理（cancelDialogs()：排着的不再显示，
     /// 显示着的文件选择收起，每一个都按取消回答 WebKit，各正好一次；关闭显示着的标签页时 ChatTabs 已经先做过，这里不再做）。
     /// 关闭以后网页自己发起的导航、新窗口、提示框、确认框、文件选择、媒体采集也都按取消处理（见各代理方法）；
     /// 记下、放回、丢弃阅读位置也不再碰网页。关闭之前发出、之后才返回的网页脚本（加载完成后的 Esc 脚本、渲染自检、
@@ -567,9 +583,12 @@ final class WebRuntime: NSObject {
         pathMonitor?.cancel()
         pathMonitor = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "cc", contentWorld: .defaultClient)
+        // 每个弹窗先拆（tearDownPopup：停止加载、断开代理、不再记着），再关窗口；关窗口时的通知已经不听，不会再拆一遍。
         let popups = popupWindows
-        popupWindows = []
-        popups.forEach { $0.close() }
+        popups.forEach {
+            tearDownPopup($0)
+            $0.close()
+        }
         // 已经取消过（关闭显示着的标签页时，切换到邻居之前）就不再做，那时取消的种类和个数照样写进这一行。
         cancelDialogs()
         let dialogs = cancelledDialogs
@@ -615,6 +634,8 @@ extension WebRuntime: HistoryPage {
 // MARK: - 导航策略
 
 /// 关闭以后（isClosed）：网页自己发起的导航、下载一律取消，导航事件一律不理（不改状态、不写日志、不转给窗口）。
+/// 不是这一页的网页视图（窗口已经关上的弹窗、不认识的，owns(_:)）：导航和导航响应取消（导航写一行，没有地址），
+/// 内容进程终止时不重新加载。
 ///
 /// 外部链接（外部网站，和 ⌘ 点击不在新标签页打开的链接）交给默认浏览器，只在发出它的网页视图在前面时（openExternally(_:from:)）：
 /// 不显示的标签页（和它窗口不在屏幕上的弹窗）要打开外部地址，取消、写一行，不交给浏览器。选中的标签页照原来。
@@ -628,6 +649,10 @@ extension WebRuntime: WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  preferences: WKWebpagePreferences) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
         guard !isClosed else { return (.cancel, preferences) }
+        guard owns(webView) else {
+            log("nav", "关掉的弹窗或不认识的网页视图要导航：取消")
+            return (.cancel, preferences)
+        }
         if navigationAction.shouldPerformDownload { return (.download, preferences) }
         // 子框架（例如 Cloudflare 验证 iframe）由网页自行管理
         guard let frame = navigationAction.targetFrame, frame.isMainFrame else { return (.allow, preferences) }
@@ -666,7 +691,7 @@ extension WebRuntime: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
-        guard !isClosed else { return .cancel }
+        guard !isClosed, owns(webView) else { return .cancel }
         return navigationResponse.canShowMIMEType ? .allow : .download
     }
 
@@ -755,7 +780,7 @@ extension WebRuntime: WKNavigationDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        guard !isClosed else { return }
+        guard !isClosed, owns(webView) else { return }
         log("web", "网页内容进程终止，重新加载")
         if webView === self.webView { reload() } else { webView.reload() }
     }
@@ -801,7 +826,9 @@ extension WebRuntime: WKDownloadDelegate {
 ///   （登录页的确认框不能等到切回那个标签页才出来，弹窗的网页在等回答时一直停着）。这一页不是选中的时写一行（只有种类）。
 ///   显示的样子和这一页的一样（presentAlert、presentConfirm、presentOpenPanel：应用级模态框、文件选择面板），
 ///   不挂在弹窗的窗口上（挂上去要换显示的做法，留给以后定）。
-/// - 这一页自己的网页视图，和窗口不在屏幕上（藏起、最小化）的弹窗：属于这个标签页，按标签页的规则：
+/// - 窗口已经关上的弹窗、不认识的网页视图（owns(_:)）：不显示、不排着，马上按取消回答，写一行（只有种类）。
+///   弹窗的窗口不管怎么关上（关闭按钮、网页 window.close()、这一页关闭）都先拆掉（tearDownPopup(_:)：停止加载、断开代理）。
+/// - 这一页自己的网页视图，和窗口不在屏幕上（藏起、最小化，还没关）的弹窗：属于这个标签页，按标签页的规则：
 ///   - 这一页是选中的（isSelectedTab）、没有排着的：马上显示，和原来一样（只有一个页面时总是这样，窗口隐藏、最小化时也是）。
 ///   - 不是选中的：排在这一页上（heldDialogs，按到达的先后），什么都不显示，写一行（只有种类和个数）；
 ///     这一页被选中、窗口显示它以后（ChatTabs.select(_:) 最后调用 showHeldDialogs()）一次放出一个，显示完再放下一个。
@@ -819,12 +846,17 @@ extension WebRuntime: WKDownloadDelegate {
 /// 要支持时再实现，并按上面对话框的规则走（runDialog）。
 ///
 /// 新窗口（登录等弹窗）：不是选中的标签页要开，不开（返回 nil，写一行）。WebKit 要当场拿到弹窗的网页视图，不能像对话框那样等。
+/// 窗口已经关上的弹窗、不认识的网页视图要开：不开，也不把外部地址交给浏览器（写一行，没有地址）。
 /// 目标是外部地址的新窗口：不开弹窗，交给默认浏览器（openExternally(_:from:)：发出它的网页视图不在前面就不交，写一行）。
 /// 例外（3.12）：⌘ 点击目标是新窗口的聊天页面链接，不开弹窗，在新标签页打开（返回 nil），在上面这条之前判断。
 extension WebRuntime: WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard !isClosed else { return nil }
+        guard owns(webView) else {
+            log("nav", "关掉的弹窗或不认识的网页视图要开新窗口：不开")
+            return nil
+        }
         let url = navigationAction.request.url
         // 内嵌图片（data:）：WebKit 不肯把 data: 地址当顶层页面打开，交给它只会得到空白弹窗。
         if let image = ImageDataURL.decode(url) {
@@ -867,8 +899,9 @@ extension WebRuntime: WKUIDelegate {
         window.title = L10n.string("window.popup")
         window.contentView = view
         window.center()
+        // 先记下再显示：显示以后到来的请求都认得它。
+        trackPopup(window)
         if show { showPopupWindow(window) }
-        popupWindows.append(window)
     }
 
     /// 单独显示一张内嵌图片。和 ChatGPT 页面隔开：不带网站数据，不运行脚本。测试传 show: false，不显示窗口。
@@ -890,18 +923,61 @@ extension WebRuntime: WKUIDelegate {
     }
 
     #if DEBUG
-    /// 只给测试用（调试版才有）：把一个不显示的窗口当作这个运行时开着的弹窗记下。
+    /// 只给测试用（调试版才有）：把一个不显示的窗口当作这个运行时开着的弹窗记下（和真的弹窗一样听它关上）。
     /// 真的弹窗要网页来开，开的时候还会显示在屏幕上，测试不能那样做。
     func adoptPopupForTesting(_ window: NSWindow) {
-        popupWindows.append(window)
+        trackPopup(window)
+    }
+
+    /// 只给测试用：这个窗口是不是还记作这一页开着的弹窗。
+    func tracksPopupForTesting(_ window: NSWindow) -> Bool {
+        popupWindows.contains { $0 === window }
     }
     #endif
 
-    func webViewDidClose(_ webView: WKWebView) {
-        if let idx = popupWindows.firstIndex(where: { $0.contentView === webView }) {
-            popupWindows[idx].close()
-            popupWindows.remove(at: idx)
+    /// 记下一个弹窗的窗口，并听它关上（NSWindow.willCloseNotification）：用户点关闭按钮、网页 window.close()、
+    /// 这一页关闭，都走 tearDownPopup(_:)。观察者是这个运行时自己（按选择子），运行时释放时 NotificationCenter 自动不再通知。
+    private func trackPopup(_ window: NSWindow) {
+        popupWindows.append(window)
+        NotificationCenter.default.addObserver(self, selector: #selector(popupWindowWillClose(_:)),
+                                               name: NSWindow.willCloseNotification, object: window)
+    }
+
+    /// 弹窗的窗口要关上了（多半是用户点了关闭按钮）：拆掉它。已经拆过（网页先 window.close()、这一页先关闭）的不会到这里：
+    /// 拆的时候已经不听了。
+    @objc private func popupWindowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, tearDownPopup(window) else { return }
+        log("web", "弹窗的窗口关上了：停止加载，断开代理")
+    }
+
+    /// 拆掉一个弹窗，每个弹窗只拆一次（不再记着它的就什么都不做，返回 false）：不再记着它、不再听它关上；
+    /// 它的网页视图停止加载、断开导航和 UI 代理（之后它的请求不再到这个运行时；万一还到，owns(_:) 也不认它）；
+    /// 网页视图从窗口里拿出来放到下一轮（关窗口的通知里、WebKit 的回调里当场换掉窗口的内容视图不保险），
+    /// 到那时之前窗口也由这一步拿着，关窗口的过程中不会被释放。不写日志（调用的地方写）。不关窗口：调用的地方关，或者正在关。
+    @discardableResult
+    private func tearDownPopup(_ window: NSWindow) -> Bool {
+        guard let index = popupWindows.firstIndex(where: { $0 === window }) else { return false }
+        popupWindows.remove(at: index)
+        NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: window)
+        let web = window.contentView as? WKWebView
+        web?.stopLoading()
+        web?.navigationDelegate = nil
+        web?.uiDelegate = nil
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                if let web, window.contentView === web { window.contentView = nil }
+            }
         }
+        return true
+    }
+
+    /// 网页自己 window.close()：拆掉弹窗（tearDownPopup(_:)），再关它的窗口（这时已经不听关上，不会再拆一遍）。
+    /// 不是这一页开着的弹窗的：什么都不做。
+    func webViewDidClose(_ webView: WKWebView) {
+        guard let window = popupWindow(of: webView) else { return }
+        tearDownPopup(window)
+        window.close()
+        log("web", "网页关掉了弹窗：停止加载，断开代理")
     }
 
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
@@ -932,6 +1008,8 @@ extension WebRuntime: WKUIDelegate {
     /// 网页的一个对话框（webView 发出的）按这一页的规则走一遍，返回给 WebKit 的回答：
     /// - 这一页的对话框已经按取消处理（dialogsCancelled：关闭了，或者正在关闭、还没切换到邻居）：cancel，不显示、不排着、
     ///   不写日志（3.1 的规则）。弹窗发出的也一样。
+    /// - webView 不是这一页的（窗口已经关上的弹窗、不认识的，owns(_:)）：cancel，不显示、不排着，写一行（只有种类）。
+    ///   排着时、显示着时发出它的弹窗关上了：放出来时不显示、按 cancel 回答；显示着的照样显示完，回答换成 cancel。
     /// - 弹窗的窗口在屏幕上、webView 是那个弹窗的（isPopupOnScreen(_:)）：马上显示，不排着；这一页不是选中的时写一行
     ///   “弹窗的…：弹窗在屏幕上，马上显示”（只有种类）。
     /// - 这一页是选中的，没有排着的，也没有放出来还没显示完的：马上显示（present），和原来一样，不写日志。
@@ -943,6 +1021,10 @@ extension WebRuntime: WKUIDelegate {
     private func runDialog<Answer>(_ kind: WebDialogKind, from webView: WKWebView, cancel: Answer,
                                    present: (ShownDialog) async -> Answer) async -> Answer {
         guard !dialogsCancelled else { return cancel }
+        guard owns(webView) else {
+            log("web", "关掉的弹窗或不认识的网页视图的\(kind.name)：不显示，按取消回答")
+            return cancel
+        }
         var held: HeldDialog?
         if isPopupOnScreen(webView) {
             if !isSelectedTab() { log("web", "弹窗的\(kind.name)：弹窗在屏幕上，马上显示（标签页不显示）") }
@@ -951,6 +1033,15 @@ extension WebRuntime: WKUIDelegate {
             heldDialogs.append(waiting)
             log("web", "网页的\(kind.name)排着等显示（排着 \(heldDialogs.count) 个）")
             guard await waitForTurn(waiting) else { return cancel }
+            // 排着的时候发出它的弹窗关上了：不显示，按取消回答，放下一个。
+            guard owns(webView) else {
+                log("web", "排着的\(kind.name)的弹窗已经关上：不显示，按取消回答")
+                if dialogTurn === waiting {
+                    dialogTurn = nil
+                    showHeldDialogs()
+                }
+                return cancel
+            }
             log("web", "显示排着的\(kind.name)（还排着 \(heldDialogs.count) 个）")
             held = waiting
         }
@@ -962,7 +1053,8 @@ extension WebRuntime: WKUIDelegate {
             dialogTurn = nil
             showHeldDialogs()
         }
-        return dialogsCancelled ? cancel : answer
+        // 显示着时发出它的弹窗关上了：用户的回答不交给它（文件选择不把选的文件给关上的弹窗）。
+        return dialogsCancelled || !owns(webView) ? cancel : answer
     }
 
     /// 排着的 held 等到放出来。返回 true：该显示了（这时它是 dialogTurn，这一页是选中的、对话框没有按取消处理）；
