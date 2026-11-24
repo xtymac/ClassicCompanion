@@ -117,7 +117,7 @@ final class TabMenuTests: XCTestCase {
 
     // MARK: - 结构
 
-    /// 一个标签页：文件菜单和原来一样多了“新建标签页 ⌘T”“重新打开最近关闭的标签页 ⇧⌘T”，关闭还是“关闭窗口 ⌘W”；
+    /// 一个标签页：文件菜单和原来一样（含后退、前进、重启音频）多了“新建标签页 ⌘T”“重新打开最近关闭的标签页 ⇧⌘T”，关闭还是“关闭窗口 ⌘W”；
     /// 窗口菜单多了“显示下一个标签页 ⌃Tab”“显示上一个标签页 ⌃⇧Tab”（一组，前后有分隔线）。
     /// 两个、四个：“关闭窗口 ⌘W”换成“关闭标签页 ⌘W”和“关闭窗口 ⇧⌘W”。四个：新建标签页置灰，下面写“最多打开 4 个标签页”。
     func testMenuStructureForOneTwoAndFourTabs() throws {
@@ -125,7 +125,8 @@ final class TabMenuTests: XCTestCase {
         let built = try build(rig)
         let mode = try XCTUnwrap(built.file.item(at: 3))
         XCTAssertEqual(mode.title, "切换小窗 / 完整窗口")
-        let head = ["新建对话 ⌘N", "新建标签页 ⌘T", "重新打开最近关闭的标签页 ⇧⌘T", describe(mode), "重新加载 ⌘R"]
+        let head = ["新建对话 ⌘N", "新建标签页 ⌘T", "重新打开最近关闭的标签页 ⇧⌘T", describe(mode), "后退 ⌘[", "前进 ⌘]",
+                    "重新加载 ⌘R", "重启音频"]
         let windowMenu = ["最小化 ⌘M", "缩放", "—", "显示下一个标签页 ⌃Tab", "显示上一个标签页 ⌃⇧Tab", "—", "前置全部窗口"]
 
         XCTAssertEqual(visible(built.file), head + ["关闭窗口 ⌘W"])

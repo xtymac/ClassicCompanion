@@ -422,14 +422,19 @@ final class TabKeyTests: XCTestCase {
          ("1", kVK_ANSI_1, .command), ("2", kVK_ANSI_2, .command), ("4", kVK_ANSI_4, .command), ("9", kVK_ANSI_9, .command)]
     }
 
-    /// 不是标签页的键：照原来交给网页（⌘N、⌘R 由菜单，纯 ⌘[ ⌘] 是后退前进，⌘5 没有，带 ⌥ 的、纯 Tab、Esc）。
+    /// 不是标签页的键：照原来交给网页（⌘N、⌘R 由菜单，⌘5 没有，带 ⌥ 的、纯 Tab、Esc）。
+    /// 纯 ⌘[ ⌘] 是后退前进，也不是标签页的键，但窗口在原生层吃掉它们（HistoryNavigation.keyAction），这里另外核对：
+    /// 不动标签页、不写标签页的日志。
     func testOtherKeysPassUntouched() throws {
         let rig = make()
         _ = try XCTUnwrap(rig.tabs.newTab())
         let keys = mark(rig), list = rig.tabs.list
+        for (characters, code) in [("[", kVK_ANSI_LeftBracket), ("]", kVK_ANSI_RightBracket)] {
+            XCTAssertTrue(try press(rig, characters, code, .command), "⌘\(characters) 是后退前进，窗口吃掉")
+        }
         let others: [(String, Int, NSEvent.ModifierFlags)] = [
-            ("n", kVK_ANSI_N, .command), ("r", kVK_ANSI_R, .command), ("[", kVK_ANSI_LeftBracket, .command),
-            ("]", kVK_ANSI_RightBracket, .command), ("5", kVK_ANSI_5, .command), ("t", kVK_ANSI_T, [.command, .option]),
+            ("n", kVK_ANSI_N, .command), ("r", kVK_ANSI_R, .command),
+            ("5", kVK_ANSI_5, .command), ("t", kVK_ANSI_T, [.command, .option]),
             ("w", kVK_ANSI_W, [.command, .control]), ("\t", kVK_Tab, []), ("\t", kVK_Tab, .option), ("t", kVK_ANSI_T, []),
             ("\u{1b}", kVK_Escape, []),
         ]
