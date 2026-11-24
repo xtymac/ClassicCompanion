@@ -463,17 +463,28 @@ enum AdapterScripts {
       const editHover = e => { near.pointer = !!editFieldNear(e.target); watchWheel(); };
       watchWheel();
       // 用户 2026-11-24：点“编辑消息”后光标没有进编辑框。原因没查清（Chrome 里网页自己会把光标放进去）。
-      // 这里兜底：点了按钮之后出现了新的编辑框、而光标不在里面，就放进去，停在末尾。光标已经在别的输入框里（底部输入框除外）时不动。
-      const editFields = () => [...document.querySelectorAll('form textarea, form [contenteditable="true"]')].filter(f => visible(f) && isEditField(f));
+      // 这里兜底：点了某条消息里的按钮之后，这条消息里出现了新的编辑框、而光标不在里面，就放进去，停在末尾。
+      // 只看被点的那条消息（实测按钮和编辑框同在一个 [data-turn-key] 里），别处新出现的表单（弹窗等）不碰。
+      // 点完之后用户又按了鼠标或键盘，就听用户的；脚本卸载时一并取消。光标已经在别的输入框里（底部输入框除外）时不动。
+      const EDIT_TURN = '[data-turn-key], ' + SEL.turn;
+      let editWatch = null;
+      const stopEditWatch = () => {
+        if (!editWatch) return;
+        editWatch.timers.forEach(clearTimeout);
+        editWatch = null;
+        window.removeEventListener('mousedown', stopEditWatch, true);
+        window.removeEventListener('keydown', stopEditWatch, true);
+      };
       const focusNewEdit = e => {
-        if (!(e.target instanceof Element) || !e.target.closest('button, [role="button"]')) return;
+        stopEditWatch();
+        const turn = e.target instanceof Element && e.target.closest('button, [role="button"]')?.closest(EDIT_TURN);
+        if (!turn) return;
+        const editFields = () => [...turn.querySelectorAll('form textarea, form [contenteditable="true"]')].filter(f => visible(f) && isEditField(f));
         const before = new Set(editFields());
-        let settled = false;
-        for (const delay of [120, 350, 800]) setTimeout(() => {
-          if (settled) return;
+        const check = delay => {
           const fresh = editFields().find(f => !before.has(f));
           if (!fresh) return;
-          settled = true;
+          stopEditWatch();
           const a = document.activeElement;
           if (a === fresh || fresh.contains(a) || isEditField(a) || a?.matches?.('input, select')) return;
           fresh.focus({ preventScroll: true });
@@ -482,7 +493,11 @@ enum AdapterScripts {
             else { const r = document.createRange(); r.selectNodeContents(fresh); r.collapse(false); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }
           } catch (err) {}
           note({ t: now(), kind: 'edit-focused', delay });
-        }, delay);
+        };
+        editWatch = { timers: [120, 350, 800].map(delay => setTimeout(check, delay, delay)) };
+        editWatch.timers.push(setTimeout(stopEditWatch, 850));
+        window.addEventListener('mousedown', stopEditWatch, true);
+        window.addEventListener('keydown', stopEditWatch, true);
       };
       const listeners = [
         [window, 'keydown', capture, true], [window, 'keydown', bubble, false],
@@ -616,6 +631,7 @@ enum AdapterScripts {
         releaseHold();
         window.removeEventListener('pagehide', releaseHold);
         near.pointer = near.focus = false; watchWheel();
+        stopEditWatch();
         delete window.__ccReadingHold;
         clearTimeout(resizeTimer);
         delete window.__ccRemoveEscape;

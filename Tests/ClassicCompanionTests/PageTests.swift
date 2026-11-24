@@ -395,40 +395,82 @@ final class PageTests: XCTestCase {
         ])
     }
 
-    /// 用户 2026-11-24：点“编辑消息”后光标没有进编辑框。网页没放的时候由脚本放进去；网页自己放了、或用户已经在别的输入框里，就不动。
-    func testANewEditBoxGetsTheCaret() async throws {
+    /// 2026-11-24 实测：“编辑消息”按钮和点开后的编辑框在同一个 [data-turn-key] 里；按钮点完就从页面上拿掉了。
+    private func caretFixture() async throws -> WKWebView {
         let web = try await page("""
-            <html><body><main><div id="turn"></div><button id="pencil">edit</button><button id="other">other</button>
-            <input id="search">
+            <html><body><main><div data-turn-key="t1"><div id="turn"></div>
+            <button id="pencil">edit</button><button id="other">other</button><button id="share">share</button></div>
+            <button id="settings">settings</button><input id="search">
             <form data-chatgpt-composer><div id="composer" contenteditable="true" role="textbox">x</div></form></main>
             <script>
-            document.getElementById('pencil').onclick = () => setTimeout(() => {
+            const later = fn => setTimeout(fn, 30);
+            document.getElementById('pencil').onclick = e => later(() => {
               document.getElementById('turn').innerHTML = '<form><div id="edit" contenteditable="true" role="textbox">draft</div></form>';
-            }, 30);
+              e.target.style.display = 'none';
+            });
+            // 弹窗挂在 body 下，里面有文本框，网页把焦点放在弹窗的按钮上。
+            const dialog = () => later(() => {
+              document.body.insertAdjacentHTML('beforeend',
+                '<div role="dialog"><form><textarea id="note"></textarea><button type="button" id="ok">ok</button></form></div>');
+              document.getElementById('ok').focus();
+            });
+            document.getElementById('share').onclick = dialog;
+            document.getElementById('settings').onclick = dialog;
             </script></body></html>
             """)
         _ = try await js(web, AdapterScripts.escapeUserScript)
+        _ = try await js(web, "document.getElementById('composer').focus(); 0")
+        return web
+    }
+
+    private func activeID(_ web: WKWebView, after action: String) async throws -> String? {
+        _ = try await js(web, action + "; 0")
+        try await Task.sleep(for: .milliseconds(1000))
+        return try await js(web, "document.activeElement.id") as? String
+    }
+
+    /// 用户 2026-11-24：点“编辑消息”后光标没有进编辑框。网页没放的时候由脚本放进去，停在末尾。
+    func testANewEditBoxGetsTheCaret() async throws {
+        let web = try await caretFixture()
+        let untouched = try await activeID(web, after: "document.getElementById('other').click()")
+        XCTAssertEqual(untouched, "composer")
+        _ = try await activeID(web, after: "document.getElementById('pencil').click()")
         // 光标在末尾：选区收起，停在编辑框全部内容之后。
-        let active = """
+        let focused = try await js(web, """
             (() => { const el = document.activeElement, r = getSelection().getRangeAt(0), pre = document.createRange();
               pre.selectNodeContents(el); pre.setEnd(r.endContainer, r.endOffset);
               return el.id + ':' + (r.collapsed ? pre.toString().length : -1); })()
-            """
-        _ = try await js(web, "document.getElementById('composer').focus(); document.getElementById('other').click(); 0")
-        try await Task.sleep(for: .milliseconds(500))
-        let untouched = try await js(web, "document.activeElement.id") as? String
-        XCTAssertEqual(untouched, "composer")
-        _ = try await js(web, "document.getElementById('pencil').click(); 0")
-        try await Task.sleep(for: .milliseconds(500))
-        let focused = try await js(web, active) as? String
+            """) as? String
         XCTAssertEqual(focused, "edit:5")
-        _ = try await js(web, """
-            document.getElementById('turn').innerHTML = ''; document.getElementById('pencil').click();
-            document.getElementById('search').focus(); 0
-            """)
-        try await Task.sleep(for: .milliseconds(500))
-        let elsewhere = try await js(web, "document.activeElement.id") as? String
-        XCTAssertEqual(elsewhere, "search")
+    }
+
+    /// PR #29 复审：按钮打开的是别的表单（弹窗里的文本框）时，不能把焦点从网页选的地方挪走。消息里的按钮和消息外的按钮都一样。
+    func testOtherFormsOpenedByAButtonKeepThePagesFocus() async throws {
+        for button in ["share", "settings"] {
+            let web = try await caretFixture()
+            let active = try await activeID(web, after: "document.getElementById('\(button)').click()")
+            XCTAssertEqual(active, "ok", button)
+        }
+    }
+
+    /// PR #29 复审：点了编辑之后用户自己又点了别处或按了键，就听用户的，不再把光标挪进编辑框。
+    func testTheUsersOwnChoiceAfterClickingEditIsKept() async throws {
+        for gesture in ["mousedown", "keydown"] {
+            let web = try await caretFixture()
+            let active = try await activeID(web, after: """
+                document.getElementById('pencil').click();
+                const c = document.getElementById('composer');
+                c.dispatchEvent(new Event('\(gesture)', { bubbles: true })); c.focus()
+                """)
+            XCTAssertEqual(active, "composer", gesture)
+        }
+    }
+
+    /// PR #29 复审：关掉网页增强（卸载脚本）后，已经排好的检查不能再动光标。
+    func testRemovingTheScriptCancelsThePendingCaretMove() async throws {
+        let web = try await caretFixture()
+        let active = try await activeID(web, after: "document.getElementById('pencil').click(); window.__ccRemoveEscape()")
+        XCTAssertEqual(active, "composer")
     }
 
     /// 同一件事用真的滚轮事件走一遍 WebKit：编辑框已在顶上，指针在编辑框上往上滚。不加脚本时外层会跟着滚，加了以后不动。
