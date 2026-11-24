@@ -221,7 +221,7 @@
 "menu.closeTab" = "關閉分頁";
 "menu.showNextTab" = "顯示下一個分頁";
 "menu.showPreviousTab" = "顯示上一個分頁";
-"tabs.tip.severalTabs" = "⌘W 關閉目前的分頁，未傳送的草稿可能會遺失；⇧⌘T 只能重新打開已儲存的聊天。左上角的 × 會隱藏整個視窗，分頁都會保留。";
+"tabs.tip.severalTabs" = "⌘W 關閉目前的分頁；60 秒內按 ⇧⌘T 可以原樣找回，之後只能重新打開已儲存的聊天。左上角的 × 會隱藏整個視窗，分頁都會保留。";
 "tabs.hint.close" = "關閉提示";
 "tabs.untitled" = "新聊天";
 "purpose.closeTabOrHideWindow" = "關閉分頁或隱藏視窗";

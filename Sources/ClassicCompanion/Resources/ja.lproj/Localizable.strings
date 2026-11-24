@@ -221,7 +221,7 @@
 "menu.closeTab" = "タブを閉じる";
 "menu.showNextTab" = "次のタブを表示";
 "menu.showPreviousTab" = "前のタブを表示";
-"tabs.tip.severalTabs" = "⌘W で現在のタブを閉じます。送信していない下書きは失われることがあります。⇧⌘T で開き直せるのは保存済みのチャットだけです。左上の × はウインドウ全体を隠し、タブはそのまま残ります。";
+"tabs.tip.severalTabs" = "⌘W で現在のタブを閉じます。60 秒以内なら ⇧⌘T で元のまま戻せます。それ以降に開き直せるのは保存済みのチャットだけです。左上の × はウインドウ全体を隠し、タブはそのまま残ります。";
 "tabs.hint.close" = "ヒントを閉じる";
 "tabs.untitled" = "新しいチャット";
 "purpose.closeTabOrHideWindow" = "タブを閉じる、またはウインドウを隠す";

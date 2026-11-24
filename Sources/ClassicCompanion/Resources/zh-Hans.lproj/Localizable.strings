@@ -221,7 +221,7 @@
 "menu.closeTab" = "关闭标签页";
 "menu.showNextTab" = "显示下一个标签页";
 "menu.showPreviousTab" = "显示上一个标签页";
-"tabs.tip.severalTabs" = "⌘W 关闭当前标签页，未发送的草稿可能丢失；⇧⌘T 只能重新打开已保存的聊天。左上角的 × 隐藏整个窗口，标签页都会保留。";
+"tabs.tip.severalTabs" = "⌘W 关闭当前标签页；60 秒内按 ⇧⌘T 可以原样找回，之后只能重新打开已保存的聊天。左上角的 × 隐藏整个窗口，标签页都会保留。";
 "tabs.hint.close" = "关闭提示";
 "tabs.untitled" = "新聊天";
 "purpose.closeTabOrHideWindow" = "关闭标签页或隐藏窗口";

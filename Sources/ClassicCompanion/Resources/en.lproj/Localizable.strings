@@ -221,7 +221,7 @@
 "menu.closeTab" = "Close Tab";
 "menu.showNextTab" = "Show Next Tab";
 "menu.showPreviousTab" = "Show Previous Tab";
-"tabs.tip.severalTabs" = "⌘W closes the current tab; unsent drafts may be lost. ⇧⌘T only reopens saved chats. The × at the top left hides the whole window and keeps your tabs.";
+"tabs.tip.severalTabs" = "⌘W closes the current tab. Within 60 seconds ⇧⌘T brings it back as it was; after that it only reopens saved chats. The × at the top left hides the whole window and keeps your tabs.";
 "tabs.hint.close" = "Close Tip";
 "tabs.untitled" = "New chat";
 "purpose.closeTabOrHideWindow" = "close the tab or hide the window";

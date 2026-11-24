@@ -276,10 +276,10 @@ final class TabHintTests: XCTestCase {
             .english: "You can open up to 4 tabs", .japanese: "タブは 4 個まで開けます",
         ]
         let tip: [AppLanguage: String] = [
-            .simplifiedChinese: "⌘W 关闭当前标签页，未发送的草稿可能丢失；⇧⌘T 只能重新打开已保存的聊天。左上角的 × 隐藏整个窗口，标签页都会保留。",
-            .traditionalChinese: "⌘W 關閉目前的分頁，未傳送的草稿可能會遺失；⇧⌘T 只能重新打開已儲存的聊天。左上角的 × 會隱藏整個視窗，分頁都會保留。",
-            .english: "⌘W closes the current tab; unsent drafts may be lost. ⇧⌘T only reopens saved chats. The × at the top left hides the whole window and keeps your tabs.",
-            .japanese: "⌘W で現在のタブを閉じます。送信していない下書きは失われることがあります。⇧⌘T で開き直せるのは保存済みのチャットだけです。左上の × はウインドウ全体を隠し、タブはそのまま残ります。",
+            .simplifiedChinese: "⌘W 关闭当前标签页；60 秒内按 ⇧⌘T 可以原样找回，之后只能重新打开已保存的聊天。左上角的 × 隐藏整个窗口，标签页都会保留。",
+            .traditionalChinese: "⌘W 關閉目前的分頁；60 秒內按 ⇧⌘T 可以原樣找回，之後只能重新打開已儲存的聊天。左上角的 × 會隱藏整個視窗，分頁都會保留。",
+            .english: "⌘W closes the current tab. Within 60 seconds ⇧⌘T brings it back as it was; after that it only reopens saved chats. The × at the top left hides the whole window and keeps your tabs.",
+            .japanese: "⌘W で現在のタブを閉じます。60 秒以内なら ⇧⌘T で元のまま戻せます。それ以降に開き直せるのは保存済みのチャットだけです。左上の × はウインドウ全体を隠し、タブはそのまま残ります。",
         ]
         let close: [AppLanguage: String] = [.simplifiedChinese: "关闭提示", .traditionalChinese: "關閉提示", .english: "Close Tip",
                                             .japanese: "ヒントを閉じる"]
@@ -288,7 +288,9 @@ final class TabHintTests: XCTestCase {
             XCTAssertEqual(TabHint.severalTabs.text(in: language), tip[language])
             XCTAssertEqual(L10n.string("tabs.hint.close", in: language), close[language])
             let text = TabHint.severalTabs.text(in: language)
-            for promise in ["原样", "原樣", "找回", "恢复草稿", "恢復草稿", "restore", "Restore", "復元"] {
+            // 60 秒内 ⇧⌘T 原样放回是真的（ClosedTabKeepTests）；提示必须带上这个时限，不能说成一直能恢复。
+            XCTAssertTrue(text.contains("60"), "\(language) 没有写 60 秒的时限")
+            for promise in ["恢复草稿", "恢復草稿", "restore", "Restore", "復元"] {
                 XCTAssertFalse(text.contains(promise), "\(language) \(promise)")
             }
         }
