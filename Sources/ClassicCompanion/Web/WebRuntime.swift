@@ -14,6 +14,7 @@ final class WebRuntime: NSObject {
     private let settings: AppSettings
     private var observations: [NSKeyValueObservation] = []
     private var popupWindows: [NSWindow] = []
+    private let imageViewerGuard = ImageViewerGuard()
 
     /// 主框架 URL 变化（含 SPA pushState）
     var onURLChange: ((URL?) -> Void)?
@@ -589,10 +590,21 @@ extension WebRuntime: WKUIDelegate {
         config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         let viewer = WKWebView(frame: NSRect(x: 0, y: 0, width: 520, height: 680), configuration: config)
-        viewer.navigationDelegate = self
+        viewer.navigationDelegate = imageViewerGuard
         presentPopup(viewer, show: show)
-        viewer.load(image.data, mimeType: image.mimeType, characterEncodingName: "utf-8", baseURL: URL(string: "about:blank")!)
+        viewer.loadHTMLString(Self.imageViewerHTML(image), baseURL: URL(string: "about:blank")!)
         return viewer
+    }
+
+    /// 图片只放在 <img> 里显示，不当作文档打开：SVG 里的链接、内嵌网页（foreignObject）、子框架和外部资源都不起作用。
+    /// 内容安全策略只允许这一张 data: 图片和行内样式。
+    static func imageViewerHTML(_ image: ImageDataURL.Payload) -> String {
+        """
+        <!doctype html><html><head><meta charset="utf-8">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
+        <style>html,body{height:100%;margin:0}body{display:flex;align-items:center;justify-content:center}        img{max-width:100%;max-height:100%}</style></head>
+        <body><img src="data:\(image.mimeType);base64,\(image.data.base64EncodedString())"></body></html>
+        """
     }
 
     /// 切换界面语言后，已经开着的弹窗也换标题。
@@ -677,5 +689,15 @@ private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
     init(_ target: any WKScriptMessageHandler) { self.target = target }
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
         target?.userContentController(ucc, didReceive: message)
+    }
+}
+
+/// 图片查看窗口的导航代理：只放行应用自己发出的那一次加载，之后的任何导航（链接、跳转、子框架、下载）一律取消。
+final class ImageViewerGuard: NSObject, WKNavigationDelegate {
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+        let initialLoad = navigationAction.navigationType == .other
+            && navigationAction.targetFrame?.isMainFrame == true
+            && navigationAction.request.url?.absoluteString == "about:blank"
+        return initialLoad ? .allow : .cancel
     }
 }
