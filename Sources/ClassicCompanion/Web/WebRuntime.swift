@@ -438,6 +438,13 @@ extension WebRuntime: WKNavigationDelegate {
         download.delegate = self
     }
 
+    /// 右键菜单“下载图像 / 下载链接文件”发起的下载不走上面两个公开回调，WebKit 只通过这个导航代理方法交出来
+    /// （WKNavigationDelegatePrivate）。没人接时下载被悄悄丢掉（2026-11-24 实测）。只是响应一个方法名，不调用私有接口。
+    @objc(_webView:contextMenuDidCreateDownload:)
+    func webView(_ webView: WKWebView, contextMenuDidCreateDownload download: WKDownload) {
+        download.delegate = self
+    }
+
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         guard webView === self.webView else { return }
         recovery.navigationStarted()
@@ -543,6 +550,12 @@ extension WebRuntime: WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         let url = navigationAction.request.url
+        // 内嵌图片（data:）：WebKit 不肯把 data: 地址当顶层页面打开，交给它只会得到空白弹窗。
+        if let image = ImageDataURL.decode(url) {
+            diagnostics.log("nav", "在新窗口打开内嵌图片 \(image.mimeType)")
+            openImageViewer(image)
+            return nil
+        }
         let kind = NavigationPolicy.classify(url)
         if kind == .external, let url {
             openExternally(url)
@@ -554,15 +567,32 @@ extension WebRuntime: WKUIDelegate {
         let popup = WKWebView(frame: NSRect(x: 0, y: 0, width: 520, height: 680), configuration: configuration)
         popup.navigationDelegate = self
         popup.uiDelegate = self
-        let window = NSWindow(contentRect: popup.frame, styleMask: [.titled, .closable, .resizable],
+        presentPopup(popup, show: true)
+        return popup
+    }
+
+    private func presentPopup(_ view: WKWebView, show: Bool) {
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled, .closable, .resizable],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.title = L10n.string("window.popup")
-        window.contentView = popup
+        window.contentView = view
         window.center()
-        window.makeKeyAndOrderFront(nil)
+        if show { window.makeKeyAndOrderFront(nil) }
         popupWindows.append(window)
-        return popup
+    }
+
+    /// 单独显示一张内嵌图片。和 ChatGPT 页面隔开：不带网站数据，不运行脚本。测试传 show: false，不显示窗口。
+    @discardableResult
+    func openImageViewer(_ image: ImageDataURL.Payload, show: Bool = true) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        config.defaultWebpagePreferences.allowsContentJavaScript = false
+        let viewer = WKWebView(frame: NSRect(x: 0, y: 0, width: 520, height: 680), configuration: config)
+        viewer.navigationDelegate = self
+        presentPopup(viewer, show: show)
+        viewer.load(image.data, mimeType: image.mimeType, characterEncodingName: "utf-8", baseURL: URL(string: "about:blank")!)
+        return viewer
     }
 
     /// 切换界面语言后，已经开着的弹窗也换标题。
