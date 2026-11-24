@@ -111,6 +111,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 遮挡（到时限后还在的启动画面、“无法连接”提示）在提交后最多再留多久。一直没有加载完成（例如子资源卡住）时，
     /// 到时就撤，不一直挡着已经能用的页面。和颜色兜底取同一个值。
     var pageRevealLimit: TimeInterval = 1
+    /// 等对话内容的遮挡（PageLoadState.coverAwaitsContent）在外壳出来以后最多再等多久，从页面显示着的那一刻算
+    /// （不显示时不算，显示时才开始）。到了照原来那样撤。只有测试改它。
+    var contentWaitLimit: TimeInterval = 4
     /// 窗口里显示着的页面加载到哪一步了（提交、加载完成、“无法连接”提示的状态和留着的提示、启动保护的颜色、
     /// 第一次加载的遮挡），见 PageLoadState。
     /// 规则都在这个类里。事件带着它属于的页面进来（pageDidCommit(_:)、pageDidFinishLoading(_:reportedColor:)、
@@ -721,6 +724,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     // 到时限时已提交、到时限后提交兜底、到上限）。时限和上限两种都用 launchScreenLimit、launchScreenCap、pageRevealLimit。
     // 新标签页的遮挡另外多一条，更早结束（用户 11-21 定）：提交以后页面报出和遮挡同一深浅的底色，就是页面开始显示了
     // （pageDidReportColor(_:_:)）；上面那几样留作兜底，所以不会比原来盖得久。启动画面没有这一条。
+    // 带对话地址打开的新标签页例外（用户 11-24）：这条和加载完成都只算外壳出来，等对话内容，见下面“等对话内容”那一段。
     // 页面显不显示都照这套规则改它自己的遮挡状态，时限和上限到点也照常；
     // 窗口只在页面显示着时跟着动：遮挡那层和它的样子（applyCover(_:)）、淡出、启动保护的窗口部分、窗口的日志（启动画面那一行
     // 不带标签；新标签页的遮挡同样的一行末尾带它的标签）。不显示的页面的遮挡变了，窗口上什么都不变；只在它的遮挡结束时写一行
@@ -741,8 +745,13 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// p 不显示时窗口一点不变（遮挡那层和样子、启动保护的窗口部分、日志），p 的启动保护和计时照常开始；
     /// p 显示着时和启动画面一样马上盖上，样子是新标签页的。p 已经关闭时什么都不做。
     /// 应用里调用这几个入口的是 ⌘T、⇧⌘T（3.10，ChatTabs.handleKey(_:_:)）、菜单（3.11，TabMenus）和 ⌘ 点击聊天链接（3.12）。
-    func beginNewTabCover(for p: PageLoadState) {
+    ///
+    /// awaitingContent：带对话地址打开的（⇧⌘T、⌘ 点击和 ⇧⌘ 点击对话链接，ChatTabs 定）。这样的遮挡在外壳出来时（上面那条提前撤、
+    /// 加载完成）不撤，等对话内容出来（conversationDidShow(_:)），最多再等 contentWaitLimit（从显示着的那一刻算）；
+    /// 加载失败、网页离开那段对话（pageLeftConversation(_:)）马上撤。规则见下面“等对话内容”那一段。
+    func beginNewTabCover(for p: PageLoadState, awaitingContent: Bool = false) {
         beginCover(for: p, kind: .newTab)
+        p.coverAwaitsContent = awaitingContent && p.isCovered
     }
 
     /// 页面 p 开始第一次加载的遮挡（kind 那种样子）：p 的遮挡状态重新开始（代号加一、记下样子和开始的时刻、不在等提交），
@@ -759,6 +768,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         if p === page { applyCover(p) }
         p.coverStarted = Date()
         p.coverAwaitsCommit = false
+        resetContentWait(p)
         holdPageColor(p)
         DispatchQueue.main.asyncAfter(deadline: .now() + launchScreenLimit) { [weak self, weak p] in
             MainActor.assumeIsolated {
@@ -769,7 +779,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + launchScreenCap) { [weak self, weak p] in
             MainActor.assumeIsolated {
                 guard let self, let p, p.coverGeneration == generation else { return }
-                self.endLaunchScreen("超过上限", for: p)
+                self.fallBack("超过上限", for: p)
             }
         }
     }
@@ -790,7 +800,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// 继续盖着这件事记在 p 自己的状态里（p.coverAwaitsCommit）；日志只在 p 显示着时写。
     private func coverLimitReached(for p: PageLoadState) {
         guard isCovering(p) else { return }
-        guard !p.hasCommittedPage else { return endLaunchScreen("超过时限", for: p) }
+        guard !p.hasCommittedPage else { return fallBack("超过时限", for: p) }
         p.coverAwaitsCommit = true
         guard p === page else { return }
         diagnostics.log("launch", "启动画面到时限：网页还没提交，继续显示（等加载完成、失败、提交后 \(Int(pageRevealLimit * 1000))ms，"
@@ -827,6 +837,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
             TabLog(diagnostics: diagnostics, tab: tag)("launch", "不显示的页面的遮挡结束（\(kind)）：\(outcome)（\(elapsed)ms）")
         }
         p.coverAwaitsCommit = false
+        resetContentWait(p)
         p.isCovered = false
         guard p === page else { return }
         applyCover(p)
@@ -854,7 +865,82 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
               let reported = color?.usingColorSpace(.sRGB), reported.alphaComponent > 0.5,
               let cover = fixedFill(launchCover.effectiveAppearance),
               PageAppearance.isDark(reported) == PageAppearance.isDark(cover) else { return }
-        endLaunchScreen("网页开始显示，提交后页面底色报为\(Self.shade(reported))", for: p)
+        let outcome = "网页开始显示，提交后页面底色报为\(Self.shade(reported))"
+        guard !p.coverAwaitsContent else { return shellDidShow(outcome, for: p) }
+        endLaunchScreen(outcome, for: p)
+    }
+
+    /// 页面 p 的主框架加载完成（ChatTabs.wire(_:) 接到网页运行时的加载完成）：p 的遮挡等对话内容时，外壳出来了
+    /// （shellDidShow(_:for:)）；别的照原来结束（“网页已加载”）。
+    func pageDidLoad(_ p: PageLoadState) {
+        guard !(isCovering(p) && p.coverAwaitsContent) else { return shellDidShow("网页已加载", for: p) }
+        endLaunchScreen("网页已加载", for: p)
+    }
+
+    // MARK: 等对话内容
+    //
+    // 带对话地址打开的新标签页（⇧⌘T 重新打开、⌘ 点击和 ⇧⌘ 点击对话链接）的遮挡（PageLoadState.coverAwaitsContent）。
+    // 用户 11-24 报告：⇧⌘T 时先出来一下新聊天页，然后才是对话。原来新标签页的遮挡在提交后报出底色（或加载完成）时就撤，
+    // 那时 ChatGPT 出来的只是外壳（看起来就是空的新聊天页），对话内容还在取。所以这种遮挡：
+    // - 撤得早：对话内容出来了（conversationDidShow(_:)，ChatTabs 看网页里有没有排出来的一问一答）；加载失败（照原来）；
+    //   网页离开了那段对话（pageLeftConversation(_:)：跳到登录、对话没了回到首页）。显示着、不显示都照这几条马上撤。
+    // - 外壳出来（原来这时就撤，shellDidShow(_:for:)）以后最多再等 contentWaitLimit，从页面显示着的那一刻算：
+    //   显示着就马上开始等；不显示（⌘ 点击在后台打开的、切走了的）时不等，换上它显示时（display(_:webView:)）再开始。
+    //   认不出对话内容（选择器失效、网页增强关着）时就是到这个时限撤，比原来最多晚 contentWaitLimit。
+    // - 原来的兜底（时限、提交后兜底、上限）显示着时照旧结束；不显示时不结束，改成“该等了”（fallBack(_:for:)）：
+    //   换上它时还没有内容就再盖着等 contentWaitLimit，已经有内容的在不显示时就已经撤了，换上来不盖。
+
+    /// 页面 p 的外壳出来了（原来这时撤）：只记下该等对话内容了，显示着就开始等。只做一次；p 不在等对话内容时什么都不做。
+    private func shellDidShow(_ outcome: String, for p: PageLoadState) {
+        guard isCovering(p), p.coverAwaitsContent, !p.contentWaitDue else { return }
+        p.contentWaitDue = true
+        TabLog(diagnostics: diagnostics, tab: p.logTag)("launch", "新标签页的遮挡：\(outcome)，等对话内容"
+            + (p === page ? "（最多 \(Int(contentWaitLimit * 1000))ms）" : "（页面显示时再等）"))
+        if p === page { startContentWait(p) }
+    }
+
+    /// 显示着的页面 p 该等对话内容了：开始等 contentWaitLimit（已经在等就不重来）。到点时 p 还盖着、还是这一次：
+    /// 照兜底结束（fallBack：那时已经不显示就留到下次显示再等）。
+    private func startContentWait(_ p: PageLoadState) {
+        guard isCovering(p), p.coverAwaitsContent, p.contentWaitDue, !p.contentWaitRunning else { return }
+        p.contentWaitRunning = true
+        p.contentWaitGeneration += 1
+        let generation = p.contentWaitGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + contentWaitLimit) { [weak self, weak p] in
+            MainActor.assumeIsolated {
+                guard let self, let p, p.contentWaitGeneration == generation, p.contentWaitRunning else { return }
+                p.contentWaitRunning = false
+                self.fallBack("等对话内容 \(Int(self.contentWaitLimit * 1000))ms 还没出来", for: p)
+            }
+        }
+    }
+
+    /// 兜底（时限、提交后兜底、上限、等对话内容到时限）到了：一般照原来结束。只有等对话内容、又不显示的页面不结束，
+    /// 改成该等对话内容了（换上它显示时从那一刻起等 contentWaitLimit）。
+    private func fallBack(_ outcome: String, for p: PageLoadState) {
+        guard isCovering(p) else { return }
+        guard p.coverAwaitsContent, p !== page else { return endLaunchScreen(outcome, for: p) }
+        p.contentWaitDue = true
+    }
+
+    /// 页面 p 的网页里排出了对话内容（ChatTabs 看到的）：等对话内容的遮挡结束。p 不在等对话内容时什么都不做。
+    func conversationDidShow(_ p: PageLoadState) {
+        guard isCovering(p), p.coverAwaitsContent else { return }
+        endLaunchScreen("对话内容已出现", for: p)
+    }
+
+    /// 页面 p 的网页离开了要打开的那段对话（ChatTabs 看地址）：等对话内容的遮挡马上结束，不等时限。
+    func pageLeftConversation(_ p: PageLoadState) {
+        guard isCovering(p), p.coverAwaitsContent else { return }
+        endLaunchScreen("网页不在要打开的那段对话上", for: p)
+    }
+
+    /// 页面 p 的等对话内容的状态清掉（开始遮挡、结束遮挡时）；排着的时限作废。
+    private func resetContentWait(_ p: PageLoadState) {
+        p.coverAwaitsContent = false
+        p.contentWaitDue = false
+        p.contentWaitRunning = false
+        p.contentWaitGeneration += 1
     }
 
     /// 把页面 p 的遮挡状态投到窗口的遮挡那层上：先换成它那一种的样子（和那层现在的不同时才换），再盖着就显示、没有就藏起。
@@ -893,7 +979,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     /// p 留着的提示总是在 p 的状态里收起，窗口的提示和日志只在 p 显示着时动。
     private func pageRevealLimitReached(for p: PageLoadState) {
         let waited = "提交后 \(Int(pageRevealLimit * 1000))ms 还没加载完成"
-        if p.coverAwaitsCommit { endLaunchScreen(waited, for: p) }
+        if p.coverAwaitsCommit { fallBack(waited, for: p) }
         if p.noticeAwaitsLoad {
             if p === page { diagnostics.log("nav", "无法连接提示：\(waited)，收起") }
             p.noticeAwaitsLoad = false
@@ -1202,6 +1288,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
         }
         page = p
         applyCover(p)
+        if p.contentWaitDue { startContentWait(p) }
         applyNotice(p)
         showPageColor(of: p)
         if let reason {

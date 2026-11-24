@@ -67,6 +67,19 @@ import Testing
         #expect(NavigationPolicy.restorableConversationURL(URL(string: "https://auth.openai.com/c/1")) == nil)
     }
 
+    /// 对话 id：主站的 /c/<id> 和 /g/<gpt>/c/<id>（查询参数、片段不看，临时聊天参数也不看）；别的都是 nil。
+    @Test func conversationID() {
+        #expect(NavigationPolicy.conversationID(URL(string: "https://chatgpt.com/c/abc?model=x#y")) == "abc")
+        #expect(NavigationPolicy.conversationID(URL(string: "https://chatgpt.com/g/g-p-1/c/abc")) == "abc")
+        #expect(NavigationPolicy.conversationID(URL(string: "https://chatgpt.com/c/abc?temporary-chat=true")) == "abc")
+        for url in ["https://chatgpt.com/", "https://chatgpt.com/g/g-1", "https://chatgpt.com/c", "https://chatgpt.com/c/a/b",
+                    "https://auth.openai.com/c/abc", "http://chatgpt.com/c/abc", "https://chatgpt.com.evil.io/c/abc",
+                    "https://chatgpt.com/auth/login", "about:blank"] {
+            #expect(NavigationPolicy.conversationID(URL(string: url)) == nil, "\(url)")
+        }
+        #expect(NavigationPolicy.conversationID(nil) == nil)
+    }
+
     /// 查询参数里带临时聊天参数的地址，不管路径、值、名字大小写、在第几个，都不算可恢复（用户 11-20 裁定：
     /// 临时聊天不进最近关闭；认不准时，确认不了能恢复的地址不记）。只在查询参数里认，片段里的不算；别的查询参数照旧去掉。
     @Test func temporaryChatAddressesAreNeverRestorable() {

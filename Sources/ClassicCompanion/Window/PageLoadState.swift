@@ -73,6 +73,20 @@ final class PageLoadState {
     /// 这一次遮挡开始的时刻（结束时日志里的耗时从这里算）。
     var coverStarted = Date()
 
+    // 等对话内容（只有带对话地址打开的新标签页：⇧⌘T 重新打开、⌘ 点击和 ⇧⌘ 点击对话链接）。ChatGPT 是单页应用：
+    // 网页提交、报出底色、加载完成时出来的还只是外壳（看起来就是空的新聊天页），对话内容随后才取来、排出来。
+    // 这种遮挡不在外壳出来时撤，等对话内容出来（ChatWindowController.conversationDidShow(_:)）；规则都在 ChatWindowController 里。
+
+    /// 这一次遮挡等对话内容。开始遮挡时定（beginNewTabCover(for:awaitingContent:)），结束时清掉。
+    var coverAwaitsContent = false
+    /// 该等对话内容的那段时限了：外壳已经出来（原来这时就撤），或者不显示时到了别的兜底（时限、上限）。
+    /// 显示着时马上开始等（contentWaitLimit），不显示时等它显示时再开始。
+    var contentWaitDue = false
+    /// 等对话内容的那段时限正在走（只在显示着时开始）。
+    var contentWaitRunning = false
+    /// 每次开始等对话内容的时限、每次开始遮挡加一。时限到点时只在还是排下它的那一次时起作用。
+    var contentWaitGeneration = 0
+
     /// 这个页面已经关闭（关闭标签页）。只由 ChatWindowController.pageClosed(_:) 设，不会改回。
     /// 关了以后它的事件和它排着的回调都不起作用：上面这些状态停在关闭那一刻，窗口也不因它而变（规则在 ChatWindowController 里）。
     var isClosed = false
