@@ -328,9 +328,10 @@ final class ChatTabs {
     /// 5. 排着的聚焦任务取消（到点本来也因为它不是选中的而不做，这里让它马上结束、不再等）。
     /// 6. 它记下的阅读位置都作废（dropReadingPositions(of:)，不碰网页）。
     /// 7. 从列表（list）和 tabs 里一起拿掉，两者始终一一对应。拿掉时列表记入最近关闭（TabList.close(_:url:)）：
-    ///    地址是 tab 在收尾开始那一刻的地址（tab.url，运行时最近一次报的；第 1 步停止加载之前取），是普通对话地址
+    ///    地址是 tab 在收尾开始那一刻的地址（tab.url，运行时最近一次报的；第 1 步停止加载之前取；它是 nil 时用打开它时
+    ///    要它加载的 tab.openedURL：重新打开、⌘ 点击链接打开的标签页网页还没地址就关掉，记录也不丢），是普通对话地址
     ///    （NavigationPolicy.restorableConversationURL）才记，去掉查询参数，连同它这时的位置；新对话页、登录页、
-    ///    还没有地址的、查询参数里带临时聊天参数的（不管路径）都不记。只在内存里，最多 10 条，不去重。这里不写地址（只有 closeTab 那一行，没有地址）。
+    ///    还没有地址（也没有 openedURL）的、查询参数里带临时聊天参数的（不管路径）都不记。只在内存里，最多 10 条，不去重。这里不写地址（只有 closeTab 那一行，没有地址）。
     /// 8. 从共用的网络状态上去掉（tabLeft）。
     /// 9. 告诉诊断它关闭了（Diagnostics.tabClosed(_:)）：它关闭前写进诊断的（页面能力、媒体状态、证据、实验记录）留着，
     ///    报告里那一行写“已关闭的标签N”，诊断窗口里那一样也说已关闭的。
@@ -344,7 +345,7 @@ final class ChatTabs {
     func close(_ tab: ChatTab) {
         guard holds(tab) else { return }
         precondition(!isSelected(tab), "关选中的标签页要先切换到别的标签页（closeTab(_:)）")
-        let address = tab.url
+        let address = tab.url ?? tab.openedURL
         tab.runtime.close()
         tab.adapter.close()
         windowController.pageClosed(tab.page)
@@ -673,7 +674,12 @@ final class ChatTabs {
         guard let (tab, url) = place(makeTab) else { preconditionFailure("上面看过没到上限，找回窗口不加标签页、不动记录") }
         log(tab, "tabs", line(tab))
         windowController.beginNewTabCover(for: tab.page)
-        if let url { tab.runtime.load(url) } else { tab.runtime.newChat() }
+        if let url {
+            tab.openedURL = url
+            tab.runtime.load(url)
+        } else {
+            tab.runtime.newChat()
+        }
         select(tab)
         offerSeveralTabsTip()
         return tab
@@ -790,6 +796,7 @@ final class ChatTabs {
             : "⌘ 点击链接，在后台打开（第 \(position) 个，现在 \(tabs.count) 个）")
         if opening == .background { windowController.addHiddenWebView(tab.runtime.webView) }
         windowController.beginNewTabCover(for: tab.page)
+        tab.openedURL = url
         tab.runtime.load(url)
         if opening == .foreground { select(tab) }
         offerSeveralTabsTip()
