@@ -47,6 +47,17 @@ public enum TabBarRules {
         return max(0, (availableWidth - fixed) / count)
     }
 
+    /// 横向位置 x（从标签栏左边量）落在第几个标签上（从 0 数）：第 i 个占 [sideMargin + i × (宽度 + gap), 再加一个宽度)，
+    /// 宽度是 tabWidth(availableWidth:tabCount:)。落在边距、标签之间的间距、＋ 上或更右边时是 nil。中键关标签页用（TabBarHost）。
+    public static func tabIndex(atX x: Double, availableWidth: Double, tabCount: Int) -> Int? {
+        let width = tabWidth(availableWidth: availableWidth, tabCount: tabCount)
+        guard width > 0, x >= sideMargin else { return nil }
+        let offset = x - sideMargin
+        let index = Int((offset / (width + gap)).rounded(.down))
+        guard index < tabCount, offset - Double(index) * (width + gap) < width else { return nil }
+        return index
+    }
+
     // MARK: - ＋
 
     /// 标签栏末尾的 ＋ 这一刻的样子。

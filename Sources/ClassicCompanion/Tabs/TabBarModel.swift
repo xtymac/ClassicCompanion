@@ -23,7 +23,7 @@ final class TabBarModel: ObservableObject {
     /// 末尾 ＋ 的样子（TabBarRules.newTabButton(in:)）。
     @Published private(set) var newTabButton = TabBarRules.NewTabButton(dimmed: false, clickable: true, explainsLimit: false)
 
-    /// 标签栏上的点按交给谁（4.5）：点标签、点标签上的 ×、点 ＋。ChatTabs 建好时接上（ChatTabs.init：select(id:)、
+    /// 标签栏上的点按交给谁（4.5）：点标签、点标签上的 × 或用中键点标签（TabBarHost）、点 ＋。ChatTabs 建好时接上（ChatTabs.init：select(id:)、
     /// closeTab(id:)、newTabFromBar()）；没接上时点了什么都不做。视图（TabBarView）只调用它们，不自己做决定。
     var onSelect: (@MainActor (TabID) -> Void)?
     var onClose: (@MainActor (TabID) -> Void)?

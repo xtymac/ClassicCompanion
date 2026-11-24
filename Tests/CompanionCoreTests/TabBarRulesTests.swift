@@ -40,6 +40,37 @@ import Testing
         #expect(TabBarRules.tabWidth(availableWidth: 480, tabCount: 0) == 0)
     }
 
+    /// 中键点到第几个标签：480 宽、4 个标签（103.5 宽）时第 i 个占 [12 + 107.5 i, 再加 103.5)；边距、间距、＋、更右边是 nil。
+    /// 各种宽度和个数下每个标签的正中、两头都找得到它自己。没有标签、宽度是 0 时都是 nil。
+    @Test func tabIndexAtX() {
+        func index(_ x: Double) -> Int? { TabBarRules.tabIndex(atX: x, availableWidth: 480, tabCount: 4) }
+        #expect(index(0) == nil)
+        #expect(index(11.9) == nil)
+        #expect(index(12) == 0)
+        #expect(index(115.4) == 0)
+        #expect(index(115.5) == nil, "间距")
+        #expect(index(119.4) == nil, "间距")
+        #expect(index(119.5) == 1)
+        #expect(index(437.9) == 3)
+        #expect(index(438) == nil, "最后一个和 ＋ 之间的间距")
+        #expect(index(455) == nil, "＋")
+        #expect(index(470) == nil, "右边的边距")
+        #expect(index(1000) == nil)
+        for width in [480.0, 640, 1000] {
+            for count in 1...4 {
+                let tab = TabBarRules.tabWidth(availableWidth: width, tabCount: count)
+                for i in 0..<count {
+                    let left = TabBarRules.sideMargin + Double(i) * (tab + TabBarRules.gap)
+                    for x in [left, left + tab / 2, left + tab - 0.01] {
+                        #expect(TabBarRules.tabIndex(atX: x, availableWidth: width, tabCount: count) == i, "\(width) \(count) \(x)")
+                    }
+                }
+            }
+        }
+        #expect(TabBarRules.tabIndex(atX: 50, availableWidth: 480, tabCount: 0) == nil)
+        #expect(TabBarRules.tabIndex(atX: 12, availableWidth: 0, tabCount: 4) == nil)
+    }
+
     /// ＋：平常能点、不置灰；到上限置灰但还能点、写上原因；启动画面、模态框时点不了；不看哪个窗口在前面。
     @Test(arguments: TabMenuRules.Scope.allCases) func newTabButton(scope: TabMenuRules.Scope) {
         typealias Button = TabBarRules.NewTabButton
