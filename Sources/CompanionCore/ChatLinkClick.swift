@@ -9,7 +9,7 @@ import Foundation
 ///   ⇧ 决定切不切过去：⌘ 在后台打开，⇧⌘ 打开并切换过去。⌥、⌃ 不看（原来也不看）。
 /// - 只接受聊天页面（opensInTab(_:)）：https、主站 chatgpt.com 本身（NavigationPolicy 的主站，不含子域名），路径是首页 /、
 ///   对话 /c/…、GPT /g/…（含 GPT 里的对话和项目页）；query 和 fragment 不看。
-///   和后退功能分支里的 NavigationPolicy.isChatPage 是同一条规则（那个分支还没合进来：合进来以后改用它，只留一条）。
+///   规则只有一条，在 NavigationPolicy.isChatPage（顶部返回箭头也用它）；opensInTab 只是转交。
 /// - 别的都不在这里，照原来的路走：认证页、about: / blob: / data:、主站的其他路径（/gpts、/library、分享页、/auth/… 等）、
 ///   子域名、http、外部链接。⌘ 点击它们和原来一样交给默认浏览器。导航分类（NavigationPolicy.classify）不变。
 ///
@@ -69,11 +69,9 @@ public enum ChatLinkClick {
     }
 
     /// ⌘ 点击时在新标签页打开的地址：主站的聊天页面（首页 /、对话 /c/…、GPT /g/…），只认 https 和主站本身。
+    /// 就是 NavigationPolicy.isChatPage，这里不另写一份。
     public static func opensInTab(_ url: URL?) -> Bool {
-        guard let url, url.scheme?.lowercased() == "https",
-              let host = url.host?.lowercased(), NavigationPolicy.chatHosts.contains(host) else { return false }
-        guard let first = url.path.split(separator: "/").first else { return true }
-        return first == "c" || first == "g"
+        NavigationPolicy.isChatPage(url)
     }
 
     /// 这一刻不打开的原因；打开时是 nil。按这个先后看：
