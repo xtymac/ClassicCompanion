@@ -103,6 +103,11 @@ final class ChatTabs {
     /// 证据采集和媒体实验对一个标签页做的事交给谁。就是 TabEvidenceTarget(tab:)（它的适配器和网页视图）；
     /// 只有测试换它：真的步骤要真实页面，换成记录才能在步骤之间换选中的标签页、看每一步对哪个标签页做。
     var evidenceTarget: @MainActor (ChatTab) -> any EvidenceTarget = { TabEvidenceTarget(tab: $0) }
+    /// 在后台打开的标签页（⌘ 点击链接）的网页视图在显示着的网页视图下面渲染多久（见 openLink(_:from:_:) 第 2 步）：
+    /// 第一次主框架加载完成后再等 backgroundRenderSettle 秒（ChatGPT 加载完主框架以后才去取、排对话的内容），
+    /// 从打开起最多 backgroundRenderLimit 秒（一直没加载完成：断网、重试中）。只有测试改它们。
+    var backgroundRenderSettle: TimeInterval = 5
+    var backgroundRenderLimit: TimeInterval = 30
     /// 聚焦请求的代号，每次 focusInputSoon(for:) 请求聚焦、每次切换标签页（select(_:)）都加一（不管是哪个标签页的）。
     /// 窗口里只有一个键盘焦点，最新的请求说了算：排着的聚焦到点时代号变了就不做，哪怕它的标签页又被选中了（选中 A → B → A）。
     private var focusGeneration = 0
@@ -398,6 +403,10 @@ final class ChatTabs {
             // 报的颜色是这个标签页的网页视图此刻报的（不显示的标签页只记在它的页面状态里）。
             self.windowController.pageDidFinishLoading(page, reportedColor: webView.underPageBackgroundColor)
             if let tab, self.isSelected(tab), self.windowIsKey() { self.focusInputSoon(for: tab) }
+            // 在后台打开、还在下面渲染的：再渲染一会儿就藏起（见 openLink(_:from:_:) 第 2 步）。
+            if let tab, self.windowController.isRenderingBehind(webView) {
+                self.stopRenderingBehind(tab, after: self.backgroundRenderSettle, "加载完成后 \(String(format: "%g", self.backgroundRenderSettle)) 秒")
+            }
         }
         // 加载失败时结束启动画面。WebKit 不显示错误页：首次加载失败时窗口里没有页面，
         // 由 WebRuntime 自动重试（退避、限次、断网不发请求），窗口盖“无法连接”提示，⌘R 和提示里的按钮显式加载失败的地址
@@ -762,9 +771,15 @@ final class ChatTabs {
     /// 1. 放进这组：TabList.insert(rightOf:)（source 的紧右边，不选中）→ adopt（建法是 makeTab，和新增的一样建的时候就照现在的设置；
     ///    接好线——它不是选中的，所以从第一刻起网页的对话框排着、弹窗不开（3.9）；登记到网络状态）。
     ///    写一行（带它的标签：第几个、现在几个，没有地址）。
-    /// 2. 只有 ⌘（后台）：它的网页视图放进窗口的容器、藏起，固定在容器现在的大小（ChatWindowController.addHiddenWebView(_:)）。
+    /// 2. 只有 ⌘（后台）：它的网页视图放进窗口的容器，放在显示着的网页视图下面、先不藏起，固定在容器现在的大小
+    ///    （ChatWindowController.addBackgroundWebView(_:)）。
     ///    在加载之前：它从第一次加载起就按窗口现在的大小排版，第一次显示时和别的藏着的网页视图一样比大小和缩放，变了就补排版
     ///    （3.5 记下的缺口：不这样做，它在窗口外面没有大小，第一次显示时又不补）。窗口显示的页面、网页视图、焦点都不变。
+    ///    不藏起：藏起的网页视图 WebKit 当作不可见（requestAnimationFrame 停、定时器放慢），ChatGPT 的对话要到切换过去才加载出来
+    ///    （用户 11-24 报告）。放在下面，WebKit 当它可见、照常加载和排版，用户看不见、点不到。
+    ///    第一次加载完成后 backgroundRenderSettle 秒、或打开后 backgroundRenderLimit 秒（先到的那个）藏起，写一行
+    ///    “[tabs] 后台打开的页面藏起：…”（带它的标签），之后和切换走的藏着的一样（stopRenderingBehind(_:after:_:)）。
+    ///    在这之前切换过去、关闭：照常（显示时放到最上面；关闭时拿出来），到点什么都不做。
     ///    ⇧⌘ 在第 5 步马上切换过去，和新增标签页一样不先放进来（第一次显示不补排版）。
     /// 3. 它的页面开始新标签页的遮挡（ChatWindowController.beginNewTabCover(for:)；它不显示，只改它自己的状态）。
     /// 4. 原样加载 url（WebRuntime.load(_:)：“[nav] 加载”那一行经 Redactor，没有对话 id）。查询参数不改：带临时聊天参数的首页
@@ -794,13 +809,29 @@ final class ChatTabs {
         log(tab, "tabs", opening == .foreground
             ? "⇧⌘ 点击链接，打开并切换过去（第 \(position) 个，现在 \(tabs.count) 个）"
             : "⌘ 点击链接，在后台打开（第 \(position) 个，现在 \(tabs.count) 个）")
-        if opening == .background { windowController.addHiddenWebView(tab.runtime.webView) }
+        if opening == .background { windowController.addBackgroundWebView(tab.runtime.webView) }
         windowController.beginNewTabCover(for: tab.page)
         tab.openedURL = url
         tab.runtime.load(url)
-        if opening == .foreground { select(tab) }
+        if opening == .foreground {
+            select(tab)
+        } else {
+            stopRenderingBehind(tab, after: backgroundRenderLimit, "到时限（\(String(format: "%g", backgroundRenderLimit)) 秒）")
+        }
         offerSeveralTabsTip()
         return tab
+    }
+
+    /// 在后台打开的 tab 过 delay 秒后不再在显示着的网页视图下面渲染：藏起（ChatWindowController.stopRenderingBehind(_:)），
+    /// 写一行“[tabs] 后台打开的页面藏起：reason”（带它的标签）。到点时 tab 已经释放、不在这组里（关闭了）、
+    /// 不在下面渲染（已经藏起、切换过去显示过）：什么都不做、不写日志。
+    private func stopRenderingBehind(_ tab: ChatTab, after delay: TimeInterval, _ reason: String) {
+        Task { [weak self, weak tab] in
+            try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
+            guard let self, let tab, self.holds(tab),
+                  self.windowController.stopRenderingBehind(tab.runtime.webView) else { return }
+            self.log(tab, "tabs", "后台打开的页面藏起：\(reason)")
+        }
     }
 
     /// 不打开 ⌘ 点击的链接的原因写进日志的样子。
