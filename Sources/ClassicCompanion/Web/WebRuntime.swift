@@ -583,7 +583,7 @@ final class WebRuntime: NSObject {
         pathMonitor?.cancel()
         pathMonitor = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "cc", contentWorld: .defaultClient)
-        // 每个弹窗先拆（tearDownPopup：停止加载、断开代理、不再记着），再关窗口；关窗口时的通知已经不听，不会再拆一遍。
+        // 每个弹窗先拆（tearDownPopup：停止加载、不再认它（代理留着，请求一律拒绝）、不再记着），再关窗口；关窗口时的通知已经不听，不会再拆一遍。
         let popups = popupWindows
         popups.forEach {
             tearDownPopup($0)
@@ -827,7 +827,7 @@ extension WebRuntime: WKDownloadDelegate {
 ///   显示的样子和这一页的一样（presentAlert、presentConfirm、presentOpenPanel：应用级模态框、文件选择面板），
 ///   不挂在弹窗的窗口上（挂上去要换显示的做法，留给以后定）。
 /// - 窗口已经关上的弹窗、不认识的网页视图（owns(_:)）：不显示、不排着，马上按取消回答，写一行（只有种类）。
-///   弹窗的窗口不管怎么关上（关闭按钮、网页 window.close()、这一页关闭）都先拆掉（tearDownPopup(_:)：停止加载、断开代理）。
+///   弹窗的窗口不管怎么关上（关闭按钮、网页 window.close()、这一页关闭）都先拆掉（tearDownPopup(_:)：停止加载、不再认它（代理留着，请求一律拒绝））。
 /// - 这一页自己的网页视图，和窗口不在屏幕上（藏起、最小化，还没关）的弹窗：属于这个标签页，按标签页的规则：
 ///   - 这一页是选中的（isSelectedTab）、没有排着的：马上显示，和原来一样（只有一个页面时总是这样，窗口隐藏、最小化时也是）。
 ///   - 不是选中的：排在这一页上（heldDialogs，按到达的先后），什么都不显示，写一行（只有种类和个数）；
@@ -947,7 +947,7 @@ extension WebRuntime: WKUIDelegate {
     /// 拆的时候已经不听了。
     @objc private func popupWindowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, tearDownPopup(window) else { return }
-        log("web", "弹窗的窗口关上了：停止加载，断开代理")
+        log("web", "弹窗的窗口关上了：停止加载，不再认它")
     }
 
     /// 拆掉一个弹窗，每个弹窗只拆一次（不再记着它的就什么都不做，返回 false）：不再记着它、不再听它关上；
@@ -961,8 +961,7 @@ extension WebRuntime: WKUIDelegate {
         NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: window)
         let web = window.contentView as? WKWebView
         web?.stopLoading()
-        web?.navigationDelegate = nil
-        web?.uiDelegate = nil
+        // 代理留着（还是这个运行时）：网页视图可能还活着，没有代理时 WebKit 默认放行；留着就由 owns(_:) 一律拒绝。
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 if let web, window.contentView === web { window.contentView = nil }
@@ -977,7 +976,7 @@ extension WebRuntime: WKUIDelegate {
         guard let window = popupWindow(of: webView) else { return }
         tearDownPopup(window)
         window.close()
-        log("web", "网页关掉了弹窗：停止加载，断开代理")
+        log("web", "网页关掉了弹窗：停止加载，不再认它")
     }
 
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,

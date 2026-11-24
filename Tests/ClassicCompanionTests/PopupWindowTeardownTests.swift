@@ -5,7 +5,7 @@ import CompanionCore
 @testable import ClassicCompanion
 
 /// 登录等弹窗的窗口关上以后（WebRuntime.tearDownPopup(_:)）：
-/// - 不管怎么关上（用户点关闭按钮、网页 window.close()、这一页关闭），都拆一次：不再记着它，它的网页视图断开代理，
+/// - 不管怎么关上（用户点关闭按钮、网页 window.close()、这一页关闭），都拆一次：不再记着它，它的网页视图的代理留着、请求一律拒绝，
 ///   网页视图在下一轮从窗口里拿出来；
 /// - 之后它的网页视图（和不认识的网页视图）来的请求一律不给做：对话框不显示、按取消回答，导航取消、外部链接不交给浏览器，
 ///   不给新窗口；排着时弹窗关上的对话框放出来时也不显示；
@@ -104,7 +104,7 @@ final class PopupWindowTeardownTests: XCTestCase {
 
     // MARK: - 拆
 
-    /// 用户关上弹窗的窗口（这里 close()）：不再记着它（改界面语言也不碰它），网页视图断开代理，写一行；下一轮网页视图从窗口里
+    /// 用户关上弹窗的窗口（这里 close()）：不再记着它（改界面语言也不碰它），网页视图的代理留着（请求一律拒绝），写一行；下一轮网页视图从窗口里
     /// 拿出来。再关一遍、网页再 window.close()、这一页关闭，都不再拆（关闭那一行不算它）。
     func testClosingThePopupWindowTearsItDownOnce() async throws {
         let rig = make()
@@ -114,8 +114,8 @@ final class PopupWindowTeardownTests: XCTestCase {
 
         window.close()
         XCTAssertFalse(rig.runtime.tracksPopupForTesting(window))
-        XCTAssertNil(web.navigationDelegate)
-        XCTAssertNil(web.uiDelegate)
+        XCTAssertTrue(web.navigationDelegate === rig.runtime, "代理留着，由 owns 拒绝")
+        XCTAssertTrue(web.uiDelegate === rig.runtime)
         rig.runtime.retitlePopups()
         XCTAssertEqual(window.title, "旧标题", "不再记着它")
         try await waitUntil { window.contentView !== web }
@@ -124,7 +124,7 @@ final class PopupWindowTeardownTests: XCTestCase {
         window.close()
         rig.runtime.webViewDidClose(web)
         rig.runtime.close()
-        XCTAssertEqual(rig.lines(since: mark), ["[web] 弹窗的窗口关上了：停止加载，断开代理", "[web] 关闭网页：停止加载"])
+        XCTAssertEqual(rig.lines(since: mark), ["[web] 弹窗的窗口关上了：停止加载，不再认它", "[web] 关闭网页：停止加载"])
     }
 
     /// 网页自己 window.close()：窗口关上一次，拆一次，只写一行（关上的通知不再拆一遍）。再来一次什么都不做。
@@ -140,11 +140,11 @@ final class PopupWindowTeardownTests: XCTestCase {
         rig.runtime.webViewDidClose(web)
         XCTAssertEqual(closed, 1)
         XCTAssertFalse(rig.runtime.tracksPopupForTesting(window))
-        XCTAssertNil(web.navigationDelegate)
-        XCTAssertNil(web.uiDelegate)
+        XCTAssertTrue(web.navigationDelegate === rig.runtime, "代理留着，由 owns 拒绝")
+        XCTAssertTrue(web.uiDelegate === rig.runtime)
         rig.runtime.webViewDidClose(web)
         XCTAssertEqual(closed, 1)
-        XCTAssertEqual(rig.lines(since: mark), ["[web] 网页关掉了弹窗：停止加载，断开代理"])
+        XCTAssertEqual(rig.lines(since: mark), ["[web] 网页关掉了弹窗：停止加载，不再认它"])
     }
 
     /// 这一页关闭：开着的弹窗也拆掉（代理断开、不再记着），关上一次；只写关闭那一行。
@@ -160,8 +160,8 @@ final class PopupWindowTeardownTests: XCTestCase {
         rig.runtime.close()
         XCTAssertEqual(closed, 1)
         XCTAssertFalse(rig.runtime.tracksPopupForTesting(window))
-        XCTAssertNil(web.navigationDelegate)
-        XCTAssertNil(web.uiDelegate)
+        XCTAssertTrue(web.navigationDelegate === rig.runtime, "代理留着，由 owns 拒绝")
+        XCTAssertTrue(web.uiDelegate === rig.runtime)
         XCTAssertEqual(rig.lines(since: mark), ["[web] 关闭网页：停止加载，关掉 1 个弹窗"])
     }
 
