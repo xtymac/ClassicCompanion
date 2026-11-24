@@ -93,7 +93,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate {
     private var historyMouseMonitor: Any?
 
     /// 后退、前进的目标页面（⌘[ ⌘] 和鼠标侧键用）。每次按键或按下侧键时调用一次，之后只对返回的页面操作；
-    /// 以后有标签页时返回这一刻选中的那一页。见 HistoryNavigation。
+    /// 返回这一刻选中的标签页（AppDelegate 接到 ChatTabs.historyPage(commandWindow:)）。见 HistoryNavigation。
     var historyPage: (() -> (any HistoryPage)?)?
 
     /// 窗口显示后调用（用于聚焦官方输入框；加载恢复按显示方式决定是否提前重试）

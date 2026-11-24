@@ -224,6 +224,7 @@ final class WebRuntimeCloseTests: XCTestCase {
         r.web.onLoadFailed = {}
         r.web.onEscapeRequest = {}
         r.web.onLoadProblemChange = { _ in }
+        r.web.onHistoryChange = {}
         r.web.close()
         XCTAssertNil(r.web.onURLChange)
         XCTAssertNil(r.web.onMainFrameLoaded)
@@ -231,6 +232,7 @@ final class WebRuntimeCloseTests: XCTestCase {
         XCTAssertNil(r.web.onLoadFailed)
         XCTAssertNil(r.web.onEscapeRequest)
         XCTAssertNil(r.web.onLoadProblemChange)
+        XCTAssertNil(r.web.onHistoryChange)
     }
 
     /// 这个页面开着的弹窗在关闭时关掉，之后改界面语言也不再碰它（运行时不再记着它）。日志写关掉了几个。

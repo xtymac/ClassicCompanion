@@ -9,7 +9,7 @@ enum HistoryDirection: Equatable, Sendable {
     var logName: String { self == .back ? "后退" : "前进" }
 }
 
-/// 后退、前进作用的那一页。现在只有 WebRuntime（聊天窗口的网页）；以后有标签页时，每个标签页一个。
+/// 后退、前进作用的那一页：WebRuntime，每个标签页一个。
 /// 只走这一页自己的 WKWebView 历史：跨文档的条目照常经过 WebRuntime 的导航策略，不放宽、不绕开。
 @MainActor
 protocol HistoryPage: AnyObject {
@@ -22,7 +22,7 @@ protocol HistoryPage: AnyObject {
 ///
 /// 入口有四个：菜单（⌘[ ⌘] 也显示在这里）、聊天窗口里的 ⌘[ ⌘]、鼠标侧键、顶部的返回箭头。
 /// 每次操作开始时解析一次目标页面（target），之后只对它操作，不在途中再去找别的页面。
-/// 以后有标签页时，target 的 page 换成“这一刻选中的那一页”，其余不用改。
+/// 有标签页以后，target 的 page 是这一刻选中的那一页（ChatTabs.historyPage(commandWindow:)）。
 enum HistoryNavigation {
     /// 这次操作算哪个窗口的：应用的 key 窗口；应用不在前台、没有 key 窗口时，是事件所在的窗口
     /// （鼠标侧键按在聊天窗口上，顶部箭头就在聊天窗口里；菜单没有事件窗口）。
