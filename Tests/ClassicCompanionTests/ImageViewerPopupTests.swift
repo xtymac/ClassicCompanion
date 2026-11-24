@@ -63,11 +63,12 @@ final class ImageViewerPopupTests: XCTestCase {
         XCTAssertFalse(viewer.configuration.websiteDataStore.isPersistent)
         XCTAssertEqual(lines(diagnostics).last, "[nav] 在新窗口打开内嵌图片 image/svg+xml")
 
-        // 看图窗口的导航（加载那张图片）由这一页放行：owns(_:) 认它。
+        // 看图窗口的导航由它自己的代理（ImageViewerGuard）管：只放行应用的那一次加载，图片只在 <img> 里显示。
+        XCTAssertTrue(viewer.navigationDelegate is ImageViewerGuard)
         var found = false
         for _ in 0..<50 where !found {
             try await Task.sleep(nanoseconds: 100_000_000)
-            found = ((try? await viewer.evaluateJavaScript("!!document.querySelector('svg rect')")) as? Bool) ?? false
+            found = ((try? await viewer.evaluateJavaScript("document.images.length === 1 && document.images[0].naturalWidth === 40")) as? Bool) ?? false
         }
         XCTAssertTrue(found)
 

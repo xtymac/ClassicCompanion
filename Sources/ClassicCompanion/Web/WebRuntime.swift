@@ -917,6 +917,8 @@ extension WebRuntime: WKUIDelegate {
     }
 
     /// 单独显示一张内嵌图片。和 ChatGPT 页面隔开：不带网站数据，不运行脚本。测试传 show: false，不显示窗口。
+    /// 和别的弹窗一样记下、拆掉（presentPopup），但导航代理是 ImageViewerGuard，不是这个运行时：
+    /// 只放行应用自己的那一次加载，之后一律取消（拆掉以后也一样）。
     @discardableResult
     func openImageViewer(_ image: ImageDataURL.Payload, show: Bool = true) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -985,6 +987,7 @@ extension WebRuntime: WKUIDelegate {
         let web = window.contentView as? WKWebView
         web?.stopLoading()
         // 代理留着（还是这个运行时）：网页视图可能还活着，没有代理时 WebKit 默认放行；留着就由 owns(_:) 一律拒绝。
+        // 看图窗口的导航代理是 ImageViewerGuard，本来就只放行第一次加载。
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 if let web, window.contentView === web { window.contentView = nil }
