@@ -561,6 +561,7 @@ final class WebRuntime: NSObject {
         onPageColorChange = nil
         onTitleChange = nil
         onOpenLinkInTab = nil
+        onHistoryChange = nil
         observations.forEach { $0.invalidate() }
         observations = []
         pathMonitor?.cancel()

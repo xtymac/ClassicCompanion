@@ -116,9 +116,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         windowController = ChatWindowController(webView: launchTab.runtime.webView, toolbar: bar, diagnostics: diagnostics,
                                                 appearance: pageAppearance, page: launchTab.page,
                                                 tabBar: TabBarView(model: tabBarModel, appearance: pageAppearance))
-        // ⌘[ ⌘] 和鼠标侧键由聊天窗口处理（只管它自己的事件），目标页面在按下时解析一次。
+        // ⌘[ ⌘] 和鼠标侧键由聊天窗口处理（只管它自己的事件），目标页面在按下时解析一次（这一刻选中的标签页）。
         windowController.historyPage = { [weak self] in self?.historyPage(eventWindow: self?.windowController?.window) }
-        launchTab.runtime.onHistoryChange = { [weak self] in self?.historyChanged() }
         windowController.onWillShow = { [weak self] mode in self?.toolbarState.quick = mode == .quick }
         windowController.onDidMiniaturize = { [weak self] in self?.releaseForegroundIfWindowless() }
 
@@ -136,6 +135,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                             revealWindow: { [weak self] in self?.windowController.reveal() },
                             tabBar: tabBarModel)
         chatTabs.wire(launchTab)
+        // 顶部返回箭头跟着选中的标签页（ChatTabs.onBackButtonChange：它的历史变了、换了选中的标签页）。
+        chatTabs.onBackButtonChange = { [weak self] shows, page in self?.backButtonChanged(shows, page: page) }
         // 第一次有多个标签页的提示显示过没有，存在设置里（每次安装一次）。提示的文字也给读屏播报。
         chatTabs.tipRecord = settings
         windowController.hints.announce = { text in
@@ -345,10 +346,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     /// 后退、前进的目标页面：这次操作的窗口（key 窗口；没有 key 窗口时是 eventWindow，菜单没有）是聊天窗口时是它的页面，
     /// 登录弹窗、设置等其他窗口在前面时没有目标（见 HistoryNavigation.commandWindow、target）。
-    /// 每次操作开始时调用一次，之后只对返回的页面操作。以后有标签页时，这里返回这一刻选中的那一页。
+    /// 每次操作开始时调用一次，之后只对返回的页面操作：聊天窗口的页面是这一刻选中的标签页（ChatTabs.historyPage(commandWindow:)）。
     private func historyPage(eventWindow: NSWindow? = nil) -> WebRuntime? {
         let window = HistoryNavigation.commandWindow(keyWindow: NSApp.keyWindow, eventWindow: eventWindow)
-        return HistoryNavigation.target(for: window, chatWindow: windowController?.window, page: chatTabs.selected.runtime)
+        return chatTabs?.historyPage(commandWindow: window)
     }
 
     /// 菜单和顶部返回箭头都从这里走（⌘[ ⌘] 和鼠标侧键由聊天窗口处理，见 ChatWindowController）。
@@ -360,10 +361,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         page.go(direction, source: source)
     }
 
-    /// 顶部返回箭头只在不是聊天页面、并且能后退时显示。
-    private func historyChanged() {
-        let page = chatTabs.selected.runtime
-        let shows = page.showsBackButton
+    /// 顶部返回箭头只在选中的标签页不是聊天页面、并且能后退时显示（ChatTabs.onBackButtonChange 交来）。
+    private func backButtonChanged(_ shows: Bool, page: WebRuntime) {
         guard shows != toolbarState.showsBack else { return }
         toolbarState.showsBack = shows
         diagnostics.log("nav", "顶部返回箭头\(shows ? "显示" : "收起")：\(Redactor.describe(page.webView.url))")
@@ -583,6 +582,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     /// ⌘R：按下这一刻选中的标签页。
     @objc private func reloadPage() { chatTabs.reloadSelectedTab() }
     /// 朗读没有声音时手动用（issue #16）。找不到媒体进程时响一声，窗口和页面不动。
+    /// 媒体进程是全应用的网页视图共用的一个（推断：WebKit 的 GPU 进程每个应用一个），所以从按下这一刻选中的标签页找它；
+    /// 结束以后所有标签页正在放的声音都会停。
     @objc private func restartAudio() { if !chatTabs.selected.runtime.restartMediaProcess() { NSSound.beep() } }
     /// 菜单作用于 key 窗口：聊天窗口在前面时是它的页面，登录弹窗等窗口在前面时没有目标（菜单项是灰的）。
     @objc private func historyBack() { goInHistory(.back, source: "菜单") }

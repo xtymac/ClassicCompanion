@@ -83,6 +83,10 @@ final class ChatTabs {
     /// 标签页的个数变了（加进来、关掉）。AppDelegate：TabMenus.refresh()（菜单项和左上角 × 的提示跟着改）。
     /// 调用时标签栏模型（tabBar）已经是新的（refreshTabBar() 在它之前）。
     var onTabsChanged: (@MainActor () -> Void)?
+    /// 顶部返回箭头要跟着改（参数：要不要显示、选中的那一页）：选中的标签页的地址、能否后退前进变了（wire(_:)），
+    /// 或者换了选中的标签页（select(_:)：切换、关掉显示着的那一页、新增、重新打开都经它）。不显示的标签页的历史变了不调用。
+    /// AppDelegate：变了才改 toolbarState.showsBack，写一行。
+    var onBackButtonChange: (@MainActor (Bool, WebRuntime) -> Void)?
     /// 标签栏要显示的东西（4.2）：从左到右的标签页、各自显示的标题、选中的、要不要显示、＋ 的样子。
     /// 这组每次改 list（加进来、切换、关掉）和某一页的标题、加载中变了时重算（refreshTabBar()）。
     /// 由建这组的一方交进来（AppDelegate 先建它，窗口的标签栏视图 TabBarView 和这里用同一个）；它上面的点按在 init 里接到
@@ -179,6 +183,19 @@ final class ChatTabs {
     /// tab 还在这组标签页里。
     func holds(_ tab: ChatTab) -> Bool {
         tabs.contains { $0 === tab }
+    }
+
+    /// 后退、前进（⌘[ ⌘]、鼠标侧键、菜单、顶部返回箭头）作用的页面：这次操作的窗口（HistoryNavigation.commandWindow）
+    /// 是聊天窗口时，是这一刻选中的标签页的运行时；登录弹窗等别的窗口在前面时没有目标（HistoryNavigation.target）。
+    /// 每次操作开始时调用一次，之后只对返回的这一页操作，途中换了选中的标签页也不改。
+    func historyPage(commandWindow: AnyObject?) -> WebRuntime? {
+        HistoryNavigation.target(for: commandWindow, chatWindow: windowController.window, page: selected.runtime)
+    }
+
+    /// 顶部返回箭头照这一刻选中的标签页报一次（onBackButtonChange）。
+    private func backButtonMayHaveChanged() {
+        let page = selected.runtime
+        onBackButtonChange?(page.showsBackButton, page)
     }
 
     /// 启动画面还在：这组里有页面的启动画面（启动时的那种遮挡）还盖着，到时限后还在等提交也算
@@ -417,6 +434,11 @@ final class ChatTabs {
             guard let self, let tab else { return }
             self.openLink(url, from: tab, opening)
         }
+        // 地址、能否后退前进变了：顶部返回箭头只跟着选中的标签页；不显示的标签页的不动它（换上来时 select(_:) 再报）。
+        tab.runtime.onHistoryChange = { [weak self, weak tab] in
+            guard let self, let tab, self.isSelected(tab) else { return }
+            self.backButtonMayHaveChanged()
+        }
     }
 
     /// ⌘R 和提示里的“重新加载”（窗口的按钮）：按下这一刻选中的标签页重新加载。提示显示的是窗口显示着的页面的状态，
@@ -529,6 +551,7 @@ final class ChatTabs {
     /// 4. 聚焦（D5，和唤醒一样）：之前排着的聚焦都作废（代号加一：A → B → A 时 A 换走前排下的那次也不再聚焦）；
     ///    窗口是 key 窗口才给 tab 排一次（focusInputSoon(for:)，80ms 后）。
     /// 5. 可恢复的对话地址跟着选中的：tab 现在的地址是可以恢复的对话就记下；不是就不改（还留着之前记下的）。
+    ///    顶部返回箭头照 tab 报一次（onBackButtonChange）：后退、前进的目标和菜单项从这一刻起就是 tab。
     /// 6. tab 不显示时排着的网页对话框（提示框、确认框、文件选择）放出来（WebRuntime.showHeldDialogs()）：
     ///    在这一轮之后（select 和调用它的 closeTab、newTab 先做完）按到达的先后一次显示一个，每一个显示之前再看 tab 还是不是
     ///    选中的、关没关闭（又切换走了就接着排着，等下一次选中）。
@@ -552,6 +575,7 @@ final class ChatTabs {
         focusGeneration += 1
         if windowIsKey() { focusInputSoon(for: tab) }
         if let restorable = NavigationPolicy.restorableConversationURL(tab.url) { saveLastConversation(restorable) }
+        backButtonMayHaveChanged()
         tab.runtime.showHeldDialogs()
     }
 
