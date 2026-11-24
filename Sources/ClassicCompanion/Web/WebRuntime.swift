@@ -350,14 +350,14 @@ final class WebRuntime: NSObject {
     @discardableResult
     func restartMediaProcess() -> Bool {
         guard let pid = Self.mediaProcessID(of: webView) else {
-            diagnostics.log("media", "重启音频：找不到媒体进程，没有操作")
+            log("media", "重启音频：找不到媒体进程，没有操作")
             return false
         }
         guard kill(pid, SIGKILL) == 0 else {
-            diagnostics.log("media", "重启音频：结束媒体进程失败 errno \(errno)")
+            log("media", "重启音频：结束媒体进程失败 errno \(errno)")
             return false
         }
-        diagnostics.log("media", "重启音频：已结束媒体进程 \(pid)，等 WebKit 重新启动")
+        log("media", "重启音频：已结束媒体进程 \(pid)，等 WebKit 重新启动")
         return true
     }
 
@@ -592,12 +592,12 @@ extension WebRuntime: HistoryPage {
     @discardableResult
     func go(_ direction: HistoryDirection, source: String) -> Bool {
         guard canGo(direction) else {
-            diagnostics.log("nav", "\(direction.logName)（\(source)）：没有可去的页面")
+            log("nav", "\(direction.logName)（\(source)）：没有可去的页面")
             return false
         }
         let list = webView.backForwardList
         let item = direction == .back ? list.backItem : list.forwardItem
-        diagnostics.log("nav", "\(direction.logName)（\(source)）→ \(Redactor.describe(item?.url))")
+        log("nav", "\(direction.logName)（\(source)）→ \(Redactor.describe(item?.url))")
         switch direction {
         case .back: _ = webView.goBack()
         case .forward: _ = webView.goForward()
@@ -638,7 +638,7 @@ extension WebRuntime: WKNavigationDelegate {
         // 后退、前进（菜单、⌘[ ⌘]、鼠标侧键、顶部箭头、触控板轻扫）到别的文档时也经过这里，按同样的规则处理。
         // 记一笔，查“按一下走了两次”时用。
         if navigationAction.navigationType == .backForward, webView === self.webView {
-            diagnostics.log("nav", "后退/前进导航：\(Redactor.describe(url))（\(kind)）")
+            log("nav", "后退/前进导航：\(Redactor.describe(url))（\(kind)）")
         }
 
         switch kind {
