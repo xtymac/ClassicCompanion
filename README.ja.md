@@ -1,4 +1,4 @@
-<img src="assets/marketing/poster-ja.png" alt="Classic Companion" width="960">
+<img src="assets/marketing/poster-ja.png" alt="Classic Companion：⌥ Space で ChatGPT を小さな macOS ウインドウに呼び出す" width="960">
 
 # Classic Companion
 
@@ -15,6 +15,12 @@ SwiftUI、AppKit、WKWebView で ChatGPT の公式サイトを表示するアプ
 **[0.1.0-beta.5 の DMG をダウンロード →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.5/ClassicCompanion-0.1.0-beta.5-20261124.2003-arm64.dmg)** · [リリース情報](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.5) · [フィードバック](https://github.com/xtymac/ClassicCompanion/issues)
 
 最新のベータ版：0.1.0-beta.5（ビルド 20261124.2003）、プレリリース。macOS 15 以降の Apple シリコン搭載 Mac 用です。0.1.0-beta.2、0.1.0-beta.3 または 0.1.0-beta.4 をお使いの場合は、Classic Companion メニューの「アップデートを確認…」を選んでください。0.1.0-beta.1 をお使いの場合は、一度だけ手動でこのバージョンをインストールしてください。以降のバージョンはアプリ内でアップデートできます。
+
+## タブ
+
+<a href="assets/marketing/tabs-demo.mp4"><img src="assets/marketing/tabs-demo.gif" alt="タブのデモ：チャットが 1 つのときはタブバーなし、⌘T で新しいタブ、⌘1 と ⌘2 で 2 つのチャットを切り替え、⌘W で閉じるとタブバーが消える" width="600"></a>
+
+1 つのウインドウで最大 4 つのチャットを開けます。チャットが 1 つのあいだタブバーは表示されません。`⌘T` で新しいタブ、`⌘1`〜`⌘4` で切り替え、`⌘W` で現在のタブを閉じます。アニメーションをクリックすると[動画](assets/marketing/tabs-demo.mp4)を開けます（画面は英語です）。
 
 ## レビューと検証
 

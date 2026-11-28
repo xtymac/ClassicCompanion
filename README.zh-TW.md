@@ -1,4 +1,4 @@
-<img src="assets/marketing/poster-zh-hant.png" alt="Classic Companion" width="960">
+<img src="assets/marketing/poster-zh-hant.png" alt="Classic Companion：按 ⌥ Space，在 macOS 小視窗裡喚出 ChatGPT" width="960">
 
 # Classic Companion
 
@@ -15,6 +15,12 @@
 **[下載 0.1.0-beta.5（DMG）→](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.5/ClassicCompanion-0.1.0-beta.5-20261124.2003-arm64.dmg)** · [版本說明](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.5) · [回饋](https://github.com/xtymac/ClassicCompanion/issues)
 
 最新試用版：0.1.0-beta.5（建置 20261124.2003），預先發布版本，適用於 macOS 15 或以上版本的 Apple 晶片 Mac。已安裝 0.1.0-beta.2、0.1.0-beta.3 或 0.1.0-beta.4 的使用者可以在 Classic Companion 選單中選擇「檢查更新項目⋯」。已安裝 0.1.0-beta.1 的使用者需要手動安裝一次本版，之後的版本可以在 App 內更新。
+
+## 分頁
+
+<a href="assets/marketing/tabs-demo.mp4"><img src="assets/marketing/tabs-demo.gif" alt="分頁示範：只有一個對話時不顯示分頁列，⌘T 新增分頁，⌘1 和 ⌘2 在兩個對話之間切換，⌘W 關閉後分頁列消失" width="600"></a>
+
+一個視窗裡最多開 4 個對話。只有一個對話時不顯示分頁列；`⌘T` 新增分頁，`⌘1`–`⌘4` 切換，`⌘W` 關閉目前的分頁。點選動畫可開啟[影片](assets/marketing/tabs-demo.mp4)（示範介面為英文）。
 
 ## 審查與驗證
 
