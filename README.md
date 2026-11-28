@@ -1,4 +1,4 @@
-<img src="assets/marketing/poster-en.png" alt="Classic Companion" width="960">
+<img src="assets/marketing/poster-en.png" alt="Classic Companion: press ⌥ Space to bring ChatGPT up in a compact macOS window" width="960">
 
 # Classic Companion
 
@@ -15,6 +15,12 @@ This is the **public source repository**, licensed under [Apache-2.0](LICENSE). 
 **[Download 0.1.0-beta.5 (DMG) →](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.5/ClassicCompanion-0.1.0-beta.5-20261124.2003-arm64.dmg)** · [Release notes](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.5) · [Feedback](https://github.com/xtymac/ClassicCompanion/issues)
 
 Latest beta: 0.1.0-beta.5 (build 20261124.2003), a pre-release for Apple silicon Macs with macOS 15 or later. If you have 0.1.0-beta.2, 0.1.0-beta.3 or 0.1.0-beta.4, choose Check for Updates… in the Classic Companion menu. If you have 0.1.0-beta.1, install this version once by hand; later versions can be installed from within the app.
+
+## Tabs
+
+<a href="assets/marketing/tabs-demo.mp4"><img src="assets/marketing/tabs-demo.gif" alt="Tab demo: one chat with the tab bar hidden, ⌘T opens a new tab, ⌘1 and ⌘2 switch between two chats, ⌘W closes a tab and the tab bar hides again" width="600"></a>
+
+Up to 4 chats in one window. The tab bar stays hidden while there is one chat; `⌘T` opens a tab, `⌘1`–`⌘4` switch, and `⌘W` closes the current one. Click the animation for the [video](assets/marketing/tabs-demo.mp4).
 
 ## Review and verification
 

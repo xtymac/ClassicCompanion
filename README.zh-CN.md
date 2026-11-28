@@ -1,4 +1,4 @@
-<img src="assets/marketing/poster-zh-hans.png" alt="Classic Companion" width="960">
+<img src="assets/marketing/poster-zh-hans.png" alt="Classic Companion：按 ⌥ Space，在 macOS 小窗里唤出 ChatGPT" width="960">
 
 # Classic Companion
 
@@ -15,6 +15,12 @@
 **[下载 0.1.0-beta.5（DMG）→](https://github.com/xtymac/ClassicCompanion/releases/download/v0.1.0-beta.5/ClassicCompanion-0.1.0-beta.5-20261124.2003-arm64.dmg)** · [版本说明](https://github.com/xtymac/ClassicCompanion/releases/tag/v0.1.0-beta.5) · [反馈](https://github.com/xtymac/ClassicCompanion/issues)
 
 最新试用版：0.1.0-beta.5（构建 20261124.2003），预发布版，适用于 macOS 15 或更新版本的 Apple 芯片 Mac。已安装 0.1.0-beta.2、0.1.0-beta.3 或 0.1.0-beta.4 的用户可以在 Classic Companion 菜单里选择“检查更新…”。已安装 0.1.0-beta.1 的用户需要手动安装一次本版，之后的版本可以在应用内更新。
+
+## 标签页
+
+<a href="assets/marketing/tabs-demo.mp4"><img src="assets/marketing/tabs-demo.gif" alt="标签页演示：只有一个对话时不显示标签栏，⌘T 新建标签页，⌘1 和 ⌘2 在两个对话之间切换，⌘W 关闭后标签栏消失" width="600"></a>
+
+一个窗口里最多开 4 个对话。只有一个对话时标签栏不显示；`⌘T` 新建标签页，`⌘1`–`⌘4` 切换，`⌘W` 关闭当前标签页。点击动图可打开[视频](assets/marketing/tabs-demo.mp4)（演示界面为英文）。
 
 ## 审查与验证
 
